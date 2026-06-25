@@ -5,6 +5,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
+local ToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("ToolService"))
 
 local function update_login_data(player)
 	local login = DataUtility.server.get(player, "Login")
@@ -38,6 +39,7 @@ local function bootstrap_player(player)
 end
 
 QuestService.Init()
+ToolService.Init()
 
 for _, player in ipairs(Players:GetPlayers()) do
 	bootstrap_player(player)
