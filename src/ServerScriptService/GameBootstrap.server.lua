@@ -32,7 +32,7 @@ local function bootstrap_player(player)
 		end
 
 		update_login_data(player)
-		HorseService.EnsureStarterHorse(player)
+		HorseService.ensure_starter_horse(player)
 		QuestService.EnsureDailyQuest(player)
 	end)
 end

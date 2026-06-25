@@ -1,5 +1,7 @@
 ------------------//SERVICES
 local Players: Players = game:GetService("Players")
+local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage: ServerStorage = game:GetService("ServerStorage")
 
 ------------------//CONSTANTS
 local STABLES_FOLDER_NAME = "Stables"
@@ -16,9 +18,14 @@ type PlotData = {
 }
 
 ------------------//VARIABLES
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local DataUtility = require(Modules:WaitForChild("Utility"):WaitForChild("DataUtility"))
+local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+
 local stablesFolder: Instance = workspace:WaitForChild(STABLES_FOLDER_NAME)
 local assignedPlotByPlayer: {[Player]: PlotData} = {}
 local plotOwnerByInstance: {[Instance]: Player} = {}
+local playerConnections: {[Player]: {any}} = {}
 
 ------------------//FUNCTIONS
 local function set_plot_number_attributes(instance: Instance, plotNumber: number?): ()
@@ -137,6 +144,8 @@ end
 local function release_plot(player: Player): ()
 	local plotData = assignedPlotByPlayer[player]
 	if plotData then
+		HorseService.clear_plot_horses(plotData.instance)
+
 		if plotOwnerByInstance[plotData.instance] == player then
 			plotOwnerByInstance[plotData.instance] = nil
 		end
@@ -149,6 +158,28 @@ local function release_plot(player: Player): ()
 
 	assignedPlotByPlayer[player] = nil
 	clear_plot_metadata(player)
+end
+
+local function disconnect_player_connections(player: Player): ()
+	local connections = playerConnections[player]
+	if not connections then
+		return
+	end
+
+	for _, connection in connections do
+		connection:Disconnect()
+	end
+
+	playerConnections[player] = nil
+end
+
+local function sync_plot_horses(player: Player): ()
+	local plotData = assignedPlotByPlayer[player] or assign_plot(player)
+	if not plotData then
+		return
+	end
+
+	HorseService.sync_plot_horses(player, plotData.instance)
 end
 
 local function teleport_character_to_plot(player: Player, character: Model): ()
@@ -175,6 +206,7 @@ local function teleport_character_to_plot(player: Player, character: Model): ()
 
 	set_plot_number_attributes(character, plotData.number)
 	character:PivotTo(playerSpawn.CFrame * CFrame.new(0, 3, 0))
+	sync_plot_horses(player)
 end
 
 ------------------//MAIN FUNCTIONS
@@ -184,6 +216,25 @@ end
 
 local function on_player_added(player: Player): ()
 	assign_plot(player)
+	playerConnections[player] = {}
+
+	local horsesConnection = DataUtility.server.bind(player, "Horses", function()
+		sync_plot_horses(player)
+	end)
+
+	if horsesConnection then
+		playerConnections[player][#playerConnections[player] + 1] = horsesConnection
+	end
+
+	local stableConnection = DataUtility.server.bind(player, "Stable", function()
+		sync_plot_horses(player)
+	end)
+
+	if stableConnection then
+		playerConnections[player][#playerConnections[player] + 1] = stableConnection
+	end
+
+	sync_plot_horses(player)
 
 	player.CharacterAdded:Connect(function(character: Model)
 		on_character_added(player, character)
@@ -196,6 +247,7 @@ local function on_player_added(player: Player): ()
 end
 
 local function on_player_removing(player: Player): ()
+	disconnect_player_connections(player)
 	release_plot(player)
 end
 

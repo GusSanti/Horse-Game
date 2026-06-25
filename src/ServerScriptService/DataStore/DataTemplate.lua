@@ -1,3 +1,26 @@
+------------------//SERVICES
+local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+------------------//CONSTANTS
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local Dictionary = Modules:WaitForChild("Dictionary")
+local GameData = Modules:WaitForChild("GameData")
+
+local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
+local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
+
+------------------//VARIABLES
+local defaultHorse = HorseFactory.Create("Default", 0, {
+	HorseId = "Default",
+	Nickname = "Default",
+	Source = "ProfileTemplate",
+	IsStarterGrant = true,
+	ObtainedAt = 0,
+})
+
+local defaultHorseSlots = StableDictionary.get_default_horse_slots()
+defaultHorseSlots.Slot1 = defaultHorse.Id
+
 local ProfileTemplate = {
 	ProfileVersion = 1,
 	TimePlayed = 0,
@@ -21,7 +44,7 @@ local ProfileTemplate = {
 	Progression = {
 		TutorialCompleted = false,
 		TutorialStep = "NotStarted",
-		FirstHorseGranted = false,
+		FirstHorseGranted = true,
 		UnlockedFeatures = {
 			Stable = true,
 			TackShop = false,
@@ -32,10 +55,12 @@ local ProfileTemplate = {
 	},
 
 	Horses = {
-		EquippedHorseId = "",
+		EquippedHorseId = defaultHorse.Id,
 		NextHorseInstanceId = 0,
-		OrderedIds = {},
-		Owned = {},
+		OrderedIds = { defaultHorse.Id },
+		Owned = {
+			[defaultHorse.Id] = defaultHorse,
+		},
 	},
 
 	Inventory = {
@@ -53,7 +78,8 @@ local ProfileTemplate = {
 
 	Stable = {
 		Level = 1,
-		OwnedStalls = 1,
+		OwnedStalls = StableDictionary.DefaultOwnedStalls,
+		HorseSlots = defaultHorseSlots,
 		ActiveStyleId = "Default",
 		Upgrades = {},
 		PlacedDecor = {},
@@ -105,8 +131,8 @@ local ProfileTemplate = {
 	},
 
 	Collection = {
-		DiscoveredHorseIds = {},
-		OwnedHorseCatalogIds = {},
+		DiscoveredHorseIds = { defaultHorse.CatalogId },
+		OwnedHorseCatalogIds = { defaultHorse.CatalogId },
 		UnlockedCosmeticIds = {},
 	},
 
@@ -120,7 +146,7 @@ local ProfileTemplate = {
 		TotalQuestsCompleted = 0,
 		TotalArenaRuns = 0,
 		TotalCropsHarvested = 0,
-		TotalHorsesOwned = 0,
+		TotalHorsesOwned = 1,
 	},
 
 	LiveOps = {
@@ -129,4 +155,9 @@ local ProfileTemplate = {
 	},
 }
 
+------------------//FUNCTIONS
+
+------------------//MAIN FUNCTIONS
+
+------------------//INIT
 return ProfileTemplate

@@ -1,13 +1,79 @@
 local HorseCatalog = {}
 
 HorseCatalog.StarterPool = {
-	"starter_meadow_bay",
-	"starter_dusty_chestnut",
-	"starter_moon_gray",
-	"starter_midnight_black",
+	"Default",
 }
 
 HorseCatalog.Definitions = {
+	Default = {
+		CatalogId = "Default",
+		DisplayName = "Default",
+		ShortName = "Default",
+		Tier = "Starter",
+		Rarity = "Common",
+		LaunchGroup = "Launch",
+		PlaceholderModelKey = "Default",
+		Description = "The default horse every player starts with.",
+		Bonding = {
+			MaxFriendship = 100,
+			StartingFriendship = 15,
+			MaxBondLevel = 10,
+			CareBonus = {
+				Feed = 4,
+				Water = 4,
+				Groom = 4,
+				Clean = 4,
+				Quest = 10,
+			},
+		},
+		Dependencies = {
+			FavoriteFoods = { "hay_bale" },
+			FavoriteGroomingItems = { "soft_brush" },
+			FavoriteActivities = { "DailyCare" },
+			StableNeeds = { "WaterBucket" },
+		},
+		Movement = {
+			WalkSpeed = 14,
+			TrotSpeed = 18,
+			CanterSpeed = 22,
+			SprintSpeed = 26,
+			Acceleration = 0.8,
+			TurnRate = 0.78,
+			Stamina = 100,
+			Jump = 0.76,
+			RaceAffinity = 0.66,
+		},
+		Temperament = {
+			Gentleness = 85,
+			Energy = 68,
+			Bravery = 72,
+			Focus = 78,
+			Sociability = 80,
+		},
+		Needs = {
+			Max = {
+				Happiness = 100,
+				Hunger = 100,
+				Thirst = 100,
+				Cleanliness = 100,
+				Health = 100,
+			},
+			Starting = {
+				Happiness = 80,
+				Hunger = 85,
+				Thirst = 85,
+				Cleanliness = 90,
+				Health = 100,
+			},
+			DecayPerHour = {
+				Happiness = 2,
+				Hunger = 4,
+				Thirst = 4,
+				Cleanliness = 3,
+				Health = 0,
+			},
+		},
+	},
 	starter_meadow_bay = {
 		CatalogId = "starter_meadow_bay",
 		DisplayName = "Meadow Bay",

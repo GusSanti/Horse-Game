@@ -26,6 +26,7 @@ function HorseFactory.Create(catalogId, instanceId, options)
 		CatalogId = definition.CatalogId,
 		DisplayName = definition.DisplayName,
 		Nickname = options.Nickname or definition.ShortName or definition.DisplayName,
+		VisualModelName = definition.PlaceholderModelKey,
 		Tier = definition.Tier,
 		Rarity = definition.Rarity,
 		LaunchGroup = definition.LaunchGroup,
