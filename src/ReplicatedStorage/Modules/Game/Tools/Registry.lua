@@ -1,9 +1,13 @@
+------------------//SERVICES
+
+------------------//VARIABLES
 local ToolRegistry = {}
 
-local cachedDefinitions = nil
-local cachedToolNameMap = nil
+local cachedDefinitions: {[string]: any}? = nil
+local cachedToolNameMap: {[string]: string}? = nil
 
-local function normalize_key(value)
+------------------//FUNCTIONS
+local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
 		return nil
 	end
@@ -16,21 +20,21 @@ local function normalize_key(value)
 	return normalizedValue
 end
 
-local function build_cache()
+local function build_cache(): ()
 	cachedDefinitions = {}
 	cachedToolNameMap = {}
 
-	for _, child in script.Parent:GetChildren() do
+	for _, child: Instance in script.Parent:GetChildren() do
 		if child:IsA("ModuleScript") and child ~= script then
 			local definition = require(child)
-			local itemId = normalize_key(definition.Id)
+			local itemId = normalize_key(definition.id)
 
 			if itemId then
-				definition.Id = itemId
+				definition.id = itemId
 				cachedDefinitions[itemId] = definition
 
-				local toolNames = definition.ToolNames or { itemId }
-				for _, toolName in ipairs(toolNames) do
+				local toolNames = definition.toolNames or { itemId }
+				for _, toolName: string in toolNames do
 					local normalizedToolName = normalize_key(toolName)
 					if normalizedToolName then
 						cachedToolNameMap[normalizedToolName] = itemId
@@ -41,7 +45,7 @@ local function build_cache()
 	end
 end
 
-local function ensure_cache()
+local function ensure_cache(): ()
 	if cachedDefinitions and cachedToolNameMap then
 		return
 	end
@@ -49,7 +53,8 @@ local function ensure_cache()
 	build_cache()
 end
 
-function ToolRegistry.GetDefinition(itemId)
+------------------//MAIN FUNCTIONS
+function ToolRegistry.get_definition(itemId: string): any
 	ensure_cache()
 
 	local normalizedItemId = normalize_key(itemId)
@@ -60,18 +65,18 @@ function ToolRegistry.GetDefinition(itemId)
 	return cachedDefinitions[normalizedItemId]
 end
 
-function ToolRegistry.GetAllDefinitions()
+function ToolRegistry.get_all_definitions(): {[string]: any}
 	ensure_cache()
 
-	local definitions = {}
-	for itemId, definition in pairs(cachedDefinitions) do
+	local definitions: {[string]: any} = {}
+	for itemId: string, definition: any in cachedDefinitions do
 		definitions[itemId] = definition
 	end
 
 	return definitions
 end
 
-function ToolRegistry.ResolveToolItemId(tool)
+function ToolRegistry.resolve_tool_item_id(tool: Tool?): string?
 	if not tool or not tool:IsA("Tool") then
 		return nil
 	end
@@ -96,13 +101,14 @@ function ToolRegistry.ResolveToolItemId(tool)
 	return cachedToolNameMap[normalizedToolName]
 end
 
-function ToolRegistry.ResolveDefinitionFromTool(tool)
-	local itemId = ToolRegistry.ResolveToolItemId(tool)
+function ToolRegistry.resolve_definition_from_tool(tool: Tool?): (any?, string?)
+	local itemId = ToolRegistry.resolve_tool_item_id(tool)
 	if not itemId then
 		return nil, nil
 	end
 
-	return ToolRegistry.GetDefinition(itemId), itemId
+	return ToolRegistry.get_definition(itemId), itemId
 end
 
+------------------//INIT
 return ToolRegistry

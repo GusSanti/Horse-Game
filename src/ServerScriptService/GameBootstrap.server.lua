@@ -1,13 +1,15 @@
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ServerStorage = game:GetService("ServerStorage")
+------------------//SERVICES
+local Players: Players = game:GetService("Players")
+local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage: ServerStorage = game:GetService("ServerStorage")
 
+------------------//VARIABLES
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
-local ToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("ToolService"))
 
-local function update_login_data(player)
+------------------//FUNCTIONS
+local function update_login_data(player: Player): ()
 	local login = DataUtility.server.get(player, "Login")
 	if not login then
 		return
@@ -25,7 +27,7 @@ local function update_login_data(player)
 	DataUtility.server.set(player, "Login", login)
 end
 
-local function bootstrap_player(player)
+local function bootstrap_player(player: Player): ()
 	task.spawn(function()
 		local profile = DataUtility.server.get(player)
 		if not profile then
@@ -38,10 +40,11 @@ local function bootstrap_player(player)
 	end)
 end
 
+------------------//MAIN FUNCTIONS
 QuestService.Init()
-ToolService.Init()
 
-for _, player in ipairs(Players:GetPlayers()) do
+------------------//INIT
+for _, player in Players:GetPlayers() do
 	bootstrap_player(player)
 end
 
