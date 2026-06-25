@@ -189,8 +189,8 @@ function queue_refresh(): ()
 			if promptParent and type(horseId) == "string" and horseId ~= "" then
 				local prompt = Instance.new("ProximityPrompt")
 				prompt.Name = ("%sPrompt"):format(itemId)
-				prompt.ActionText = promptConfig.actionText or "Usar"
-				prompt.ObjectText = promptConfig.objectText or "Cavalo"
+				prompt.ActionText = promptConfig.actionText or "Use"
+				prompt.ObjectText = promptConfig.objectText or "Horse"
 				prompt.HoldDuration = promptConfig.holdDuration or 0
 				prompt.MaxActivationDistance = promptConfig.maxActivationDistance or 10
 				prompt.RequiresLineOfSight = promptConfig.requiresLineOfSight == true

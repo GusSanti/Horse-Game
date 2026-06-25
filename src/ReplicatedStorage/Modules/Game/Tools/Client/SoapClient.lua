@@ -21,16 +21,20 @@ local STAGE_LABELS = soapCleaningDictionary.StageLabels
 local STAGE_PROGRESS_GOAL: number = soapCleaningDictionary.StageProgressGoal
 local SIDE_THRESHOLD: number = soapCleaningDictionary.SideThreshold
 local MINIMUM_SCRUB_DISTANCE: number = soapCleaningDictionary.MinimumScrubDistance
-local PROGRESS_GAIN_PER_STUD: number = soapCleaningDictionary.ProgressGainPerStud
-local MAXIMUM_PROGRESS_STEP: number = soapCleaningDictionary.MaximumProgressStep
+local MINIMUM_MOUSE_DRAG_DISTANCE: number = soapCleaningDictionary.MinimumMouseDragDistance
+local PROGRESS_STEP_DURATION: number = soapCleaningDictionary.ProgressStepDuration
+local PROGRESS_GAIN_PER_STEP: number = soapCleaningDictionary.ProgressGainPerStep
+local PROGRESS_TWEEN_TIME: number = soapCleaningDictionary.ProgressTweenTime
 local BUBBLE_SPAWN_DISTANCE: number = soapCleaningDictionary.BubbleSpawnDistance
 local BUBBLE_COUNT_MIN: number = soapCleaningDictionary.BubbleCountMin
 local BUBBLE_COUNT_MAX: number = soapCleaningDictionary.BubbleCountMax
 local BUBBLE_SPREAD: number = soapCleaningDictionary.BubbleSpread
-local BUBBLE_NORMAL_OFFSET: number = soapCleaningDictionary.BubbleNormalOffset
+local BUBBLE_SURFACE_OFFSET_MIN: number = soapCleaningDictionary.BubbleSurfaceOffsetMin
+local BUBBLE_SURFACE_OFFSET_MAX: number = soapCleaningDictionary.BubbleSurfaceOffsetMax
+local BUBBLE_APPEAR_TIME: number = soapCleaningDictionary.BubbleAppearTime
+local BUBBLE_APPEAR_START_SCALE: number = soapCleaningDictionary.BubbleAppearStartScale
 local BUBBLE_SIZE_MIN: number = soapCleaningDictionary.BubbleSizeMin
 local BUBBLE_SIZE_MAX: number = soapCleaningDictionary.BubbleSizeMax
-local BUBBLE_LIFETIME: number = soapCleaningDictionary.BubbleLifetime
 local CAMERA_PADDING: number = soapCleaningDictionary.CameraPadding
 local CAMERA_HEIGHT_RATIO: number = soapCleaningDictionary.CameraHeightRatio
 local CAMERA_DEPTH_RATIO: number = soapCleaningDictionary.CameraDepthRatio
@@ -42,6 +46,8 @@ local PROGRESS_BAR_WIDTH: number = soapCleaningDictionary.ProgressBarWidth
 local PROGRESS_BAR_HEIGHT: number = soapCleaningDictionary.ProgressBarHeight
 local FINISH_DELAY: number = soapCleaningDictionary.FinishDelay
 local EFFECTS_FOLDER_NAME: string = soapCleaningDictionary.EffectsFolderName
+local MOUSE_HITBOX_NAME: string = soapCleaningDictionary.MouseHitboxName
+local MOUSE_HITBOX_PADDING: number = soapCleaningDictionary.MouseHitboxPadding
 local ASSETS_FOLDER_NAME: string = soapCleaningDictionary.AssetsFolderName
 local OBJECTS_FOLDER_NAME: string = soapCleaningDictionary.ObjectsFolderName
 local BUBBLE_OBJECT_NAME: string = soapCleaningDictionary.BubbleObjectName
@@ -99,6 +105,31 @@ local function get_horse_extents(horseVisual: Instance): Vector3
 	end
 
 	return Vector3.new(4, 4, 4)
+end
+
+local function get_horse_bounding_box(horseVisual: Instance): (CFrame, Vector3)
+	if horseVisual:IsA("Model") then
+		return horseVisual:GetBoundingBox()
+	end
+
+	if horseVisual:IsA("BasePart") then
+		return horseVisual.CFrame, horseVisual.Size
+	end
+
+	return get_horse_pivot(horseVisual), get_horse_extents(horseVisual)
+end
+
+local function is_descendant_of(instance: Instance?, ancestor: Instance): boolean
+	local current = instance
+	while current do
+		if current == ancestor then
+			return true
+		end
+
+		current = current.Parent
+	end
+
+	return false
 end
 
 local function find_focus_part(instance: Instance): BasePart?
@@ -173,7 +204,7 @@ local function get_stage_camera_cframe(session): CFrame
 			+ (pivot.UpVector * (session.extents.Y * CAMERA_HEIGHT_RATIO))
 			- (pivot.LookVector * (session.extents.Z * CAMERA_DEPTH_RATIO))
 	elseif sideName == "Front" then
-		offset = (-pivot.LookVector * distance)
+		offset = (pivot.LookVector * distance)
 			+ (pivot.UpVector * (session.extents.Y * CAMERA_HEIGHT_RATIO))
 			+ (pivot.RightVector * (session.extents.X * 0.1))
 	elseif sideName == "Left" then
@@ -181,7 +212,7 @@ local function get_stage_camera_cframe(session): CFrame
 			+ (pivot.UpVector * (session.extents.Y * CAMERA_HEIGHT_RATIO))
 			- (pivot.LookVector * (session.extents.Z * CAMERA_DEPTH_RATIO))
 	elseif sideName == "Back" then
-		offset = (pivot.LookVector * distance)
+		offset = (-pivot.LookVector * distance)
 			+ (pivot.UpVector * (session.extents.Y * CAMERA_HEIGHT_RATIO))
 			- (pivot.RightVector * (session.extents.X * 0.1))
 	else
@@ -193,13 +224,30 @@ local function get_stage_camera_cframe(session): CFrame
 	return CFrame.lookAt(focusPosition + offset, focusPosition)
 end
 
-local function update_progress_ui(session): ()
+local function update_progress_ui(session, shouldTween: boolean?): ()
 	local stageName = get_stage_name(session)
 	local progressAlpha = math.clamp(session.stageProgress / STAGE_PROGRESS_GOAL, 0, 1)
+	local displayedPercent = math.floor((progressAlpha * 100 * 2) + 0.5) / 2
 
 	session.titleLabel.Text = ("%s  %d/%d"):format(get_stage_label(stageName), session.stageIndex, #STAGE_ORDER)
-	session.fillFrame.Size = UDim2.fromScale(progressAlpha, 1)
-	session.progressLabel.Text = ("%d%%"):format(math.floor(progressAlpha * 100 + 0.5))
+
+	if session.progressTween then
+		session.progressTween:Cancel()
+		session.progressTween = nil
+	end
+
+	if shouldTween then
+		session.progressTween = TweenService:Create(
+			session.fillFrame,
+			TweenInfo.new(PROGRESS_TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Size = UDim2.fromScale(progressAlpha, 1) }
+		)
+		session.progressTween:Play()
+	else
+		session.fillFrame.Size = UDim2.fromScale(progressAlpha, 1)
+	end
+
+	session.progressLabel.Text = ("%.1f%%"):format(displayedPercent)
 end
 
 local function create_progress_gui(session): boolean
@@ -398,7 +446,7 @@ local function spawn_bubbles(session, worldPosition: Vector3, normal: Vector3): 
 		local scale = bubbleRandom:NextNumber(BUBBLE_SIZE_MIN, BUBBLE_SIZE_MAX)
 		local offset = (tangent * bubbleRandom:NextNumber(-BUBBLE_SPREAD, BUBBLE_SPREAD))
 			+ (bitangent * bubbleRandom:NextNumber(-BUBBLE_SPREAD, BUBBLE_SPREAD))
-			+ (normal * bubbleRandom:NextNumber(0.02, BUBBLE_NORMAL_OFFSET))
+			+ (normal * bubbleRandom:NextNumber(BUBBLE_SURFACE_OFFSET_MIN, BUBBLE_SURFACE_OFFSET_MAX))
 		local targetPosition = worldPosition + offset
 		local targetCFrame = CFrame.lookAt(targetPosition, targetPosition + normal)
 			* CFrame.Angles(0, 0, math.rad(bubbleRandom:NextNumber(0, 360)))
@@ -414,18 +462,29 @@ local function spawn_bubbles(session, worldPosition: Vector3, normal: Vector3): 
 			basePart.CanQuery = false
 			basePart.CastShadow = false
 
-			local bubbleTween = TweenService:Create(basePart, TweenInfo.new(BUBBLE_LIFETIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				CFrame = basePart.CFrame + (normal * 0.22) + Vector3.new(0, 0.35, 0),
-				Transparency = 1,
-			})
-			bubbleTween:Play()
-		end
+			local finalCFrame = basePart.CFrame
+			local finalSize = basePart.Size
+			local finalTransparency = basePart.Transparency
 
-		task.delay(BUBBLE_LIFETIME, function()
-			if bubbleClone.Parent then
-				bubbleClone:Destroy()
-			end
-		end)
+			basePart.CFrame = finalCFrame + (-normal * 0.04)
+			basePart.Size = Vector3.new(
+				math.max(finalSize.X * BUBBLE_APPEAR_START_SCALE, 0.01),
+				math.max(finalSize.Y * BUBBLE_APPEAR_START_SCALE, 0.01),
+				math.max(finalSize.Z * BUBBLE_APPEAR_START_SCALE, 0.01)
+			)
+			basePart.Transparency = 1
+
+			local appearTween = TweenService:Create(
+				basePart,
+				TweenInfo.new(BUBBLE_APPEAR_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+				{
+					CFrame = finalCFrame,
+					Size = finalSize,
+					Transparency = finalTransparency,
+				}
+			)
+			appearTween:Play()
+		end
 	end
 end
 
@@ -457,6 +516,29 @@ local function is_point_on_active_side(session, worldPosition: Vector3): boolean
 	return normalizedY >= SIDE_THRESHOLD
 end
 
+local function get_active_side_normal(session): Vector3
+	local pivot = get_horse_pivot(session.horseVisual)
+	local stageName = get_stage_name(session)
+
+	if stageName == "Right" then
+		return pivot.RightVector
+	end
+
+	if stageName == "Front" then
+		return pivot.LookVector
+	end
+
+	if stageName == "Left" then
+		return -pivot.RightVector
+	end
+
+	if stageName == "Back" then
+		return -pivot.LookVector
+	end
+
+	return pivot.UpVector
+end
+
 local function get_mouse_hit(session)
 	local camera = workspace.CurrentCamera
 	if not camera then
@@ -471,7 +553,64 @@ local function get_mouse_hit(session)
 	raycastParams.FilterDescendantsInstances = { session.horseVisual }
 	raycastParams.IgnoreWater = true
 
-	return workspace:Raycast(screenRay.Origin, screenRay.Direction * 400, raycastParams)
+	local raycastResult = workspace:Raycast(screenRay.Origin, screenRay.Direction * 400, raycastParams)
+	if raycastResult then
+		return raycastResult
+	end
+
+	local mouse = session.mouse
+	if not mouse or not is_descendant_of(mouse.Target, session.horseVisual) then
+		return nil
+	end
+
+	return {
+		Instance = mouse.Target,
+		Position = mouse.Hit.Position,
+		Normal = get_active_side_normal(session),
+	}
+end
+
+local function hide_character_part(session, instance: Instance): ()
+	if not instance:IsA("BasePart") then
+		return
+	end
+
+	if session.hiddenCharacterParts[instance] == nil then
+		session.hiddenCharacterParts[instance] = instance.LocalTransparencyModifier
+	end
+
+	instance.LocalTransparencyModifier = 1
+end
+
+local function hide_character(session): ()
+	local character = localPlayer.Character
+	if not character then
+		return
+	end
+
+	session.hiddenCharacterParts = {}
+
+	for _, descendant: Instance in character:GetDescendants() do
+		hide_character_part(session, descendant)
+	end
+
+	session.connections[#session.connections + 1] = character.DescendantAdded:Connect(function(descendant: Instance)
+		hide_character_part(session, descendant)
+	end)
+end
+
+local function restore_character_visibility(session): ()
+	if not session.hiddenCharacterParts then
+		return
+	end
+
+	for basePart: BasePart, localTransparencyModifier: number in session.hiddenCharacterParts do
+		if basePart.Parent then
+			basePart.LocalTransparencyModifier = localTransparencyModifier
+		end
+	end
+
+	table.clear(session.hiddenCharacterParts)
 end
 
 local function restore_humanoid(session): ()
@@ -512,6 +651,7 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 	disconnect_all(session.connections)
 	destroy_all(session.instances)
 	restore_humanoid(session)
+	restore_character_visibility(session)
 	restore_camera(session)
 
 	if type(session.finishInteraction) == "function" then
@@ -536,13 +676,14 @@ local function complete_session(session): ()
 	session.dragging = false
 	session.lastHitPosition = nil
 	session.lastBubblePosition = nil
+	session.lastMousePosition = nil
 
 	if session.titleLabel then
 		session.titleLabel.Text = FINISHING_TEXT
 	end
 
 	if session.progressLabel then
-		session.progressLabel.Text = "100%"
+		session.progressLabel.Text = "100.0%"
 	end
 
 	if session.instructionLabel then
@@ -576,6 +717,7 @@ local function advance_stage(session): ()
 	session.stageProgress = 0
 	session.lastHitPosition = nil
 	session.lastBubblePosition = nil
+	session.lastMousePosition = nil
 
 	if session.stageIndex > #STAGE_ORDER then
 		complete_session(session)
@@ -615,33 +757,40 @@ local function render_session(session, deltaTime: number): ()
 
 	if not session.dragging or session.finishing then
 		session.lastHitPosition = nil
+		session.lastMousePosition = nil
 		return
 	end
 
 	local hitResult = get_mouse_hit(session)
 	if not hitResult or not is_point_on_active_side(session, hitResult.Position) then
 		session.lastHitPosition = nil
+		session.lastMousePosition = nil
 		return
 	end
 
+	local currentMousePosition = UserInputService:GetMouseLocation()
 	if not session.lastHitPosition then
 		session.lastHitPosition = hitResult.Position
 		session.lastBubblePosition = hitResult.Position
+		session.lastMousePosition = currentMousePosition
 		spawn_bubbles(session, hitResult.Position, hitResult.Normal)
 		return
 	end
 
 	local scrubDistance = (hitResult.Position - session.lastHitPosition).Magnitude
-	if scrubDistance < MINIMUM_SCRUB_DISTANCE then
+	local mouseDistance = session.lastMousePosition and (currentMousePosition - session.lastMousePosition).Magnitude or 0
+	session.lastMousePosition = currentMousePosition
+
+	if scrubDistance < MINIMUM_SCRUB_DISTANCE and mouseDistance < MINIMUM_MOUSE_DRAG_DISTANCE then
 		return
 	end
 
 	session.lastHitPosition = hitResult.Position
 	session.stageProgress = math.min(
-		session.stageProgress + math.min(scrubDistance * PROGRESS_GAIN_PER_STUD, MAXIMUM_PROGRESS_STEP),
+		session.stageProgress + ((deltaTime / math.max(PROGRESS_STEP_DURATION, 0.01)) * PROGRESS_GAIN_PER_STEP),
 		STAGE_PROGRESS_GOAL
 	)
-	update_progress_ui(session)
+	update_progress_ui(session, true)
 
 	if not session.lastBubblePosition or (hitResult.Position - session.lastBubblePosition).Magnitude >= BUBBLE_SPAWN_DISTANCE then
 		session.lastBubblePosition = hitResult.Position
@@ -686,6 +835,31 @@ local function create_effects_folder(session): ()
 	session.instances[#session.instances + 1] = effectsFolder
 end
 
+local function create_mouse_hitbox(session): ()
+	local boundingCFrame, boundingSize = get_horse_bounding_box(session.horseVisual)
+	local padding = Vector3.new(MOUSE_HITBOX_PADDING, MOUSE_HITBOX_PADDING, MOUSE_HITBOX_PADDING)
+	local hitbox = Instance.new("Part")
+
+	hitbox.Name = MOUSE_HITBOX_NAME
+	hitbox:SetAttribute(IGNORE_REFRESH_ATTRIBUTE, true)
+	hitbox.Anchored = true
+	hitbox.CanCollide = false
+	hitbox.CanTouch = false
+	hitbox.CanQuery = true
+	hitbox.CastShadow = false
+	hitbox.Transparency = 1
+	hitbox.Size = Vector3.new(
+		math.max(boundingSize.X + padding.X, 0.1),
+		math.max(boundingSize.Y + padding.Y, 0.1),
+		math.max(boundingSize.Z + padding.Z, 0.1)
+	)
+	hitbox.CFrame = boundingCFrame
+	hitbox.Parent = session.effectsFolder or session.horseVisual
+
+	session.mouseHitbox = hitbox
+	session.instances[#session.instances + 1] = hitbox
+end
+
 ------------------//MAIN FUNCTIONS
 function SoapClient.start(context): boolean
 	if activeSession then
@@ -710,6 +884,7 @@ function SoapClient.start(context): boolean
 		focusPart = focusPart,
 		invokeServerUse = context.invokeServerUse,
 		finishInteraction = context.finishInteraction,
+		mouse = localPlayer:GetMouse(),
 		stageIndex = 1,
 		stageProgress = 0,
 		dragging = false,
@@ -728,7 +903,9 @@ function SoapClient.start(context): boolean
 	session.targetCameraCFrame = get_stage_camera_cframe(session)
 
 	lock_humanoid(session)
+	hide_character(session)
 	create_effects_folder(session)
+	create_mouse_hitbox(session)
 	if not create_progress_gui(session) then
 		finish_session(session, true)
 		return false
@@ -753,6 +930,7 @@ function SoapClient.start(context): boolean
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			session.dragging = false
 			session.lastHitPosition = nil
+			session.lastMousePosition = nil
 		end
 	end)
 

@@ -10,8 +10,8 @@ local soap = {
 	},
 	clientHandlerName = "SoapClient",
 	prompt = {
-		actionText = "Ensaboar",
-		objectText = "Seu cavalo",
+		actionText = "Wash",
+		objectText = "Your horse",
 		holdDuration = 0.2,
 		maxActivationDistance = 10,
 		requiresLineOfSight = false,
