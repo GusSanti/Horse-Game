@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
+local FarmingService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingService"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 
@@ -37,6 +38,7 @@ local function bootstrap_player(player)
 	end)
 end
 
+FarmingService.Init()
 QuestService.Init()
 
 for _, player in ipairs(Players:GetPlayers()) do
