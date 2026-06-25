@@ -7,9 +7,11 @@ local localPlayer: Player = Players.LocalPlayer
 local modules: Folder = ReplicatedStorage:WaitForChild("Modules")
 local dictionary: Folder = modules:WaitForChild("Dictionary")
 local gameModules: Folder = modules:WaitForChild("Game")
+local toolModules: Folder = gameModules:WaitForChild("Tools")
+local clientFolder: Folder = toolModules:WaitForChild("Client")
 
 local toolDictionary = require(dictionary:WaitForChild("ToolDictionary"))
-local toolRegistry = require(gameModules:WaitForChild("Tools"):WaitForChild("Registry"))
+local toolRegistry = require(toolModules:WaitForChild("Registry"))
 
 local VISUAL_HORSE_ATTRIBUTE: string = toolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE: string = toolDictionary.HorseIdAttribute
@@ -17,6 +19,7 @@ local PLOT_VALUE_NAME: string = toolDictionary.PlotValueName
 local HORSE_FOLDER_NAME: string = toolDictionary.HorseFolderName
 local REMOTE_FOLDER_NAME: string = toolDictionary.ToolRemotesFolderName
 local USE_HORSE_TOOL_REMOTE_NAME: string = toolDictionary.UseHorseToolRemoteName
+local IGNORE_REFRESH_ATTRIBUTE: string = toolDictionary.IgnoreRefreshAttribute
 
 ------------------//VARIABLES
 local remotesFolder: Folder = ReplicatedStorage:WaitForChild(REMOTE_FOLDER_NAME)
@@ -26,8 +29,11 @@ local plotValue: ObjectValue = localPlayer:WaitForChild(PLOT_VALUE_NAME)
 local characterConnections: {RBXScriptConnection} = {}
 local plotConnections: {RBXScriptConnection} = {}
 local activePrompts: {ProximityPrompt} = {}
+local cachedHandlers: {[string]: any} = {}
 local refreshQueued: boolean = false
 local activePromptToken: number = 0
+local clientInteractionActive: boolean = false
+local queue_refresh
 
 ------------------//FUNCTIONS
 local function disconnect_all(connections: {RBXScriptConnection}): ()
@@ -106,7 +112,53 @@ local function get_horse_visuals(): {Instance}
 	return visuals
 end
 
-local function queue_refresh(): ()
+local function should_ignore_descendant(descendant: Instance): boolean
+	if descendant:IsA("ProximityPrompt") then
+		return true
+	end
+
+	local current = descendant
+	while current do
+		if current:GetAttribute(IGNORE_REFRESH_ATTRIBUTE) == true then
+			return true
+		end
+
+		current = current.Parent
+	end
+
+	return false
+end
+
+local function get_client_handler(definition): any
+	local clientHandlerName = definition.clientHandlerName
+	if type(clientHandlerName) ~= "string" or clientHandlerName == "" then
+		return nil
+	end
+
+	if cachedHandlers[clientHandlerName] then
+		return cachedHandlers[clientHandlerName]
+	end
+
+	local handlerModule = clientFolder:FindFirstChild(clientHandlerName)
+	if not handlerModule or not handlerModule:IsA("ModuleScript") then
+		return nil
+	end
+
+	local handler = require(handlerModule)
+	cachedHandlers[clientHandlerName] = handler
+
+	return handler
+end
+
+local function finish_client_interaction(shouldRefreshPrompts: boolean): ()
+	clientInteractionActive = false
+
+	if shouldRefreshPrompts ~= false then
+		queue_refresh()
+	end
+end
+
+function queue_refresh(): ()
 	if refreshQueued then
 		return
 	end
@@ -116,6 +168,10 @@ local function queue_refresh(): ()
 		refreshQueued = false
 
 		destroy_active_prompts()
+
+		if clientInteractionActive then
+			return
+		end
 
 		local equippedTool = get_equipped_tool()
 		local definition, itemId = toolRegistry.resolve_definition_from_tool(equippedTool)
@@ -148,6 +204,38 @@ local function queue_refresh(): ()
 
 					local currentTool = get_equipped_tool()
 					if currentTool ~= equippedTool then
+						return
+					end
+
+					local clientHandler = get_client_handler(definition)
+					if clientHandler and type(clientHandler.start) == "function" then
+						clientInteractionActive = true
+						destroy_active_prompts()
+
+						local started = false
+						local startSuccess, startResult = pcall(function()
+							return clientHandler.start({
+								player = localPlayer,
+								tool = equippedTool,
+								itemId = itemId,
+								horseId = horseId,
+								horseVisual = horseVisual,
+								promptParent = promptParent,
+								invokeServerUse = function()
+									return useHorseToolRemote:InvokeServer(equippedTool, itemId, horseId)
+								end,
+								finishInteraction = finish_client_interaction,
+							})
+						end)
+
+						if startSuccess then
+							started = startResult == true
+						end
+
+						if not started then
+							finish_client_interaction(true)
+						end
+
 						return
 					end
 
@@ -194,7 +282,7 @@ local function bind_plot(plot: Instance?): ()
 	end
 
 	plotConnections[#plotConnections + 1] = plot.DescendantAdded:Connect(function(descendant: Instance)
-		if descendant:IsA("ProximityPrompt") then
+		if should_ignore_descendant(descendant) then
 			return
 		end
 
@@ -202,7 +290,7 @@ local function bind_plot(plot: Instance?): ()
 	end)
 
 	plotConnections[#plotConnections + 1] = plot.DescendantRemoving:Connect(function(descendant: Instance)
-		if descendant:IsA("ProximityPrompt") then
+		if should_ignore_descendant(descendant) then
 			return
 		end
 

@@ -8,6 +8,7 @@ local ToolDictionary = {
 	HorseFolderName = "HorseFolder",
 	VisualHorseAttribute = "IsStableVisualHorse",
 	HorseIdAttribute = "HorseId",
+	IgnoreRefreshAttribute = "IgnoreToolPromptRefresh",
 }
 
 ------------------//FUNCTIONS
