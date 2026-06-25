@@ -2,11 +2,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
-local Network = Modules:WaitForChild("Network")
+local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local Net = require(Network:WaitForChild("Net"))
+local Net = require(Libraries:WaitForChild("Net"))
 local QuestCatalog = require(GameData:WaitForChild("QuestCatalog"))
 local ShopCatalog = require(GameData:WaitForChild("ShopCatalog"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
