@@ -346,10 +346,42 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 end
 
 ------------------//MAIN FUNCTIONS
-function HorseService.equip_horse(player: Player, horseId: string): (boolean, string)
+function HorseService.get_player_horse(player: Player, horseId: string?): (any?, string)
 	local horses = DataUtility.server.get(player, "Horses")
-	if not horses or not horses.Owned or not horses.Owned[horseId] then
+	if not horses or not horses.Owned then
+		return nil, "DataUnavailable"
+	end
+
+	if horseId and horseId ~= "" then
+		if not horses.Owned[horseId] then
+			return nil, "HorseNotOwned"
+		end
+
+		return horses.Owned[horseId], horseId
+	end
+
+	local resolvedHorseId = horses.EquippedHorseId or ""
+	if resolvedHorseId == "" or not horses.Owned[resolvedHorseId] then
+		local firstHorseId = get_first_owned_horse_id(horses)
+		if not firstHorseId then
+			return nil, "HorseNotFound"
+		end
+
+		resolvedHorseId = firstHorseId
+	end
+
+	return horses.Owned[resolvedHorseId], resolvedHorseId
+end
+
+function HorseService.equip_horse(player: Player, horseId: string): (boolean, string)
+	local horse = HorseService.get_player_horse(player, horseId)
+	if not horse then
 		return false, "HorseNotOwned"
+	end
+
+	local horses = DataUtility.server.get(player, "Horses")
+	if not horses then
+		return false, "DataUnavailable"
 	end
 
 	horses.EquippedHorseId = horseId
@@ -439,7 +471,8 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 			horses = DataUtility.server.get(player, "Horses")
 		end
 
-		return horses.Owned[horses.EquippedHorseId], "AlreadyGranted"
+		local currentHorse = HorseService.get_player_horse(player)
+		return currentHorse, "AlreadyGranted"
 	end
 
 	if not hasAnyHorse then
@@ -464,9 +497,12 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 		save_stable(player, updatedStable)
 	end
 
-	local equippedHorseId = updatedHorses and updatedHorses.EquippedHorseId or ""
+	local currentHorse = HorseService.get_player_horse(player)
+	if not currentHorse then
+		return nil, "Granted"
+	end
 
-	return updatedHorses and updatedHorses.Owned[equippedHorseId] or nil, "Granted"
+	return currentHorse, "Granted"
 end
 
 function HorseService.set_stable_slot_horse(player: Player, slotName: string, horseId: string): (boolean, string)
@@ -593,6 +629,7 @@ HorseService.SetStableSlotHorse = HorseService.set_stable_slot_horse
 HorseService.ClearStableSlot = HorseService.clear_stable_slot
 HorseService.ClearPlotHorses = HorseService.clear_plot_horses
 HorseService.SyncPlotHorses = HorseService.sync_plot_horses
+HorseService.GetPlayerHorse = HorseService.get_player_horse
 
 ------------------//INIT
 return HorseService

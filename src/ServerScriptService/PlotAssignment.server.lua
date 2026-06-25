@@ -19,13 +19,15 @@ type PlotData = {
 
 ------------------//VARIABLES
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local Libraries = Modules:WaitForChild("Libraries")
 local DataUtility = require(Modules:WaitForChild("Utility"):WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+local Trove = require(Libraries:WaitForChild("Trove"))
 
 local stablesFolder: Instance = workspace:WaitForChild(STABLES_FOLDER_NAME)
 local assignedPlotByPlayer: {[Player]: PlotData} = {}
 local plotOwnerByInstance: {[Instance]: Player} = {}
-local playerConnections: {[Player]: {any}} = {}
+local playerTroves: {[Player]: any} = {}
 
 ------------------//FUNCTIONS
 local function set_plot_number_attributes(instance: Instance, plotNumber: number?): ()
@@ -160,17 +162,14 @@ local function release_plot(player: Player): ()
 	clear_plot_metadata(player)
 end
 
-local function disconnect_player_connections(player: Player): ()
-	local connections = playerConnections[player]
-	if not connections then
+local function cleanup_player(player: Player): ()
+	local playerTrove = playerTroves[player]
+	if not playerTrove then
 		return
 	end
 
-	for _, connection in connections do
-		connection:Disconnect()
-	end
-
-	playerConnections[player] = nil
+	playerTrove:Destroy()
+	playerTroves[player] = nil
 end
 
 local function sync_plot_horses(player: Player): ()
@@ -215,15 +214,18 @@ local function on_character_added(player: Player, character: Model): ()
 end
 
 local function on_player_added(player: Player): ()
+	cleanup_player(player)
 	assign_plot(player)
-	playerConnections[player] = {}
+
+	local playerTrove = Trove.new()
+	playerTroves[player] = playerTrove
 
 	local horsesConnection = DataUtility.server.bind(player, "Horses", function()
 		sync_plot_horses(player)
 	end)
 
 	if horsesConnection then
-		playerConnections[player][#playerConnections[player] + 1] = horsesConnection
+		playerTrove:Add(horsesConnection)
 	end
 
 	local stableConnection = DataUtility.server.bind(player, "Stable", function()
@@ -231,12 +233,12 @@ local function on_player_added(player: Player): ()
 	end)
 
 	if stableConnection then
-		playerConnections[player][#playerConnections[player] + 1] = stableConnection
+		playerTrove:Add(stableConnection)
 	end
 
 	sync_plot_horses(player)
 
-	player.CharacterAdded:Connect(function(character: Model)
+	playerTrove:Connect(player.CharacterAdded, function(character: Model)
 		on_character_added(player, character)
 	end)
 
@@ -247,7 +249,7 @@ local function on_player_added(player: Player): ()
 end
 
 local function on_player_removing(player: Player): ()
-	disconnect_player_connections(player)
+	cleanup_player(player)
 	release_plot(player)
 end
 

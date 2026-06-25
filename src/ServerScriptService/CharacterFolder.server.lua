@@ -1,11 +1,17 @@
 ------------------//SERVICES
 local Players: Players = game:GetService("Players")
+local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 ------------------//CONSTANTS
 local CHARACTERS_FOLDER_NAME = "Characters"
 
 ------------------//VARIABLES
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local Libraries = Modules:WaitForChild("Libraries")
+local Trove = require(Libraries:WaitForChild("Trove"))
+
 local charactersFolder: Folder? = nil
+local playerTroves: {[Player]: any} = {}
 
 ------------------//FUNCTIONS
 local function ensure_characters_folder(): Folder
@@ -27,6 +33,16 @@ local function ensure_characters_folder(): Folder
 	return newFolder
 end
 
+local function cleanup_player(player: Player): ()
+	local playerTrove = playerTroves[player]
+	if not playerTrove then
+		return
+	end
+
+	playerTrove:Destroy()
+	playerTroves[player] = nil
+end
+
 ------------------//MAIN FUNCTIONS
 local function on_character_added(player: Player, character: Model): ()
 	if not character or not character.Parent then
@@ -38,7 +54,12 @@ local function on_character_added(player: Player, character: Model): ()
 end
 
 local function on_player_added(player: Player): ()
-	player.CharacterAdded:Connect(function(character: Model)
+	cleanup_player(player)
+
+	local playerTrove = Trove.new()
+	playerTroves[player] = playerTrove
+
+	playerTrove:Connect(player.CharacterAdded, function(character: Model)
 		on_character_added(player, character)
 	end)
 
@@ -46,6 +67,10 @@ local function on_player_added(player: Player): ()
 	if currentCharacter then
 		on_character_added(player, currentCharacter)
 	end
+end
+
+local function on_player_removing(player: Player): ()
+	cleanup_player(player)
 end
 
 ------------------//INIT
@@ -56,3 +81,4 @@ for _, player: Player in Players:GetPlayers() do
 end
 
 Players.PlayerAdded:Connect(on_player_added)
+Players.PlayerRemoving:Connect(on_player_removing)
