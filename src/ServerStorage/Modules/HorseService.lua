@@ -1,10 +1,12 @@
 ------------------//SERVICES
+local Players: Players = game:GetService("Players")
 local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 ------------------//CONSTANTS
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Dictionary = Modules:WaitForChild("Dictionary")
 local GameData = Modules:WaitForChild("GameData")
+local Services = Modules:WaitForChild("Services")
 local Utility = Modules:WaitForChild("Utility")
 
 local HORSE_FOLDER_NAME = "HorseFolder"
@@ -13,15 +15,18 @@ local PRIMARY_HORSE_SLOT_NAME = "Slot1"
 local VISUAL_HORSE_ATTRIBUTE = "IsStableVisualHorse"
 local HORSE_ID_ATTRIBUTE = "HorseId"
 local HORSE_CATALOG_ID_ATTRIBUTE = "HorseCatalogId"
+local STATUS_UPDATE_INTERVAL_SECONDS = 60
 
 ------------------//VARIABLES
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
+local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 
 local HorseService = {}
+local statusDecayLoopStarted = false
 
 ------------------//FUNCTIONS
 local function get_first_owned_horse_id(horses): string?
@@ -193,6 +198,41 @@ end
 
 local function save_stable(player: Player, stable): ()
 	DataUtility.server.set(player, "Stable", stable)
+end
+
+local function save_owned_horses(player: Player, horses): ()
+	DataUtility.server.set(player, "Horses.Owned", horses.Owned)
+end
+
+local function refresh_owned_horse_statuses(player: Player, horses, horseId: string?): (boolean, string)
+	if not horses or type(horses.Owned) ~= "table" then
+		return false, "DataUnavailable"
+	end
+
+	local now = os.time()
+	local changed = false
+
+	if horseId and horseId ~= "" then
+		local horse = horses.Owned[horseId]
+		if not horse then
+			return false, "HorseNotOwned"
+		end
+
+		local horseChanged = HorseStatusService.ApplyDecay(horse, now)
+		changed = changed or horseChanged
+	else
+		for _, horse in horses.Owned do
+			local horseChanged = HorseStatusService.ApplyDecay(horse, now)
+			changed = changed or horseChanged
+		end
+	end
+
+	if changed then
+		save_owned_horses(player, horses)
+		return true, "Updated"
+	end
+
+	return true, "Unchanged"
 end
 
 local function get_horse_assets_folder(): Instance?
@@ -416,6 +456,7 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 		IsStarterGrant = options.IsStarterGrant,
 		ObtainedAt = options.ObtainedAt,
 	})
+	HorseStatusService.NormalizeHorse(horse, os.time())
 
 	horses.Owned[horse.Id] = horse
 	TableUtility.InsertUnique(horses.OrderedIds, horse.Id)
@@ -622,6 +663,29 @@ function HorseService.sync_plot_horses(player: Player, plot: Instance): (boolean
 	return true, "Synced"
 end
 
+function HorseService.refresh_horse_statuses(player: Player, horseId: string?): (boolean, string)
+	local horses = DataUtility.server.get(player, "Horses")
+	return refresh_owned_horse_statuses(player, horses, horseId)
+end
+
+function HorseService.start_status_decay_loop(): ()
+	if statusDecayLoopStarted then
+		return
+	end
+
+	statusDecayLoopStarted = true
+
+	task.spawn(function()
+		while statusDecayLoopStarted do
+			task.wait(STATUS_UPDATE_INTERVAL_SECONDS)
+
+			for _, player: Player in Players:GetPlayers() do
+				HorseService.refresh_horse_statuses(player)
+			end
+		end
+	end)
+end
+
 HorseService.EquipHorse = HorseService.equip_horse
 HorseService.CreateHorseForPlayer = HorseService.create_horse_for_player
 HorseService.EnsureStarterHorse = HorseService.ensure_starter_horse
@@ -630,6 +694,8 @@ HorseService.ClearStableSlot = HorseService.clear_stable_slot
 HorseService.ClearPlotHorses = HorseService.clear_plot_horses
 HorseService.SyncPlotHorses = HorseService.sync_plot_horses
 HorseService.GetPlayerHorse = HorseService.get_player_horse
+HorseService.RefreshHorseStatuses = HorseService.refresh_horse_statuses
+HorseService.StartStatusDecayLoop = HorseService.start_status_decay_loop
 
 ------------------//INIT
 return HorseService

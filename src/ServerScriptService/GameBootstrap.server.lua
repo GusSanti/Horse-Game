@@ -33,11 +33,13 @@ local function bootstrap_player(player)
 
 		update_login_data(player)
 		HorseService.ensure_starter_horse(player)
+		HorseService.refresh_horse_statuses(player)
 		QuestService.EnsureDailyQuest(player)
 	end)
 end
 
 QuestService.Init()
+HorseService.start_status_decay_loop()
 
 for _, player in ipairs(Players:GetPlayers()) do
 	bootstrap_player(player)
