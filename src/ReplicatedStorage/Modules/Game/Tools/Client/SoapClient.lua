@@ -51,9 +51,20 @@ local MOUSE_HITBOX_PADDING: number = soapCleaningDictionary.MouseHitboxPadding
 local ASSETS_FOLDER_NAME: string = soapCleaningDictionary.AssetsFolderName
 local OBJECTS_FOLDER_NAME: string = soapCleaningDictionary.ObjectsFolderName
 local BUBBLE_OBJECT_NAME: string = soapCleaningDictionary.BubbleObjectName
+local SHOWER_OBJECT_NAME: string = soapCleaningDictionary.ShowerObjectName
 local INSTRUCTION_TEXT: string = soapCleaningDictionary.InstructionText
+local RINSE_INSTRUCTION_TEXT: string = soapCleaningDictionary.RinseInstructionText
 local COMPLETE_TEXT: string = soapCleaningDictionary.CompleteText
 local FINISHING_TEXT: string = soapCleaningDictionary.FinishingText
+local RINSE_TITLE_TEXT: string = soapCleaningDictionary.RinseTitleText
+local RINSE_COVERAGE_SEGMENTS: number = soapCleaningDictionary.RinseCoverageSegments
+local RINSE_COVERAGE_WIDTH_RATIO: number = soapCleaningDictionary.RinseCoverageWidthRatio
+local RINSE_MINIMUM_COVERAGE_WIDTH: number = soapCleaningDictionary.RinseMinimumCoverageWidth
+local RINSE_BUBBLE_CLEAR_WIDTH_RATIO: number = soapCleaningDictionary.RinseBubbleClearWidthRatio
+local RINSE_BUBBLE_MINIMUM_CLEAR_WIDTH: number = soapCleaningDictionary.RinseBubbleMinimumClearWidth
+local RINSE_BUBBLE_FADE_TIME: number = soapCleaningDictionary.RinseBubbleFadeTime
+local SHOWER_HEIGHT_OFFSET: number = soapCleaningDictionary.ShowerHeightOffset
+local SHOWER_FOLLOW_LERP_SPEED: number = soapCleaningDictionary.ShowerFollowLerpSpeed
 local CANCEL_KEYS = soapCleaningDictionary.CancelKeys
 
 ------------------//VARIABLES
@@ -63,6 +74,9 @@ local activeSession = nil
 local bubbleRandom = Random.new()
 local bubbleTemplateResolved: boolean = false
 local bubbleTemplate: Instance? = nil
+local showerTemplateResolved: boolean = false
+local showerTemplate: Instance? = nil
+local complete_session
 
 ------------------//FUNCTIONS
 local function disconnect_all(connections: {RBXScriptConnection}): ()
@@ -187,6 +201,23 @@ local function get_stage_label(stageName: string): string
 	return STAGE_LABELS[stageName] or stageName
 end
 
+local function lerp_number(current: number, target: number, alpha: number): number
+	return current + ((target - current) * alpha)
+end
+
+local function get_progress_goal(session): number
+	return session.progressGoal or STAGE_PROGRESS_GOAL
+end
+
+local function get_progress_title(session): string
+	if session.phase == "Rinse" then
+		return RINSE_TITLE_TEXT
+	end
+
+	local stageName = get_stage_name(session)
+	return ("%s  %d/%d"):format(get_stage_label(stageName), session.stageIndex, #STAGE_ORDER)
+end
+
 local function get_focus_position(session): Vector3
 	local pivot = get_horse_pivot(session.horseVisual)
 	return pivot.Position + (pivot.UpVector * (session.extents.Y * 0.2))
@@ -225,11 +256,10 @@ local function get_stage_camera_cframe(session): CFrame
 end
 
 local function update_progress_ui(session, shouldTween: boolean?): ()
-	local stageName = get_stage_name(session)
-	local progressAlpha = math.clamp(session.stageProgress / STAGE_PROGRESS_GOAL, 0, 1)
+	local progressAlpha = math.clamp(session.stageProgress / get_progress_goal(session), 0, 1)
 	local displayedPercent = math.floor((progressAlpha * 100 * 2) + 0.5) / 2
 
-	session.titleLabel.Text = ("%s  %d/%d"):format(get_stage_label(stageName), session.stageIndex, #STAGE_ORDER)
+	session.titleLabel.Text = get_progress_title(session)
 
 	if session.progressTween then
 		session.progressTween:Cancel()
@@ -396,6 +426,22 @@ local function get_bubble_template(): Instance?
 	return bubbleTemplate
 end
 
+local function get_shower_template(): Instance?
+	if showerTemplateResolved then
+		return showerTemplate
+	end
+
+	showerTemplateResolved = true
+
+	local assetsFolder = ReplicatedStorage:FindFirstChild(ASSETS_FOLDER_NAME)
+	if not assetsFolder then
+		return nil
+	end
+
+	showerTemplate = assetsFolder:FindFirstChild(SHOWER_OBJECT_NAME)
+	return showerTemplate
+end
+
 local function scale_instance(instance: Instance, scale: number): ()
 	if instance:IsA("Model") then
 		pcall(function()
@@ -454,6 +500,7 @@ local function spawn_bubbles(session, worldPosition: Vector3, normal: Vector3): 
 		bubbleClone.Parent = session.effectsFolder
 		scale_instance(bubbleClone, scale)
 		place_instance(bubbleClone, targetCFrame)
+		session.bubbleClones[#session.bubbleClones + 1] = bubbleClone
 
 		for _, basePart: BasePart in get_base_parts(bubbleClone) do
 			basePart.Anchored = true
@@ -640,6 +687,180 @@ local function restore_camera(session): ()
 	end
 end
 
+local function get_mouse_rinse_local_z(session): number
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return session.showerLocalZ or 0
+	end
+
+	local mousePosition = UserInputService:GetMouseLocation()
+	local inset = GuiService:GetGuiInset()
+	local viewportSize = camera.ViewportSize
+	local screenX = math.clamp(mousePosition.X - inset.X, 0, viewportSize.X)
+	local screenY = viewportSize.Y * 0.5
+	local screenRay = camera:ViewportPointToRay(screenX, screenY, 0)
+	local focusPosition = get_focus_position(session)
+	local planeNormal = camera.CFrame.LookVector
+	local denominator = screenRay.Direction:Dot(planeNormal)
+
+	if math.abs(denominator) < 0.001 then
+		return session.showerLocalZ or 0
+	end
+
+	local distance = (focusPosition - screenRay.Origin):Dot(planeNormal) / denominator
+	local worldPosition = screenRay.Origin + (screenRay.Direction * distance)
+	local pivot = get_horse_pivot(session.horseVisual)
+	local localPosition = pivot:PointToObjectSpace(worldPosition)
+	local halfLength = math.max(session.halfExtents.Z, 0.1)
+
+	return math.clamp(localPosition.Z, -halfLength, halfLength)
+end
+
+local function get_shower_cframe(session, localZ: number): CFrame
+	local pivot = get_horse_pivot(session.horseVisual)
+	local localPosition = Vector3.new(0, session.halfExtents.Y + SHOWER_HEIGHT_OFFSET, localZ)
+	local worldPosition = pivot:PointToWorldSpace(localPosition)
+
+	return CFrame.lookAt(worldPosition, worldPosition - pivot.UpVector, pivot.LookVector)
+end
+
+local function update_shower(session, deltaTime: number): number
+	local targetLocalZ = get_mouse_rinse_local_z(session)
+	if not session.showerLocalZ then
+		session.showerLocalZ = targetLocalZ
+	else
+		local alpha = math.clamp(deltaTime * SHOWER_FOLLOW_LERP_SPEED, 0, 1)
+		session.showerLocalZ = lerp_number(session.showerLocalZ, targetLocalZ, alpha)
+	end
+
+	if session.shower and session.shower.Parent then
+		place_instance(session.shower, get_shower_cframe(session, session.showerLocalZ))
+	end
+
+	return session.showerLocalZ
+end
+
+local function create_shower(session): ()
+	local template = get_shower_template()
+	if not template then
+		return
+	end
+
+	local showerClone = template:Clone()
+	showerClone.Name = SHOWER_OBJECT_NAME
+	showerClone:SetAttribute(IGNORE_REFRESH_ATTRIBUTE, true)
+	showerClone.Parent = session.effectsFolder or session.horseVisual
+
+	for _, basePart: BasePart in get_base_parts(showerClone) do
+		basePart.Anchored = true
+		basePart.CanCollide = false
+		basePart.CanTouch = false
+		basePart.CanQuery = false
+	end
+
+	session.shower = showerClone
+	session.instances[#session.instances + 1] = showerClone
+	update_shower(session, 1)
+end
+
+local function get_rinse_coverage_width(session): number
+	return math.max(session.extents.Z * RINSE_COVERAGE_WIDTH_RATIO, RINSE_MINIMUM_COVERAGE_WIDTH)
+end
+
+local function get_rinse_bubble_clear_width(session): number
+	return math.max(session.extents.Z * RINSE_BUBBLE_CLEAR_WIDTH_RATIO, RINSE_BUBBLE_MINIMUM_CLEAR_WIDTH)
+end
+
+local function fade_destroy_instance(instance: Instance): ()
+	for _, basePart: BasePart in get_base_parts(instance) do
+		local fadeTween = TweenService:Create(
+			basePart,
+			TweenInfo.new(RINSE_BUBBLE_FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Transparency = 1 }
+		)
+		fadeTween:Play()
+	end
+
+	task.delay(RINSE_BUBBLE_FADE_TIME, function()
+		if instance.Parent then
+			instance:Destroy()
+		end
+	end)
+end
+
+local function rinse_bubbles(session, showerLocalZ: number): ()
+	local clearHalfWidth = get_rinse_bubble_clear_width(session) * 0.5
+	local horsePivot = get_horse_pivot(session.horseVisual)
+
+	for index = #session.bubbleClones, 1, -1 do
+		local bubbleClone = session.bubbleClones[index]
+		if not bubbleClone.Parent then
+			table.remove(session.bubbleClones, index)
+			continue
+		end
+
+		local bubbleLocalPosition = horsePivot:PointToObjectSpace(get_horse_pivot(bubbleClone).Position)
+		if math.abs(bubbleLocalPosition.Z - showerLocalZ) <= clearHalfWidth then
+			table.remove(session.bubbleClones, index)
+			bubbleClone:SetAttribute(IGNORE_REFRESH_ATTRIBUTE, true)
+			fade_destroy_instance(bubbleClone)
+		end
+	end
+end
+
+local function mark_rinse_coverage(session, showerLocalZ: number): ()
+	local halfLength = math.max(session.halfExtents.Z, 0.1)
+	local coverageHalfWidth = get_rinse_coverage_width(session) * 0.5
+	local changed = false
+
+	for segmentIndex = 1, RINSE_COVERAGE_SEGMENTS do
+		local alpha = (segmentIndex - 0.5) / RINSE_COVERAGE_SEGMENTS
+		local segmentLocalZ = -halfLength + (alpha * halfLength * 2)
+
+		if math.abs(segmentLocalZ - showerLocalZ) <= coverageHalfWidth and not session.rinseCoverage[segmentIndex] then
+			session.rinseCoverage[segmentIndex] = true
+			session.rinsedSegmentCount += 1
+			changed = true
+		end
+	end
+
+	if changed then
+		session.stageProgress = session.rinsedSegmentCount
+		update_progress_ui(session, true)
+	end
+end
+
+local function render_rinse_session(session, deltaTime: number): ()
+	local showerLocalZ = update_shower(session, deltaTime)
+	mark_rinse_coverage(session, showerLocalZ)
+	rinse_bubbles(session, showerLocalZ)
+
+	if session.stageProgress >= get_progress_goal(session) then
+		complete_session(session)
+	end
+end
+
+local function start_rinse_phase(session): ()
+	session.phase = "Rinse"
+	session.stageIndex = 1
+	session.stageProgress = 0
+	session.progressGoal = RINSE_COVERAGE_SEGMENTS
+	session.rinseCoverage = {}
+	session.rinsedSegmentCount = 0
+	session.dragging = false
+	session.lastHitPosition = nil
+	session.lastBubblePosition = nil
+	session.lastMousePosition = nil
+	session.targetCameraCFrame = get_stage_camera_cframe(session)
+
+	if session.instructionLabel then
+		session.instructionLabel.Text = RINSE_INSTRUCTION_TEXT
+	end
+
+	create_shower(session)
+	update_progress_ui(session)
+end
+
 local function finish_session(session, shouldRefreshPrompts: boolean): ()
 	if activeSession ~= session or session.closed then
 		return
@@ -667,7 +888,7 @@ local function cancel_session(session, shouldRefreshPrompts: boolean): ()
 	finish_session(session, shouldRefreshPrompts)
 end
 
-local function complete_session(session): ()
+complete_session = function(session): ()
 	if session.finishing then
 		return
 	end
@@ -720,10 +941,11 @@ local function advance_stage(session): ()
 	session.lastMousePosition = nil
 
 	if session.stageIndex > #STAGE_ORDER then
-		complete_session(session)
+		start_rinse_phase(session)
 		return
 	end
 
+	session.progressGoal = STAGE_PROGRESS_GOAL
 	update_progress_ui(session)
 	session.targetCameraCFrame = get_stage_camera_cframe(session)
 end
@@ -754,6 +976,11 @@ local function render_session(session, deltaTime: number): ()
 	end
 
 	update_camera(session, deltaTime)
+
+	if session.phase == "Rinse" then
+		render_rinse_session(session, deltaTime)
+		return
+	end
 
 	if not session.dragging or session.finishing then
 		session.lastHitPosition = nil
@@ -885,8 +1112,10 @@ function SoapClient.start(context): boolean
 		invokeServerUse = context.invokeServerUse,
 		finishInteraction = context.finishInteraction,
 		mouse = localPlayer:GetMouse(),
+		phase = "Soap",
 		stageIndex = 1,
 		stageProgress = 0,
+		progressGoal = STAGE_PROGRESS_GOAL,
 		dragging = false,
 		finishing = false,
 		closed = false,
@@ -894,6 +1123,7 @@ function SoapClient.start(context): boolean
 		halfExtents = get_horse_extents(context.horseVisual) * 0.5,
 		instances = {},
 		connections = {},
+		bubbleClones = {},
 		savedCameraType = camera.CameraType,
 		savedCameraSubject = camera.CameraSubject,
 		savedCameraCFrame = camera.CFrame,
