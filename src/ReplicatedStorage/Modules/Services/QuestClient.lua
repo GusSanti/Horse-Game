@@ -2,14 +2,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
+local Network = Modules:WaitForChild("Network")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
+local Net = require(Network:WaitForChild("Net"))
 local QuestCatalog = require(GameData:WaitForChild("QuestCatalog"))
-
-local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName)
-local claimDailyQuestRemote = gameplayRemotes:WaitForChild(NetworkConfig.Quest.ClaimDailyQuest)
 
 local QuestClient = {}
 
@@ -31,7 +29,7 @@ function QuestClient.BindDailyQuestChanged(fn)
 end
 
 function QuestClient.ClaimDailyQuestReward()
-	return claimDailyQuestRemote:InvokeServer()
+	return Net.Function.ClaimDailyQuest:Call()
 end
 
 return QuestClient

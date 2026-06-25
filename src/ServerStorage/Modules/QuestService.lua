@@ -2,10 +2,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
+local Network = Modules:WaitForChild("Network")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
+local Net = require(Network:WaitForChild("Net"))
 local QuestCatalog = require(GameData:WaitForChild("QuestCatalog"))
 local ShopCatalog = require(GameData:WaitForChild("ShopCatalog"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
@@ -13,25 +14,6 @@ local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local QuestService = {}
 
 local initialized = false
-local claimDailyQuestRemote
-
-local function ensure_gameplay_remotes()
-	local gameplayRemotes = ReplicatedStorage:FindFirstChild(NetworkConfig.GameplayFolderName)
-	if not gameplayRemotes then
-		gameplayRemotes = Instance.new("Folder")
-		gameplayRemotes.Name = NetworkConfig.GameplayFolderName
-		gameplayRemotes.Parent = ReplicatedStorage
-	end
-
-	local claimRemote = gameplayRemotes:FindFirstChild(NetworkConfig.Quest.ClaimDailyQuest)
-	if not claimRemote then
-		claimRemote = Instance.new("RemoteFunction")
-		claimRemote.Name = NetworkConfig.Quest.ClaimDailyQuest
-		claimRemote.Parent = gameplayRemotes
-	end
-
-	return claimRemote
-end
 
 local function build_daily_quest_state(player, questId, now)
 	local questDefinition = QuestCatalog.GetDefinition(questId)
@@ -137,10 +119,9 @@ function QuestService.Init()
 		return
 	end
 
-	claimDailyQuestRemote = ensure_gameplay_remotes()
-	claimDailyQuestRemote.OnServerInvoke = function(player)
+	Net.Function.ClaimDailyQuest:Respond(function(player)
 		return QuestService.ClaimDailyQuest(player)
-	end
+	end)
 
 	initialized = true
 end
