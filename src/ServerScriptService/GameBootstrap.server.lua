@@ -8,6 +8,8 @@ local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChi
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 
+local activeHorseRefreshLoops: {[Player]: boolean} = {}
+
 ------------------//FUNCTIONS
 local function update_login_data(player: Player): ()
 	local login = DataUtility.server.get(player, "Login")
@@ -38,6 +40,21 @@ local function bootstrap_player(player: Player): ()
 		HorseService.ensure_starter_horse(player)
 		QuestService.EnsureDailyQuest(player)
 	end)
+
+	if activeHorseRefreshLoops[player] then
+		return
+	end
+
+	activeHorseRefreshLoops[player] = true
+
+	task.spawn(function()
+		while activeHorseRefreshLoops[player] and player.Parent do
+			task.wait(60)
+			if player.Parent then
+				HorseService.RefreshAllPlayerHorses(player)
+			end
+		end
+	end)
 end
 
 ------------------//MAIN FUNCTIONS
@@ -49,3 +66,6 @@ for _, player in Players:GetPlayers() do
 end
 
 Players.PlayerAdded:Connect(bootstrap_player)
+Players.PlayerRemoving:Connect(function(player: Player)
+	activeHorseRefreshLoops[player] = nil
+end)

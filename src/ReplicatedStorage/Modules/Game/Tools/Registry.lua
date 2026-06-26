@@ -20,24 +20,38 @@ local function normalize_key(value: string?): string?
 	return normalizedValue
 end
 
+local function register_definition(definition): ()
+	local itemId = normalize_key(definition.id)
+	if not itemId then
+		return
+	end
+
+	definition.id = itemId
+	cachedDefinitions[itemId] = definition
+
+	local toolNames = definition.toolNames or { itemId }
+	for _, toolName: string in toolNames do
+		local normalizedToolName = normalize_key(toolName)
+		if normalizedToolName then
+			cachedToolNameMap[normalizedToolName] = itemId
+		end
+	end
+end
+
 local function build_cache(): ()
 	cachedDefinitions = {}
 	cachedToolNameMap = {}
 
 	for _, child: Instance in script.Parent:GetChildren() do
 		if child:IsA("ModuleScript") and child ~= script then
-			local definition = require(child)
-			local itemId = normalize_key(definition.id)
+			local loadedDefinition = require(child)
 
-			if itemId then
-				definition.id = itemId
-				cachedDefinitions[itemId] = definition
-
-				local toolNames = definition.toolNames or { itemId }
-				for _, toolName: string in toolNames do
-					local normalizedToolName = normalize_key(toolName)
-					if normalizedToolName then
-						cachedToolNameMap[normalizedToolName] = itemId
+			if type(loadedDefinition) == "table" and loadedDefinition.id ~= nil then
+				register_definition(loadedDefinition)
+			elseif type(loadedDefinition) == "table" then
+				for _, definition in ipairs(loadedDefinition) do
+					if type(definition) == "table" then
+						register_definition(definition)
 					end
 				end
 			end

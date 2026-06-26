@@ -3,6 +3,11 @@ local NetworkConfig = {
 	Quest = {
 		ClaimDailyQuest = "ClaimDailyQuest",
 	},
+	Admin = {
+		FolderName = "Admin",
+		GetItemCatalog = "GetItemCatalog",
+		RequestItemTool = "RequestItemTool",
+	},
 }
 
 return NetworkConfig

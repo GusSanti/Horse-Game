@@ -1,46 +1,13 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local GameData = Modules:WaitForChild("GameData")
+
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+
 local ShopCatalog = {}
 
 ShopCatalog.Items = {
-	hay_bale = {
-		ItemId = "hay_bale",
-		DisplayName = "Hay Bale",
-		Description = "Basic food for daily horse care.",
-		Price = 25,
-		InventoryPath = "Consumables.Food",
-		ShopId = "OutdoorStore",
-		Tags = { "Food", "Hay" },
-		MaxStack = 99,
-	},
-	apple_treat = {
-		ItemId = "apple_treat",
-		DisplayName = "Apple Treat",
-		Description = "A simple reward snack that many horses enjoy.",
-		Price = 30,
-		InventoryPath = "Consumables.Food",
-		ShopId = "OutdoorStore",
-		Tags = { "Food", "Treat" },
-		MaxStack = 99,
-	},
-	carrot_bunch = {
-		ItemId = "carrot_bunch",
-		DisplayName = "Carrot Bunch",
-		Description = "A favorite snack for more energetic horses.",
-		Price = 35,
-		InventoryPath = "Consumables.Food",
-		ShopId = "OutdoorStore",
-		Tags = { "Food", "Treat" },
-		MaxStack = 99,
-	},
-	mint_treat = {
-		ItemId = "mint_treat",
-		DisplayName = "Mint Treat",
-		Description = "A refreshing snack used in quests and bonding rewards.",
-		Price = 40,
-		InventoryPath = "Consumables.Food",
-		ShopId = "OutdoorStore",
-		Tags = { "Food", "Treat" },
-		MaxStack = 99,
-	},
 	soft_brush = {
 		ItemId = "soft_brush",
 		DisplayName = "Soft Brush",
@@ -123,6 +90,10 @@ ShopCatalog.Items = {
 	},
 }
 
+for _, itemDefinition in ipairs(ToolItemCatalog.GetAllItems()) do
+	ShopCatalog.Items[itemDefinition.ItemId] = itemDefinition
+end
+
 ShopCatalog.Shops = {
 	TackShop = {
 		ShopId = "TackShop",
@@ -137,10 +108,6 @@ ShopCatalog.Shops = {
 		ShopId = "OutdoorStore",
 		DisplayName = "Outdoor Store",
 		ItemIds = {
-			"hay_bale",
-			"apple_treat",
-			"carrot_bunch",
-			"mint_treat",
 			"soft_brush",
 			"grooming_kit",
 			"shine_kit",
@@ -149,6 +116,13 @@ ShopCatalog.Shops = {
 		},
 	},
 }
+
+for _, itemDefinition in ipairs(ToolItemCatalog.GetAllItems()) do
+	local shopDefinition = ShopCatalog.Shops[itemDefinition.ShopId]
+	if shopDefinition then
+		shopDefinition.ItemIds[#shopDefinition.ItemIds + 1] = itemDefinition.ItemId
+	end
+end
 
 function ShopCatalog.GetItemDefinition(itemId)
 	return ShopCatalog.Items[itemId]

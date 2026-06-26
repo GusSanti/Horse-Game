@@ -69,6 +69,7 @@ local ProfileTemplate = {
 		StableDecor = {},
 		Consumables = {
 			Food = {},
+			Water = {},
 			Grooming = {},
 			Medical = {},
 		},
@@ -140,6 +141,7 @@ local ProfileTemplate = {
 		TotalCareActions = 0,
 		TotalFeedActions = 0,
 		TotalWaterActions = 0,
+		TotalMedicalActions = 0,
 		TotalGroomActions = 0,
 		TotalCleanActions = 0,
 		TotalBondPointsEarned = 0,

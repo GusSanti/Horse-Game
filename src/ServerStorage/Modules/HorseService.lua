@@ -20,6 +20,7 @@ local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
+local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))
 
 local HorseService = {}
 
@@ -370,6 +371,11 @@ function HorseService.get_player_horse(player: Player, horseId: string?): (any?,
 		resolvedHorseId = firstHorseId
 	end
 
+	local horse = horses.Owned[resolvedHorseId]
+	if horse and HorseCareService.RefreshHorse(horse, os.time()) then
+		DataUtility.server.set(player, "Horses", horses)
+	end
+
 	return horses.Owned[resolvedHorseId], resolvedHorseId
 end
 
@@ -622,6 +628,10 @@ function HorseService.sync_plot_horses(player: Player, plot: Instance): (boolean
 	return true, "Synced"
 end
 
+function HorseService.refresh_all_player_horses(player: Player): boolean
+	return HorseCareService.RefreshAllPlayerHorses(player)
+end
+
 HorseService.EquipHorse = HorseService.equip_horse
 HorseService.CreateHorseForPlayer = HorseService.create_horse_for_player
 HorseService.EnsureStarterHorse = HorseService.ensure_starter_horse
@@ -630,6 +640,7 @@ HorseService.ClearStableSlot = HorseService.clear_stable_slot
 HorseService.ClearPlotHorses = HorseService.clear_plot_horses
 HorseService.SyncPlotHorses = HorseService.sync_plot_horses
 HorseService.GetPlayerHorse = HorseService.get_player_horse
+HorseService.RefreshAllPlayerHorses = HorseService.refresh_all_player_horses
 
 ------------------//INIT
 return HorseService
