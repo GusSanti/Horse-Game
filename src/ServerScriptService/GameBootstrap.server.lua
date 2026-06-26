@@ -5,6 +5,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
+local RaceService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("RaceService"))
 
 local function update_login_data(player)
 	local login = DataUtility.server.get(player, "Login")
@@ -35,11 +36,16 @@ local function bootstrap_player(player)
 		HorseService.ensure_starter_horse(player)
 		HorseService.refresh_horse_statuses(player)
 		QuestService.EnsureDailyQuest(player)
+		RaceService.SyncPlayer(player)
 	end)
 end
 
 QuestService.Init()
+<<<<<<< Updated upstream
 HorseService.start_status_decay_loop()
+=======
+RaceService.Init()
+>>>>>>> Stashed changes
 
 for _, player in ipairs(Players:GetPlayers()) do
 	bootstrap_player(player)
