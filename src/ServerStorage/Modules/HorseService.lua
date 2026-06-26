@@ -21,6 +21,7 @@ local STATUS_UPDATE_INTERVAL_SECONDS = 60
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
+local HorseBondService = require(Services:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
@@ -211,6 +212,7 @@ local function refresh_owned_horse_statuses(player: Player, horses, horseId: str
 
 	local now = os.time()
 	local changed = false
+	local totalBondXP = 0
 
 	if horseId and horseId ~= "" then
 		local horse = horses.Owned[horseId]
@@ -219,16 +221,28 @@ local function refresh_owned_horse_statuses(player: Player, horses, horseId: str
 		end
 
 		local horseChanged = HorseStatusService.ApplyDecay(horse, now)
+		local bondChanged, xpGained = HorseBondService.ApplyPassiveProgress(horse, now)
 		changed = changed or horseChanged
+		changed = changed or bondChanged
+		totalBondXP += xpGained or 0
 	else
 		for _, horse in horses.Owned do
 			local horseChanged = HorseStatusService.ApplyDecay(horse, now)
+			local bondChanged, xpGained = HorseBondService.ApplyPassiveProgress(horse, now)
 			changed = changed or horseChanged
+			changed = changed or bondChanged
+			totalBondXP += xpGained or 0
 		end
 	end
 
 	if changed then
 		save_owned_horses(player, horses)
+
+		if totalBondXP > 0 then
+			local currentBondPoints = DataUtility.server.get(player, "Stats.TotalBondPointsEarned") or 0
+			DataUtility.server.set(player, "Stats.TotalBondPointsEarned", currentBondPoints + totalBondXP)
+		end
+
 		return true, "Updated"
 	end
 
@@ -456,6 +470,7 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 		IsStarterGrant = options.IsStarterGrant,
 		ObtainedAt = options.ObtainedAt,
 	})
+	HorseBondService.NormalizeBond(horse, os.time())
 	HorseStatusService.NormalizeHorse(horse, os.time())
 
 	horses.Owned[horse.Id] = horse
