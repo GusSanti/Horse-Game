@@ -72,6 +72,7 @@ local ProfileTemplate = {
 			Water = {},
 			Grooming = {},
 			Medical = {},
+			Misc = {},
 		},
 		Seeds = {},
 		Trophies = {},

@@ -5,6 +5,7 @@ local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
 local CareItemCatalog = require(GameData:WaitForChild("CareItemCatalog"))
+local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 
@@ -45,6 +46,11 @@ local OVERFLOW_ALLOWED_NEEDS = {
 	Thirst = true,
 }
 
+local ZERO_NEED_DECAY_MULTIPLIER = {
+	Happiness = 2,
+	Health = 3,
+}
+
 local function clamp_number(value, minValue, maxValue)
 	if type(value) ~= "number" then
 		return minValue
@@ -72,6 +78,10 @@ end
 
 local function ensure_horse_shape(horse, now)
 	local changed = false
+	local definition = HorseCatalog.GetDefinition(horse.CatalogId or "") or HorseCatalog.GetDefinition("Default")
+	local definitionNeeds = definition and definition.Needs or nil
+	local definitionMax = definitionNeeds and definitionNeeds.Max or {}
+	local definitionDecay = definitionNeeds and definitionNeeds.DecayPerHour or {}
 
 	if type(horse.Needs) ~= "table" then
 		horse.Needs = {}
@@ -106,8 +116,11 @@ local function ensure_horse_shape(horse, now)
 	end
 
 	for _, needKey in ipairs(TRACKED_NEEDS) do
-		if type(needs.Max[needKey]) ~= "number" then
-			needs.Max[needKey] = 100
+		local expectedMax = type(definitionMax[needKey]) == "number" and definitionMax[needKey] or 100
+		local expectedDecay = type(definitionDecay[needKey]) == "number" and definitionDecay[needKey] or 0
+
+		if needs.Max[needKey] ~= expectedMax then
+			needs.Max[needKey] = expectedMax
 			changed = true
 		end
 
@@ -116,8 +129,8 @@ local function ensure_horse_shape(horse, now)
 			changed = true
 		end
 
-		if type(needs.DecayPerHour[needKey]) ~= "number" then
-			needs.DecayPerHour[needKey] = 0
+		if needs.DecayPerHour[needKey] ~= expectedDecay then
+			needs.DecayPerHour[needKey] = expectedDecay
 			changed = true
 		end
 	end
@@ -205,6 +218,40 @@ local function apply_decay(currentValue, baseDecayPerHour, lastUpdatedAt, now, m
 
 	currentValue -= compute_segment_decay(baseDecayPerHour, now - lastUpdatedAt, 1)
 	return currentValue
+end
+
+local function has_zero_other_need(valuesByNeed, targetNeed): boolean
+	for _, needKey in ipairs(TRACKED_NEEDS) do
+		if needKey ~= targetNeed and (valuesByNeed[needKey] or 0) <= 0 then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function clamp_need_value(needKey, value, maxValues)
+	if OVERFLOW_ALLOWED_NEEDS[needKey] then
+		return math.max(0, value)
+	end
+
+	return math.clamp(value, 0, maxValues[needKey] or 100)
+end
+
+local function apply_zero_need_penalties(updatedValues, decayPerHour, lastUpdatedAt, now, modifiersByNeed, maxValues)
+	for targetNeed, multiplier in pairs(ZERO_NEED_DECAY_MULTIPLIER) do
+		if multiplier > 1 and has_zero_other_need(updatedValues, targetNeed) then
+			local extraDecayPerHour = math.max(0, (decayPerHour[targetNeed] or 0) * (multiplier - 1))
+
+			if extraDecayPerHour > 0 then
+				updatedValues[targetNeed] = clamp_need_value(
+					targetNeed,
+					apply_decay(updatedValues[targetNeed] or 0, extraDecayPerHour, lastUpdatedAt, now, modifiersByNeed[targetNeed]),
+					maxValues
+				)
+			end
+		end
+	end
 end
 
 local function is_item_favorite(horse, itemDefinition)
@@ -444,24 +491,35 @@ function HorseCareService.RefreshHorse(horse, now)
 		changed = true
 	end
 
+	local updatedValues = {}
+	local modifiersByNeed = {}
+	local shouldClearModifierByNeed = {}
+
 	for _, needKey in ipairs(TRACKED_NEEDS) do
 		local modifier, shouldClearModifier = get_active_modifier(needs, needKey, lastUpdatedAt, now)
-
 		local currentValue = values[needKey] or 0
-		local updatedValue = apply_decay(currentValue, decayPerHour[needKey] or 0, lastUpdatedAt, now, modifier)
 
-		if OVERFLOW_ALLOWED_NEEDS[needKey] then
-			updatedValue = math.max(0, updatedValue)
-		else
-			updatedValue = math.clamp(updatedValue, 0, maxValues[needKey] or 100)
-		end
+		modifiersByNeed[needKey] = modifier
+		shouldClearModifierByNeed[needKey] = shouldClearModifier
+		updatedValues[needKey] = clamp_need_value(
+			needKey,
+			apply_decay(currentValue, decayPerHour[needKey] or 0, lastUpdatedAt, now, modifier),
+			maxValues
+		)
+	end
+
+	apply_zero_need_penalties(updatedValues, decayPerHour, lastUpdatedAt, now, modifiersByNeed, maxValues)
+
+	for _, needKey in ipairs(TRACKED_NEEDS) do
+		local currentValue = values[needKey] or 0
+		local updatedValue = updatedValues[needKey]
 
 		if updatedValue ~= currentValue then
 			values[needKey] = updatedValue
 			changed = true
 		end
 
-		if shouldClearModifier then
+		if shouldClearModifierByNeed[needKey] then
 			needs.Modifiers[needKey] = nil
 			changed = true
 		end
