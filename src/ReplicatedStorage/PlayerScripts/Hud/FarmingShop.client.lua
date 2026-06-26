@@ -20,6 +20,23 @@ local activeTab = "Seed"
 local currentMainFrame = nil
 local requestInFlight = false
 
+local function find_named_descendant(root: Instance?, name: string): Instance?
+	if not root then
+		return nil
+	end
+
+	local directChild = root:FindFirstChild(name)
+	if directChild then
+		return directChild
+	end
+
+	return root:FindFirstChild(name, true)
+end
+
+local function is_button(instance: Instance?): boolean
+	return instance ~= nil and instance:IsA("GuiButton")
+end
+
 local function format_stock_text(amount: number): string
 	return ("Stock: %d"):format(amount)
 end
@@ -32,21 +49,21 @@ local function format_fruit_value_text(): string
 	return ("Value: %d Horseshoes"):format(FarmingCatalog.Fruit.SellPrice)
 end
 
-local function find_main_frame(): Frame?
+local function find_main_frame(): Instance?
 	for _, descendant in ipairs(playerGui:GetDescendants()) do
-		if descendant:IsA("Frame") and descendant.Name == "Main" then
-			local coins = descendant:FindFirstChild("Coins")
-			local currentLabel = coins and coins:FindFirstChild("Current")
-			local shop = descendant:FindFirstChild("Shop")
-			local scrollingFrame = shop and shop:FindFirstChild("ScrollingFrame")
-			local seedFrame = scrollingFrame and scrollingFrame:FindFirstChild("Seed")
-			local fruitFrame = scrollingFrame and scrollingFrame:FindFirstChild("Fruit")
-			local buyButton = seedFrame and seedFrame:FindFirstChild("BuyButton")
-			local sellButton = fruitFrame and fruitFrame:FindFirstChild("SellButton")
-			local seedsButton = descendant:FindFirstChild("SeedsBT")
-			local foodsButton = descendant:FindFirstChild("FoodsBT")
+		if descendant:IsA("GuiObject") and descendant.Name == "Main" then
+			local coins = find_named_descendant(descendant, "Coins")
+			local currentLabel = coins and find_named_descendant(coins, "Current")
+			local shop = find_named_descendant(descendant, "Shop")
+			local scrollingFrame = shop and find_named_descendant(shop, "ScrollingFrame")
+			local seedFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Seed")
+			local fruitFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Fruit")
+			local buyButton = seedFrame and find_named_descendant(seedFrame, "BuyButton")
+			local sellButton = fruitFrame and find_named_descendant(fruitFrame, "SellButton")
+			local seedsButton = find_named_descendant(descendant, "SeedsBT")
+			local foodsButton = find_named_descendant(descendant, "FoodsBT")
 
-			if currentLabel and buyButton and sellButton and seedsButton and foodsButton then
+			if currentLabel and is_button(buyButton) and is_button(sellButton) and is_button(seedsButton) and is_button(foodsButton) then
 				return descendant
 			end
 		end
@@ -66,38 +83,38 @@ local function disable_legacy_button_scripts(button: Instance?, trove)
 		end
 	end
 
-	for _, child in ipairs(button:GetChildren()) do
+	for _, child in ipairs(button:GetDescendants()) do
 		remove_if_legacy(child)
 	end
 
-	trove:Add(button.ChildAdded:Connect(remove_if_legacy))
+	trove:Add(button.DescendantAdded:Connect(remove_if_legacy))
 end
 
-local function cleanup_legacy_ui_scripts(mainFrame: Frame, trove)
-	local shopFrame = mainFrame:FindFirstChild("Shop")
-	local scrollingFrame = shopFrame and shopFrame:FindFirstChild("ScrollingFrame")
-	local seedFrame = scrollingFrame and scrollingFrame:FindFirstChild("Seed")
-	local fruitFrame = scrollingFrame and scrollingFrame:FindFirstChild("Fruit")
+local function cleanup_legacy_ui_scripts(mainFrame: Instance, trove)
+	local shopFrame = find_named_descendant(mainFrame, "Shop")
+	local scrollingFrame = shopFrame and find_named_descendant(shopFrame, "ScrollingFrame")
+	local seedFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Seed")
+	local fruitFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Fruit")
 
-	disable_legacy_button_scripts(mainFrame:FindFirstChild("SeedsBT"), trove)
-	disable_legacy_button_scripts(mainFrame:FindFirstChild("FoodsBT"), trove)
-	disable_legacy_button_scripts(seedFrame and seedFrame:FindFirstChild("BuyButton"), trove)
-	disable_legacy_button_scripts(fruitFrame and fruitFrame:FindFirstChild("SellButton"), trove)
+	disable_legacy_button_scripts(find_named_descendant(mainFrame, "SeedsBT"), trove)
+	disable_legacy_button_scripts(find_named_descendant(mainFrame, "FoodsBT"), trove)
+	disable_legacy_button_scripts(seedFrame and find_named_descendant(seedFrame, "BuyButton"), trove)
+	disable_legacy_button_scripts(fruitFrame and find_named_descendant(fruitFrame, "SellButton"), trove)
 end
 
-local function update_tab_state(mainFrame: Frame)
-	local shopFrame = mainFrame:FindFirstChild("Shop")
+local function update_tab_state(mainFrame: Instance)
+	local shopFrame = find_named_descendant(mainFrame, "Shop")
 	if not shopFrame then
 		return
 	end
 
-	local scrollingFrame = shopFrame:FindFirstChild("ScrollingFrame")
+	local scrollingFrame = find_named_descendant(shopFrame, "ScrollingFrame")
 	if not scrollingFrame then
 		return
 	end
 
-	local seedFrame = scrollingFrame:FindFirstChild("Seed")
-	local fruitFrame = scrollingFrame:FindFirstChild("Fruit")
+	local seedFrame = find_named_descendant(scrollingFrame, "Seed")
+	local fruitFrame = find_named_descendant(scrollingFrame, "Fruit")
 
 	if seedFrame and seedFrame:IsA("GuiObject") then
 		seedFrame.Visible = activeTab == "Seed"
@@ -108,27 +125,27 @@ local function update_tab_state(mainFrame: Frame)
 	end
 end
 
-local function update_coin_text(mainFrame: Frame, horseshoes: number)
-	local coinsFrame = mainFrame:FindFirstChild("Coins")
-	local currentLabel = coinsFrame and coinsFrame:FindFirstChild("Current")
+local function update_coin_text(mainFrame: Instance, horseshoes: number)
+	local coinsFrame = find_named_descendant(mainFrame, "Coins")
+	local currentLabel = coinsFrame and find_named_descendant(coinsFrame, "Current")
 
 	if currentLabel and currentLabel:IsA("TextLabel") then
 		currentLabel.Text = tostring(horseshoes)
 	end
 end
 
-local function update_seed_card(mainFrame: Frame, seedCount: number)
-	local shopFrame = mainFrame:FindFirstChild("Shop")
-	local scrollingFrame = shopFrame and shopFrame:FindFirstChild("ScrollingFrame")
-	local seedFrame = scrollingFrame and scrollingFrame:FindFirstChild("Seed")
+local function update_seed_card(mainFrame: Instance, seedCount: number)
+	local shopFrame = find_named_descendant(mainFrame, "Shop")
+	local scrollingFrame = shopFrame and find_named_descendant(shopFrame, "ScrollingFrame")
+	local seedFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Seed")
 
 	if not seedFrame then
 		return
 	end
 
-	local nameLabel = seedFrame:FindFirstChild("Name")
-	local stockLabel = seedFrame:FindFirstChild("Stock")
-	local valueLabel = seedFrame:FindFirstChild("Value")
+	local nameLabel = find_named_descendant(seedFrame, "Name")
+	local stockLabel = find_named_descendant(seedFrame, "Stock")
+	local valueLabel = find_named_descendant(seedFrame, "Value")
 
 	if nameLabel and nameLabel:IsA("TextLabel") then
 		nameLabel.Text = FarmingCatalog.Seed.DisplayName
@@ -143,18 +160,18 @@ local function update_seed_card(mainFrame: Frame, seedCount: number)
 	end
 end
 
-local function update_fruit_card(mainFrame: Frame, fruitCount: number)
-	local shopFrame = mainFrame:FindFirstChild("Shop")
-	local scrollingFrame = shopFrame and shopFrame:FindFirstChild("ScrollingFrame")
-	local fruitFrame = scrollingFrame and scrollingFrame:FindFirstChild("Fruit")
+local function update_fruit_card(mainFrame: Instance, fruitCount: number)
+	local shopFrame = find_named_descendant(mainFrame, "Shop")
+	local scrollingFrame = shopFrame and find_named_descendant(shopFrame, "ScrollingFrame")
+	local fruitFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Fruit")
 
 	if not fruitFrame then
 		return
 	end
 
-	local nameLabel = fruitFrame:FindFirstChild("Name")
-	local stockLabel = fruitFrame:FindFirstChild("Stock")
-	local valueLabel = fruitFrame:FindFirstChild("Value")
+	local nameLabel = find_named_descendant(fruitFrame, "Name")
+	local stockLabel = find_named_descendant(fruitFrame, "Stock")
+	local valueLabel = find_named_descendant(fruitFrame, "Value")
 
 	if nameLabel and nameLabel:IsA("TextLabel") then
 		nameLabel.Text = FarmingCatalog.Fruit.DisplayName
@@ -169,7 +186,7 @@ local function update_fruit_card(mainFrame: Frame, fruitCount: number)
 	end
 end
 
-local function refresh_all_text(mainFrame: Frame)
+local function refresh_all_text(mainFrame: Instance)
 	local horseshoes = DataUtility.client.get("Currencies.Horseshoes") or 0
 	local seedsBucket = DataUtility.client.get(FarmingCatalog.Seed.InventoryPath) or {}
 	local fruitBucket = DataUtility.client.get(FarmingCatalog.Fruit.InventoryPath) or {}
@@ -196,7 +213,15 @@ local function call_shop_action(remoteName: string)
 	end)
 end
 
-local function bind_main_frame(mainFrame: Frame)
+local function bind_button(button: Instance?, trove, callback: () -> ())
+	if not is_button(button) then
+		return
+	end
+
+	trove:Add(button.Activated:Connect(callback))
+end
+
+local function bind_main_frame(mainFrame: Instance)
 	if currentMainFrame == mainFrame then
 		return
 	end
@@ -206,40 +231,32 @@ local function bind_main_frame(mainFrame: Frame)
 	uiTrove = Trove.new()
 	cleanup_legacy_ui_scripts(mainFrame, uiTrove)
 
-	local seedsButton = mainFrame:FindFirstChild("SeedsBT")
-	local foodsButton = mainFrame:FindFirstChild("FoodsBT")
-	local shopFrame = mainFrame:FindFirstChild("Shop")
-	local scrollingFrame = shopFrame and shopFrame:FindFirstChild("ScrollingFrame")
-	local seedFrame = scrollingFrame and scrollingFrame:FindFirstChild("Seed")
-	local fruitFrame = scrollingFrame and scrollingFrame:FindFirstChild("Fruit")
-	local buyButton = seedFrame and seedFrame:FindFirstChild("BuyButton")
-	local sellButton = fruitFrame and fruitFrame:FindFirstChild("SellButton")
+	local seedsButton = find_named_descendant(mainFrame, "SeedsBT")
+	local foodsButton = find_named_descendant(mainFrame, "FoodsBT")
+	local shopFrame = find_named_descendant(mainFrame, "Shop")
+	local scrollingFrame = shopFrame and find_named_descendant(shopFrame, "ScrollingFrame")
+	local seedFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Seed")
+	local fruitFrame = scrollingFrame and find_named_descendant(scrollingFrame, "Fruit")
+	local buyButton = seedFrame and find_named_descendant(seedFrame, "BuyButton")
+	local sellButton = fruitFrame and find_named_descendant(fruitFrame, "SellButton")
 
-	if seedsButton and seedsButton:IsA("TextButton") then
-		uiTrove:Add(seedsButton.MouseButton1Click:Connect(function()
-			activeTab = "Seed"
-			update_tab_state(mainFrame)
-		end))
-	end
+	bind_button(seedsButton, uiTrove, function()
+		activeTab = "Seed"
+		update_tab_state(mainFrame)
+	end)
 
-	if foodsButton and foodsButton:IsA("TextButton") then
-		uiTrove:Add(foodsButton.MouseButton1Click:Connect(function()
-			activeTab = "Fruit"
-			update_tab_state(mainFrame)
-		end))
-	end
+	bind_button(foodsButton, uiTrove, function()
+		activeTab = "Fruit"
+		update_tab_state(mainFrame)
+	end)
 
-	if buyButton and buyButton:IsA("TextButton") then
-		uiTrove:Add(buyButton.MouseButton1Click:Connect(function()
-			call_shop_action("BuySeed")
-		end))
-	end
+	bind_button(buyButton, uiTrove, function()
+		call_shop_action("BuySeed")
+	end)
 
-	if sellButton and sellButton:IsA("TextButton") then
-		uiTrove:Add(sellButton.MouseButton1Click:Connect(function()
-			call_shop_action("SellFruit")
-		end))
-	end
+	bind_button(sellButton, uiTrove, function()
+		call_shop_action("SellFruit")
+	end)
 
 	uiTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", function(horseshoes)
 		if currentMainFrame == mainFrame then

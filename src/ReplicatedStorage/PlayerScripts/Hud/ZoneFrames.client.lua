@@ -150,27 +150,15 @@ local function is_zone_related_instance(instance: Instance): boolean
 end
 
 local function gather_display_candidates(root: Instance, zoneName: string): { Instance }
-	local zoneNameLower = string.lower(zoneName)
 	local exactMatches = {}
-	local partialMatches = {}
 
 	for _, descendant in ipairs(root:GetDescendants()) do
-		if is_display_instance(descendant) then
-			local nameLower = string.lower(descendant.Name)
-
-			if nameLower == zoneNameLower or nameLower == zoneNameLower .. "frame" or nameLower == zoneNameLower .. "gui" then
-				exactMatches[#exactMatches + 1] = descendant
-			elseif string.find(nameLower, zoneNameLower, 1, true) then
-				partialMatches[#partialMatches + 1] = descendant
-			end
+		if is_display_instance(descendant) and descendant.Name == zoneName then
+			exactMatches[#exactMatches + 1] = descendant
 		end
 	end
 
-	if #exactMatches > 0 then
-		return exactMatches
-	end
-
-	return partialMatches
+	return exactMatches
 end
 
 local function pick_best_display(candidates: { Instance }): Instance?
