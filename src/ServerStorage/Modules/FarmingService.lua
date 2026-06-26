@@ -7,6 +7,8 @@ local Utility = Modules:WaitForChild("Utility")
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
+local FarmingShopService = require(script.Parent:WaitForChild("FarmingShopService"))
+local QuestService = require(script.Parent:WaitForChild("QuestService"))
 
 local FarmingService = {}
 
@@ -112,86 +114,49 @@ local function clear_plant(state, keepHarvestTool: boolean?)
 	state.Model = nil
 end
 
-local function prepare_tool_for_inventory(tool: Tool)
-	for _, descendant in ipairs(tool:GetDescendants()) do
-		if descendant:IsA("ProximityPrompt") then
-			descendant:Destroy()
-		elseif descendant:IsA("WeldConstraint") then
-			local part0 = descendant.Part0
-			local part1 = descendant.Part1
-			local part0InsideTool = part0 and part0:IsDescendantOf(tool)
-			local part1InsideTool = part1 and part1:IsDescendantOf(tool)
-
-			if not (part0InsideTool and part1InsideTool) then
-				descendant:Destroy()
-			end
-		end
-	end
-
-	local handle = FarmingUtility.GetToolHandle(tool)
-	if handle then
-		handle.Anchored = false
-		handle.CanCollide = false
-		handle.CanTouch = true
-	end
-end
-
-local function award_harvest_tool(player: Player, tool: Tool)
-	prepare_tool_for_inventory(tool)
-
-	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 2)
-	local character = player.Character
-
-	if backpack then
-		tool.Parent = backpack
-	elseif character then
-		tool.Parent = character
-	else
-		tool.Parent = player
-	end
-
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if humanoid then
-		humanoid:EquipTool(tool)
-	end
-end
-
 local function attach_harvest_prompt(state)
-	local harvestTool = FarmingUtility.GetHarvestToolTemplate():Clone()
-	local handle = FarmingUtility.GetToolHandle(harvestTool)
 	local anchorPart = state.Model and get_anchor_part(state.Model)
+	local promptParent = anchorPart
+	local harvestToolTemplate = FarmingUtility.FindHarvestToolTemplate()
+	local harvestTool = harvestToolTemplate and harvestToolTemplate:Clone() or nil
+	local handle = harvestTool and FarmingUtility.GetToolHandle(harvestTool) or nil
 
-	if not handle or not anchorPart then
-		harvestTool:Destroy()
+	if not anchorPart then
+		if harvestTool then
+			harvestTool:Destroy()
+		end
 		return
 	end
 
-	set_plant_attributes(harvestTool, state)
-	set_plant_attributes(handle, state)
+	if harvestTool and handle then
+		set_plant_attributes(harvestTool, state)
+		set_plant_attributes(handle, state)
 
-	handle.CFrame = anchorPart.CFrame
-	handle.Anchored = false
-	handle.CanCollide = false
+		handle.CFrame = anchorPart.CFrame
+		handle.Anchored = false
+		handle.CanCollide = false
 
-	local weldConstraint = handle:FindFirstChildOfClass("WeldConstraint")
-	if not weldConstraint then
-		weldConstraint = Instance.new("WeldConstraint")
-		weldConstraint.Parent = handle
+		local weldConstraint = handle:FindFirstChildOfClass("WeldConstraint")
+		if not weldConstraint then
+			weldConstraint = Instance.new("WeldConstraint")
+			weldConstraint.Parent = handle
+		end
+
+		weldConstraint.Part0 = handle
+		weldConstraint.Part1 = anchorPart
+
+		harvestTool.Parent = FarmingUtility.GetFarmFolder(true)
+		state.HarvestTool = harvestTool
+		promptParent = handle
 	end
-
-	weldConstraint.Part0 = handle
-	weldConstraint.Part1 = anchorPart
 
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText = "Colher"
-	prompt.ObjectText = harvestTool.Name
+	prompt.ObjectText = harvestTool and harvestTool.Name or "Fruta"
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 10
 	prompt.RequiresLineOfSight = false
-	prompt.Parent = handle
-
-	harvestTool.Parent = FarmingUtility.GetFarmFolder(true)
-	state.HarvestTool = harvestTool
+	prompt.Parent = promptParent
 
 	state.StageTrove:Add(prompt.Triggered:Connect(function(player)
 		if player.UserId ~= state.OwnerUserId then
@@ -204,10 +169,15 @@ local function attach_harvest_prompt(state)
 
 		prompt:Destroy()
 
-		state.HarvestTool = nil
-		award_harvest_tool(player, harvestTool)
+		if state.HarvestTool then
+			state.HarvestTool:Destroy()
+			state.HarvestTool = nil
+		end
 
-		clear_plant(state, true)
+		FarmingShopService.AwardHarvest(player)
+		QuestService.IncrementStat(player, "Stats.TotalCropsHarvested", 1)
+
+		clear_plant(state)
 		activePlants[state.Id] = nil
 	end))
 end
@@ -259,6 +229,11 @@ function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
 			Success = false,
 			Code = "InvalidSoil",
 		}
+	end
+
+	local consumedSeed, consumeResponse = FarmingShopService.ConsumeSeed(player)
+	if not consumedSeed then
+		return consumeResponse
 	end
 
 	nextPlantId += 1

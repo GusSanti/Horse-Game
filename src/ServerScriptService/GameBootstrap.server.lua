@@ -4,6 +4,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
 local FarmingService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingService"))
+local FarmingShopService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingShopService"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 
@@ -32,12 +33,14 @@ local function bootstrap_player(player)
 			return
 		end
 
+		FarmingShopService.SyncSeedTools(player)
 		update_login_data(player)
 		HorseService.EnsureStarterHorse(player)
 		QuestService.EnsureDailyQuest(player)
 	end)
 end
 
+FarmingShopService.Init()
 FarmingService.Init()
 QuestService.Init()
 

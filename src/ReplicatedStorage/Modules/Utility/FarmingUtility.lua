@@ -24,6 +24,15 @@ function FarmingUtility.GetHarvestToolTemplate(): Tool
 	return FarmingUtility.GetStagePlantsFolder():WaitForChild(FarmingUtility.HARVEST_TOOL_NAME) :: Tool
 end
 
+function FarmingUtility.FindHarvestToolTemplate(): Tool?
+	local template = FarmingUtility.GetStagePlantsFolder():FindFirstChild(FarmingUtility.HARVEST_TOOL_NAME)
+	if template and template:IsA("Tool") then
+		return template
+	end
+
+	return nil
+end
+
 function FarmingUtility.GetFarmingZone(): Instance
 	return workspace:WaitForChild(FarmingUtility.FARMING_ZONE_NAME)
 end
