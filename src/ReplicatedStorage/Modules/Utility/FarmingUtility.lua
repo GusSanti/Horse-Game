@@ -24,6 +24,17 @@ function FarmingUtility.GetHarvestToolTemplate(): Tool
 	return FarmingUtility.GetStagePlantsFolder():WaitForChild(FarmingUtility.HARVEST_TOOL_NAME) :: Tool
 end
 
+function FarmingUtility.GetSeedToolTemplate(): Tool
+	local assets = ReplicatedStorage:WaitForChild("Assets")
+	local directTemplate = assets:FindFirstChild(FarmingUtility.SEED_TOOL_NAME, true)
+
+	if directTemplate and directTemplate:IsA("Tool") then
+		return directTemplate
+	end
+
+	return FarmingUtility.GetStagePlantsFolder():WaitForChild(FarmingUtility.SEED_TOOL_NAME) :: Tool
+end
+
 function FarmingUtility.FindHarvestToolTemplate(): Tool?
 	local template = FarmingUtility.GetStagePlantsFolder():FindFirstChild(FarmingUtility.HARVEST_TOOL_NAME)
 	if template and template:IsA("Tool") then

@@ -41,6 +41,10 @@ local function format_stock_text(amount: number): string
 	return ("Stock: %d"):format(amount)
 end
 
+local function format_horseshoes_text(amount: number): string
+	return ("Horseshoe: %d$"):format(amount)
+end
+
 local function format_seed_value_text(): string
 	return ("Value: %d Horseshoe"):format(FarmingCatalog.Seed.Price)
 end
@@ -130,7 +134,7 @@ local function update_coin_text(mainFrame: Instance, horseshoes: number)
 	local currentLabel = coinsFrame and find_named_descendant(coinsFrame, "Current")
 
 	if currentLabel and currentLabel:IsA("TextLabel") then
-		currentLabel.Text = tostring(horseshoes)
+		currentLabel.Text = format_horseshoes_text(horseshoes)
 	end
 end
 
@@ -219,16 +223,16 @@ local function bind_button(button: Instance?, trove, callback: () -> ())
 	end
 
 	trove:Add(button.Activated:Connect(callback))
+
+	if button:IsA("TextButton") or button:IsA("ImageButton") then
+		trove:Add(button.MouseButton1Click:Connect(callback))
+	end
 end
 
 local function bind_main_frame(mainFrame: Instance)
-	if currentMainFrame == mainFrame then
-		return
-	end
-
-	currentMainFrame = mainFrame
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
+	currentMainFrame = mainFrame
 	cleanup_legacy_ui_scripts(mainFrame, uiTrove)
 
 	local seedsButton = find_named_descendant(mainFrame, "SeedsBT")

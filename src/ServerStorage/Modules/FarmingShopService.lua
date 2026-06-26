@@ -18,8 +18,6 @@ local FarmingShopService = {}
 
 local initialized = false
 local playerTroves = {}
-local cachedSeedToolTemplate = nil
-
 local function get_horseshoes(player: Player): number
 	return DataUtility.server.get(player, "Currencies.Horseshoes") or 0
 end
@@ -76,29 +74,18 @@ local function create_fallback_seed_tool(): Tool
 	return tool
 end
 
-local function search_for_tool_template(container: Instance?, toolName: string): Tool?
-	if not container then
-		return nil
-	end
-
-	local found = container:FindFirstChild(toolName, true)
-	if found and found:IsA("Tool") then
-		return found
-	end
-
-	return nil
-end
-
 local function get_seed_tool_template(): Tool
-	if cachedSeedToolTemplate then
-		return cachedSeedToolTemplate
+	local success, template = pcall(FarmingUtility.GetSeedToolTemplate)
+	if success and template then
+		return template
 	end
 
-	cachedSeedToolTemplate = search_for_tool_template(ReplicatedStorage, FarmingUtility.SEED_TOOL_NAME)
-		or search_for_tool_template(ServerStorage, FarmingUtility.SEED_TOOL_NAME)
-		or create_fallback_seed_tool()
+	local fallbackTemplate = ServerStorage:FindFirstChild(FarmingUtility.SEED_TOOL_NAME, true)
+	if fallbackTemplate and fallbackTemplate:IsA("Tool") then
+		return fallbackTemplate
+	end
 
-	return cachedSeedToolTemplate
+	return create_fallback_seed_tool()
 end
 
 local function clone_seed_tool(): Tool
