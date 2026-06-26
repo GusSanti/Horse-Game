@@ -9,6 +9,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 local Net = require(Libraries:WaitForChild("Net"))
+local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
@@ -16,7 +17,7 @@ local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local FarmingShopService = {}
 
 local initialized = false
-local playerConnections = {}
+local playerTroves = {}
 local cachedSeedToolTemplate = nil
 
 local function get_horseshoes(player: Player): number
@@ -168,37 +169,32 @@ function FarmingShopService.SyncSeedTools(player: Player)
 end
 
 local function disconnect_player(player: Player)
-	local connections = playerConnections[player]
-	if not connections then
+	local trove = playerTroves[player]
+	if not trove then
 		return
 	end
 
-	for _, connection in ipairs(connections) do
-		if connection and connection.Disconnect then
-			connection:Disconnect()
-		end
-	end
-
-	playerConnections[player] = nil
+	trove:Destroy()
+	playerTroves[player] = nil
 end
 
 local function track_player(player: Player)
 	disconnect_player(player)
 
-	local connections = {}
-	playerConnections[player] = connections
+	local trove = Trove.new()
+	playerTroves[player] = trove
 
 	local seedInventoryConnection = DataUtility.server.bind(player, FarmingCatalog.Seed.InventoryPath, function()
 		FarmingShopService.SyncSeedTools(player)
 	end)
 
 	if seedInventoryConnection then
-		connections[#connections + 1] = seedInventoryConnection
+		trove:Add(seedInventoryConnection)
 	end
 
-	connections[#connections + 1] = player.CharacterAdded:Connect(function()
+	trove:Add(player.CharacterAdded:Connect(function()
 		task.defer(FarmingShopService.SyncSeedTools, player)
-	end)
+	end))
 
 	task.defer(FarmingShopService.SyncSeedTools, player)
 end

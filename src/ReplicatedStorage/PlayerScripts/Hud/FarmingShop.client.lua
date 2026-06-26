@@ -18,6 +18,7 @@ local rootTrove = Trove.new()
 local uiTrove = Trove.new()
 local activeTab = "Seed"
 local currentMainFrame = nil
+local requestInFlight = false
 
 local function format_stock_text(amount: number): string
 	return ("Stock: %d"):format(amount)
@@ -52,6 +53,36 @@ local function find_main_frame(): Frame?
 	end
 
 	return nil
+end
+
+local function disable_legacy_button_scripts(button: Instance?, trove)
+	if not button then
+		return
+	end
+
+	local function remove_if_legacy(instance: Instance)
+		if instance:IsA("LocalScript") then
+			instance:Destroy()
+		end
+	end
+
+	for _, child in ipairs(button:GetChildren()) do
+		remove_if_legacy(child)
+	end
+
+	trove:Add(button.ChildAdded:Connect(remove_if_legacy))
+end
+
+local function cleanup_legacy_ui_scripts(mainFrame: Frame, trove)
+	local shopFrame = mainFrame:FindFirstChild("Shop")
+	local scrollingFrame = shopFrame and shopFrame:FindFirstChild("ScrollingFrame")
+	local seedFrame = scrollingFrame and scrollingFrame:FindFirstChild("Seed")
+	local fruitFrame = scrollingFrame and scrollingFrame:FindFirstChild("Fruit")
+
+	disable_legacy_button_scripts(mainFrame:FindFirstChild("SeedsBT"), trove)
+	disable_legacy_button_scripts(mainFrame:FindFirstChild("FoodsBT"), trove)
+	disable_legacy_button_scripts(seedFrame and seedFrame:FindFirstChild("BuyButton"), trove)
+	disable_legacy_button_scripts(fruitFrame and fruitFrame:FindFirstChild("SellButton"), trove)
 end
 
 local function update_tab_state(mainFrame: Frame)
@@ -150,10 +181,18 @@ local function refresh_all_text(mainFrame: Frame)
 end
 
 local function call_shop_action(remoteName: string)
+	if requestInFlight then
+		return
+	end
+
+	requestInFlight = true
+
 	task.spawn(function()
 		pcall(function()
 			Net.Function[remoteName]:Call()
 		end)
+
+		requestInFlight = false
 	end)
 end
 
@@ -165,6 +204,7 @@ local function bind_main_frame(mainFrame: Frame)
 	currentMainFrame = mainFrame
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
+	cleanup_legacy_ui_scripts(mainFrame, uiTrove)
 
 	local seedsButton = mainFrame:FindFirstChild("SeedsBT")
 	local foodsButton = mainFrame:FindFirstChild("FoodsBT")
