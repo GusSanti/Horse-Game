@@ -14,15 +14,21 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 local UI_NAME = "UI"
 local MAIN_NAME = "Main"
 local ZONES_FOLDER_NAME = "Zones"
-
-local DEFAULT_PROXIMITY_DISTANCE = 6
 local UPDATE_INTERVAL = 0.1
 
-type FrameMap = { [string]: GuiObject }
-type ZoneMap = { [BasePart]: true }
+type ZoneState = {
+	Name: string,
+	Frame: GuiObject?,
+	Parts: { BasePart },
+	IsInside: boolean,
+}
 
 local rootTrove = Trove.new()
 local interfaceTrove = nil
+
+local function debug_log(message: string)
+	print(("[ZoneFrames] %s"):format(message))
+end
 
 local function get_character_root(): BasePart?
 	local character = localPlayer.Character
@@ -38,29 +44,13 @@ local function get_character_root(): BasePart?
 	return nil
 end
 
-local function get_zone_distance(zone: BasePart): number
-	for _, attributeName in { "ProximityDistance", "OpenDistance", "Radius" } do
-		local attributeValue = zone:GetAttribute(attributeName)
+local function is_point_inside_part(point: Vector3, part: BasePart): boolean
+	local localPoint = part.CFrame:PointToObjectSpace(point)
+	local halfSize = part.Size * 0.5
 
-		if typeof(attributeValue) == "number" then
-			return math.max(attributeValue, 0)
-		end
-	end
-
-	return DEFAULT_PROXIMITY_DISTANCE
-end
-
-local function is_point_near_zone(point: Vector3, zone: BasePart): boolean
-	-- Uses the part bounds plus a small padding so both Parts and MeshParts behave consistently.
-	local padding = get_zone_distance(zone)
-	local localPoint = zone.CFrame:PointToObjectSpace(point)
-	local halfSize = zone.Size * 0.5
-
-	local deltaX = math.max(math.abs(localPoint.X) - halfSize.X, 0)
-	local deltaY = math.max(math.abs(localPoint.Y) - halfSize.Y, 0)
-	local deltaZ = math.max(math.abs(localPoint.Z) - halfSize.Z, 0)
-
-	return (deltaX * deltaX) + (deltaY * deltaY) + (deltaZ * deltaZ) <= (padding * padding)
+	return math.abs(localPoint.X) <= halfSize.X
+		and math.abs(localPoint.Y) <= halfSize.Y
+		and math.abs(localPoint.Z) <= halfSize.Z
 end
 
 local function set_frame_visible(frame: GuiObject, isVisible: boolean)
@@ -69,6 +59,69 @@ local function set_frame_visible(frame: GuiObject, isVisible: boolean)
 	end
 
 	frame.Visible = isVisible
+	debug_log(("%s -> Visible = %s"):format(frame:GetFullName(), tostring(isVisible)))
+end
+
+local function find_zone_frame(main: Instance, zoneName: string): GuiObject?
+	local directMatch = main:FindFirstChild(zoneName)
+	if directMatch and directMatch:IsA("GuiObject") then
+		return directMatch
+	end
+
+	local recursiveMatch = main:FindFirstChild(zoneName, true)
+	if recursiveMatch and recursiveMatch:IsA("GuiObject") then
+		return recursiveMatch
+	end
+
+	return nil
+end
+
+local function collect_zone_parts(container: Instance): { BasePart }
+	local parts = {}
+
+	if container:IsA("BasePart") then
+		table.insert(parts, container)
+		return parts
+	end
+
+	for _, descendant in ipairs(container:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+		end
+	end
+
+	return parts
+end
+
+local function build_zone_states(main: Instance, zonesFolder: Instance): { ZoneState }
+	local zoneStates = {}
+
+	for _, child in ipairs(zonesFolder:GetChildren()) do
+		local parts = collect_zone_parts(child)
+
+		if #parts == 0 then
+			continue
+		end
+
+		local zoneName = child.Name
+		local frame = find_zone_frame(main, zoneName)
+
+		if frame then
+			debug_log(("Frame encontrado para zona '%s': %s"):format(zoneName, frame:GetFullName()))
+			set_frame_visible(frame, false)
+		else
+			debug_log(("Frame NAO encontrado para zona '%s' dentro de UI.Main"):format(zoneName))
+		end
+
+		table.insert(zoneStates, {
+			Name = zoneName,
+			Frame = frame,
+			Parts = parts,
+			IsInside = false,
+		})
+	end
+
+	return zoneStates
 end
 
 local function bind_interface(ui: ScreenGui)
@@ -83,59 +136,65 @@ local function bind_interface(ui: ScreenGui)
 	local main = ui:WaitForChild(MAIN_NAME)
 	local zonesFolder = Workspace:WaitForChild(ZONES_FOLDER_NAME)
 
-	local managedFramesByName: FrameMap = {}
-	local trackedZones: ZoneMap = {}
+	local zoneStates: { ZoneState } = {}
 	local accumulator = 0
 
-	local function update_visibility()
+	local function refresh_zones()
+		for _, zoneState in ipairs(zoneStates) do
+			if zoneState.Frame then
+				set_frame_visible(zoneState.Frame, false)
+			end
+		end
+
+		zoneStates = build_zone_states(main, zonesFolder)
+		debug_log(("Zonas carregadas: %d"):format(#zoneStates))
+	end
+
+	local function update_zones()
 		local characterRoot = get_character_root()
-		local activeFrameNames: { [string]: boolean } = {}
+		if not characterRoot then
+			for _, zoneState in ipairs(zoneStates) do
+				if zoneState.IsInside then
+					zoneState.IsInside = false
 
-		if characterRoot then
-			for zone in pairs(trackedZones) do
-				local matchingFrame = managedFramesByName[zone.Name]
+					if zoneState.Frame then
+						set_frame_visible(zoneState.Frame, false)
+					end
+				end
+			end
 
-				if matchingFrame and zone:IsDescendantOf(zonesFolder) and is_point_near_zone(characterRoot.Position, zone) then
-					activeFrameNames[zone.Name] = true
+			return
+		end
+
+		for _, zoneState in ipairs(zoneStates) do
+			local isInside = false
+
+			for _, part in ipairs(zoneState.Parts) do
+				if part.Parent and is_point_inside_part(characterRoot.Position, part) then
+					isInside = true
+					break
+				end
+			end
+
+			if isInside ~= zoneState.IsInside then
+				zoneState.IsInside = isInside
+
+				if zoneState.Frame then
+					set_frame_visible(zoneState.Frame, isInside)
+				end
+
+				if isInside then
+					debug_log(("Player ENTROU na zona '%s'"):format(zoneState.Name))
+				else
+					debug_log(("Player SAIU da zona '%s'"):format(zoneState.Name))
 				end
 			end
 		end
-
-		for frameName, frame in pairs(managedFramesByName) do
-			set_frame_visible(frame, activeFrameNames[frameName] == true)
-		end
 	end
 
-	local function refresh_bindings()
-		local previousFrames = managedFramesByName
-		local nextFrames: FrameMap = {}
-		local nextZones: ZoneMap = {}
-		local zoneNames: { [string]: boolean } = {}
-
-		for _, descendant in ipairs(zonesFolder:GetDescendants()) do
-			if descendant:IsA("BasePart") then
-				nextZones[descendant] = true
-				zoneNames[descendant.Name] = true
-			end
-		end
-
-		for _, child in ipairs(main:GetChildren()) do
-			if child:IsA("GuiObject") and zoneNames[child.Name] then
-				nextFrames[child.Name] = child
-			end
-		end
-
-		trackedZones = nextZones
-		managedFramesByName = nextFrames
-
-		for _, frame in pairs(previousFrames) do
-			if managedFramesByName[frame.Name] ~= frame then
-				set_frame_visible(frame, false)
-			end
-		end
-
-		update_visibility()
-	end
+	debug_log(("UI encontrada: %s"):format(ui:GetFullName()))
+	debug_log(("Main encontrada: %s"):format(main:GetFullName()))
+	debug_log(("Zones encontrada: %s"):format(zonesFolder:GetFullName()))
 
 	trove:Add(ui.AncestryChanged:Connect(function(_, parent)
 		if parent then
@@ -151,27 +210,41 @@ local function bind_interface(ui: ScreenGui)
 		end
 	end)
 
+	trove:Add(zonesFolder.ChildAdded:Connect(function()
+		debug_log("Zona adicionada, recarregando mapeamento")
+		refresh_zones()
+	end))
+
+	trove:Add(zonesFolder.ChildRemoved:Connect(function()
+		debug_log("Zona removida, recarregando mapeamento")
+		refresh_zones()
+	end))
+
 	trove:Add(zonesFolder.DescendantAdded:Connect(function(instance)
 		if instance:IsA("BasePart") then
-			refresh_bindings()
+			debug_log(("Part adicionada em zonas: %s"):format(instance:GetFullName()))
+			refresh_zones()
 		end
 	end))
 
 	trove:Add(zonesFolder.DescendantRemoving:Connect(function(instance)
 		if instance:IsA("BasePart") then
-			refresh_bindings()
+			debug_log(("Part removida de zonas: %s"):format(instance:GetFullName()))
+			refresh_zones()
 		end
 	end))
 
-	trove:Add(main.ChildAdded:Connect(function(child)
-		if child:IsA("GuiObject") then
-			refresh_bindings()
+	trove:Add(main.DescendantAdded:Connect(function(instance)
+		if instance:IsA("GuiObject") then
+			debug_log(("Gui adicionada em Main: %s"):format(instance:GetFullName()))
+			refresh_zones()
 		end
 	end))
 
-	trove:Add(main.ChildRemoved:Connect(function(child)
-		if child:IsA("GuiObject") then
-			refresh_bindings()
+	trove:Add(main.DescendantRemoving:Connect(function(instance)
+		if instance:IsA("GuiObject") then
+			debug_log(("Gui removida de Main: %s"):format(instance:GetFullName()))
+			refresh_zones()
 		end
 	end))
 
@@ -183,10 +256,11 @@ local function bind_interface(ui: ScreenGui)
 		end
 
 		accumulator = 0
-		update_visibility()
+		update_zones()
 	end))
 
-	refresh_bindings()
+	refresh_zones()
+	update_zones()
 end
 
 local function try_bind_ui(instance: Instance)
