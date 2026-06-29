@@ -5,6 +5,11 @@ FarmingCatalog.Seed = {
 	DisplayName = "Seed",
 	InventoryPath = "Inventory.Seeds",
 	Price = 1,
+	ToolName = "Seed",
+	TemplateSearchNames = {
+		"Seed",
+		"carrot_seed",
+	},
 }
 
 FarmingCatalog.Fruit = {
@@ -13,6 +18,17 @@ FarmingCatalog.Fruit = {
 	InventoryPath = "Inventory.Consumables.Food",
 	SellPrice = 5,
 	HarvestYield = 1,
+	ToolName = "Fruit",
+	TemplateSearchNames = {
+		"Fruit",
+		"carrot_bunch",
+		"CarrotBunch",
+	},
+}
+
+FarmingCatalog.ManagedItems = {
+	FarmingCatalog.Seed,
+	FarmingCatalog.Fruit,
 }
 
 function FarmingCatalog.GetItemCount(bucket, itemId)
@@ -21,6 +37,10 @@ function FarmingCatalog.GetItemCount(bucket, itemId)
 	end
 
 	return bucket[itemId] or 0
+end
+
+function FarmingCatalog.GetManagedItems()
+	return FarmingCatalog.ManagedItems
 end
 
 return FarmingCatalog

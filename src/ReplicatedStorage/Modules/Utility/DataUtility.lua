@@ -97,6 +97,53 @@ local function set_by_path(root: any, path: string, value: any)
 	end
 end
 
+local function notify_signals(signalMap: {[string]: any}, dataRoot: any, changedPath: string?)
+	if not signalMap then
+		return
+	end
+
+	local firedPaths: {[string]: boolean} = {}
+
+	local function fire_path(path: string)
+		if firedPaths[path] then
+			return
+		end
+
+		firedPaths[path] = true
+
+		local signal = signalMap[path]
+		if signal then
+			signal:Fire(get_by_path(dataRoot, path))
+		end
+	end
+
+	if not changedPath or changedPath == "" then
+		for path in pairs(signalMap) do
+			fire_path(path)
+		end
+
+		return
+	end
+
+	fire_path(changedPath)
+
+	local currentPath = ""
+	for _, segment in split_path(changedPath) do
+		currentPath = currentPath == "" and segment or (`{currentPath}.{segment}`)
+
+		if currentPath ~= changedPath then
+			fire_path(currentPath)
+		end
+	end
+
+	local changedPrefix = (`{changedPath}.`)
+	for path in pairs(signalMap) do
+		if path ~= changedPath and string.sub(path, 1, #changedPrefix) == changedPrefix then
+			fire_path(path)
+		end
+	end
+end
+
 local function ensure_remotes_server(): ()
 	remotesFolder = ReplicatedStorage:FindFirstChild(REMOTE_FOLDER_NAME) :: Folder?
 	if not remotesFolder then
@@ -155,11 +202,7 @@ local function ensure_remotes_client(): ()
 		end
 
 		set_by_path(clientCache, payload.path, payload.value)
-
-		local sig = clientSignals[payload.path]
-		if sig then
-			sig:Fire(payload.value)
-		end
+		notify_signals(clientSignals, clientCache, payload.path)
 	end)
 end
 
@@ -211,12 +254,7 @@ function DataUtility.server.set(player: Player, path: string, value: any): ()
 
 	local sigs = serverSignals[player.UserId]
 	if sigs then
-		local sig = sigs[path]
-		if not sig then
-			sig = new_signal()
-			sigs[path] = sig
-		end
-		sig:Fire(value)
+		notify_signals(sigs, profile.Data, path)
 	end
 
 	if changedRemote then

@@ -33,7 +33,7 @@ local function bootstrap_player(player)
 			return
 		end
 
-		FarmingShopService.SyncSeedTools(player)
+		FarmingShopService.SyncInventoryTools(player)
 		update_login_data(player)
 		HorseService.EnsureStarterHorse(player)
 		QuestService.EnsureDailyQuest(player)
