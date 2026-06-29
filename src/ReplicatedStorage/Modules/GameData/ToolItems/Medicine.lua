@@ -1,0 +1,87 @@
+local Shared = require(script.Parent:WaitForChild("Shared"))
+
+return {
+	Shared.CreateMedicine({
+		ItemId = "basic_bandage",
+		DisplayName = "Basic Bandage",
+		Description = "A simple wrap for light injuries and quick stable care.",
+		Price = 2,
+		PriceLabel = "2 coin",
+		SortOrder = 10,
+		Effects = {
+			HealthGain = 12,
+			HappinessGain = 1,
+			FriendshipGain = 2,
+			MoodText = "Patched Up",
+		},
+		Tags = { "Bandage", "Starter" },
+	}),
+	Shared.CreateMedicine({
+		ItemId = "herbal_poultice",
+		DisplayName = "Herbal Poultice",
+		Description = "A gentle herbal blend that heals while helping the horse relax.",
+		Price = 4,
+		PriceLabel = "4 coin",
+		SortOrder = 20,
+		Effects = {
+			HealthGain = 10,
+			HappinessGain = 5,
+			FriendshipGain = 4,
+			SecondaryNeedAdjustments = {
+				Cleanliness = 4,
+			},
+			MoodText = "Calmed",
+		},
+		Tags = { "Herbal", "Comfort" },
+	}),
+	Shared.CreateMedicine({
+		ItemId = "bitter_syrup",
+		DisplayName = "Bitter Syrup",
+		Description = "A strong emergency medicine that works well, even if the horse hates the taste.",
+		Price = 5,
+		PriceLabel = "5 coin",
+		SortOrder = 30,
+		Effects = {
+			HealthGain = 22,
+			HappinessGain = -4,
+			FriendshipGain = 1,
+			MoodText = "Recovered",
+		},
+		Tags = { "Emergency", "Strong" },
+	}),
+	Shared.CreateMedicine({
+		ItemId = "digestive_relief",
+		DisplayName = "Digestive Relief",
+		Description = "Settles the stomach and clears excess food or water overload.",
+		Price = 6,
+		PriceLabel = "6 coin",
+		SortOrder = 40,
+		Effects = {
+			HealthGain = 14,
+			HappinessGain = 2,
+			FriendshipGain = 3,
+			OverflowRelief = { "Hunger", "Thirst" },
+			MoodText = "Settled",
+		},
+		Tags = { "Digestive", "Overflow" },
+	}),
+	Shared.CreateMedicine({
+		ItemId = "recovery_tonic",
+		DisplayName = "Recovery Tonic",
+		Description = "A premium tonic with instant healing and a slower recovery effect over time.",
+		Price = 8,
+		PriceLabel = "8 coin",
+		SortOrder = 50,
+		Effects = {
+			HealthGain = 8,
+			HappinessGain = 2,
+			FriendshipGain = 4,
+			HealthRegen = {
+				TotalGain = 12,
+				DurationMinutes = 10,
+			},
+			MoodText = "Recovering",
+		},
+		Tags = { "Tonic", "Recovery" },
+	}),
+}

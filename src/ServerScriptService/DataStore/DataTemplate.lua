@@ -1,3 +1,26 @@
+------------------//SERVICES
+local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+------------------//CONSTANTS
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local Dictionary = Modules:WaitForChild("Dictionary")
+local GameData = Modules:WaitForChild("GameData")
+
+local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
+local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
+
+------------------//VARIABLES
+local defaultHorse = HorseFactory.Create("Default", 0, {
+	HorseId = "Default",
+	Nickname = "Default",
+	Source = "ProfileTemplate",
+	IsStarterGrant = true,
+	ObtainedAt = 0,
+})
+
+local defaultHorseSlots = StableDictionary.get_default_horse_slots()
+defaultHorseSlots.Slot1 = defaultHorse.Id
+
 local ProfileTemplate = {
 	ProfileVersion = 1,
 	TimePlayed = 0,
@@ -21,7 +44,7 @@ local ProfileTemplate = {
 	Progression = {
 		TutorialCompleted = false,
 		TutorialStep = "NotStarted",
-		FirstHorseGranted = false,
+		FirstHorseGranted = true,
 		UnlockedFeatures = {
 			Stable = true,
 			TackShop = false,
@@ -32,10 +55,12 @@ local ProfileTemplate = {
 	},
 
 	Horses = {
-		EquippedHorseId = "",
+		EquippedHorseId = defaultHorse.Id,
 		NextHorseInstanceId = 0,
-		OrderedIds = {},
-		Owned = {},
+		OrderedIds = { defaultHorse.Id },
+		Owned = {
+			[defaultHorse.Id] = defaultHorse,
+		},
 	},
 
 	Inventory = {
@@ -44,8 +69,10 @@ local ProfileTemplate = {
 		StableDecor = {},
 		Consumables = {
 			Food = {},
+			Water = {},
 			Grooming = {},
 			Medical = {},
+			Misc = {},
 		},
 		Seeds = {},
 		Trophies = {},
@@ -53,7 +80,8 @@ local ProfileTemplate = {
 
 	Stable = {
 		Level = 1,
-		OwnedStalls = 1,
+		OwnedStalls = StableDictionary.DefaultOwnedStalls,
+		HorseSlots = defaultHorseSlots,
 		ActiveStyleId = "Default",
 		Upgrades = {},
 		PlacedDecor = {},
@@ -104,9 +132,17 @@ local ProfileTemplate = {
 		TotalRewardsEarned = 0,
 	},
 
+	Race = {
+		RacesEntered = 0,
+		RacesWon = 0,
+		BestRaceTimeMs = 0,
+		LastRaceAt = 0,
+		TotalRewardsEarned = 0,
+	},
+
 	Collection = {
-		DiscoveredHorseIds = {},
-		OwnedHorseCatalogIds = {},
+		DiscoveredHorseIds = { defaultHorse.CatalogId },
+		OwnedHorseCatalogIds = { defaultHorse.CatalogId },
 		UnlockedCosmeticIds = {},
 	},
 
@@ -114,13 +150,20 @@ local ProfileTemplate = {
 		TotalCareActions = 0,
 		TotalFeedActions = 0,
 		TotalWaterActions = 0,
+		TotalMedicalActions = 0,
 		TotalGroomActions = 0,
 		TotalCleanActions = 0,
 		TotalBondPointsEarned = 0,
 		TotalQuestsCompleted = 0,
 		TotalArenaRuns = 0,
 		TotalCropsHarvested = 0,
+<<<<<<< Updated upstream
+		TotalHorsesOwned = 1,
+=======
 		TotalHorsesOwned = 0,
+		TotalRacesEntered = 0,
+		TotalRaceWins = 0,
+>>>>>>> Stashed changes
 	},
 
 	LiveOps = {
@@ -129,4 +172,9 @@ local ProfileTemplate = {
 	},
 }
 
+------------------//FUNCTIONS
+
+------------------//MAIN FUNCTIONS
+
+------------------//INIT
 return ProfileTemplate

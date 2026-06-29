@@ -18,6 +18,7 @@ local FarmingShopService = {}
 
 local initialized = false
 local playerTroves = {}
+<<<<<<< HEAD
 local serviceTrove = Trove.new()
 local toolTemplateCache = {}
 
@@ -25,6 +26,8 @@ local function normalize_amount(amount: number?): number
 	return math.max(0, math.floor(tonumber(amount) or 0))
 end
 
+=======
+>>>>>>> main
 local function get_horseshoes(player: Player): number
 	return normalize_amount(DataUtility.server.get(player, "Currencies.Horseshoes"))
 end
@@ -116,6 +119,7 @@ local function create_fallback_tool(itemDefinition): Tool
 	return tool
 end
 
+<<<<<<< HEAD
 local function search_for_tool_template(container: Instance?, searchNames: { string }): Tool?
 	if not container then
 		return nil
@@ -154,6 +158,20 @@ local function get_tool_template(itemDefinition): Tool
 
 	toolTemplateCache[cacheKey] = template
 	return template
+=======
+local function get_seed_tool_template(): Tool
+	local success, template = pcall(FarmingUtility.GetSeedToolTemplate)
+	if success and template then
+		return template
+	end
+
+	local fallbackTemplate = ServerStorage:FindFirstChild(FarmingUtility.SEED_TOOL_NAME, true)
+	if fallbackTemplate and fallbackTemplate:IsA("Tool") then
+		return fallbackTemplate
+	end
+
+	return create_fallback_seed_tool()
+>>>>>>> main
 end
 
 local function ensure_tool_handle(tool: Tool, itemDefinition): BasePart
@@ -261,6 +279,7 @@ local function sync_runtime_tools(player: Player, itemDefinition, desiredCount: 
 	end
 end
 
+<<<<<<< HEAD
 local function sync_starter_gear(player: Player, itemDefinition, desiredCount: number)
 	local starterGear = player:FindFirstChild("StarterGear") or player:WaitForChild("StarterGear", 5)
 	if not starterGear then
@@ -317,6 +336,14 @@ local function cleanup_player(player: Player)
 		return
 	end
 
+=======
+local function disconnect_player(player: Player)
+	local trove = playerTroves[player]
+	if not trove then
+		return
+	end
+
+>>>>>>> main
 	trove:Destroy()
 	playerTroves[player] = nil
 end
@@ -333,6 +360,7 @@ local function track_player(player: Player)
 		end
 	end)
 
+<<<<<<< HEAD
 	for _, itemDefinition in ipairs(FarmingCatalog.GetManagedItems()) do
 		local connection = DataUtility.server.bind(player, itemDefinition.InventoryPath, function()
 			FarmingShopService.SyncInventoryTools(player, itemDefinition)
@@ -345,6 +373,14 @@ local function track_player(player: Player)
 
 	trove:Add(player.CharacterAdded:Connect(function()
 		task.defer(FarmingShopService.SyncInventoryTools, player)
+=======
+	if seedInventoryConnection then
+		trove:Add(seedInventoryConnection)
+	end
+
+	trove:Add(player.CharacterAdded:Connect(function()
+		task.defer(FarmingShopService.SyncSeedTools, player)
+>>>>>>> main
 	end))
 
 	trove:Add(player.ChildAdded:Connect(function(child)
