@@ -25,6 +25,7 @@ local HorseBondService = require(Services:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
+local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))
 
 local HorseService = {}
 local statusDecayLoopStarted = false
@@ -474,6 +475,11 @@ function HorseService.EquipHorse(player, horseId)
 		resolvedHorseId = firstHorseId
 	end
 
+	local horse = horses.Owned[resolvedHorseId]
+	if horse and HorseCareService.RefreshHorse(horse, os.time()) then
+		DataUtility.server.set(player, "Horses", horses)
+	end
+
 	return horses.Owned[resolvedHorseId], resolvedHorseId
 end
 
@@ -801,6 +807,10 @@ function HorseService.sync_plot_horses(player: Player, plot: Instance): (boolean
 	return true, "Synced"
 end
 
+<<<<<<< HEAD
+function HorseService.refresh_all_player_horses(player: Player): boolean
+	return HorseCareService.RefreshAllPlayerHorses(player)
+=======
 function HorseService.refresh_horse_statuses(player: Player, horseId: string?): (boolean, string)
 	local horses = DataUtility.server.get(player, "Horses")
 	return refresh_owned_horse_statuses(player, horses, horseId)
@@ -822,6 +832,7 @@ function HorseService.start_status_decay_loop(): ()
 			end
 		end
 	end)
+>>>>>>> main
 end
 
 HorseService.EquipHorse = HorseService.equip_horse
@@ -832,8 +843,12 @@ HorseService.ClearStableSlot = HorseService.clear_stable_slot
 HorseService.ClearPlotHorses = HorseService.clear_plot_horses
 HorseService.SyncPlotHorses = HorseService.sync_plot_horses
 HorseService.GetPlayerHorse = HorseService.get_player_horse
+<<<<<<< HEAD
+HorseService.RefreshAllPlayerHorses = HorseService.refresh_all_player_horses
+=======
 HorseService.RefreshHorseStatuses = HorseService.refresh_horse_statuses
 HorseService.StartStatusDecayLoop = HorseService.start_status_decay_loop
+>>>>>>> main
 
 ------------------//INIT
 =======
