@@ -13,7 +13,12 @@ local DEFAULT_HORSE_SLOTS = {
 	Slot3 = "",
 }
 
-local DEFAULT_OWNED_STALLS = #HORSE_SLOT_ORDER
+local DEFAULT_OWNED_STALLS = 1
+local MAX_OWNED_STALLS = #HORSE_SLOT_ORDER
+local SLOT_PURCHASE_PRICES = {
+	Slot2 = 500,
+	Slot3 = 1500,
+}
 
 ------------------//VARIABLES
 local StableDictionary = {}
@@ -27,9 +32,15 @@ function StableDictionary.get_default_horse_slots(): {[string]: string}
 	}
 end
 
+function StableDictionary.get_slot_purchase_price(slotName: string): number?
+	return SLOT_PURCHASE_PRICES[slotName]
+end
+
 ------------------//MAIN FUNCTIONS
 StableDictionary.HorseSlotOrder = HORSE_SLOT_ORDER
 StableDictionary.DefaultOwnedStalls = DEFAULT_OWNED_STALLS
+StableDictionary.MaxOwnedStalls = MAX_OWNED_STALLS
+StableDictionary.SlotPurchasePrices = SLOT_PURCHASE_PRICES
 
 ------------------//INIT
 return StableDictionary

@@ -143,14 +143,27 @@ local function get_owned_horses_state(player: Player)
 end
 
 local function get_owned_stalls(stable): number
-	local maxOwnedStalls = StableDictionary.DefaultOwnedStalls
+	local maxOwnedStalls = StableDictionary.MaxOwnedStalls or #StableDictionary.HorseSlotOrder
 	local ownedStalls = stable.OwnedStalls
 
 	if type(ownedStalls) ~= "number" then
-		return maxOwnedStalls
+		return StableDictionary.DefaultOwnedStalls
 	end
 
 	return math.clamp(math.floor(ownedStalls), 0, maxOwnedStalls)
+end
+
+local function get_slot_purchase_price(slotName: string): number?
+	if StableDictionary.get_slot_purchase_price then
+		return StableDictionary.get_slot_purchase_price(slotName)
+	end
+
+	return StableDictionary.SlotPurchasePrices and StableDictionary.SlotPurchasePrices[slotName] or nil
+end
+
+local function get_next_purchasable_slot_name(ownedStalls: number): string?
+	local nextIndex = ownedStalls + 1
+	return StableDictionary.HorseSlotOrder[nextIndex]
 end
 
 local function is_valid_slot_name(slotName: string): boolean
@@ -652,6 +665,18 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 		return nil, "UnknownHorseCatalogId"
 	end
 
+	local stableChanged = ensure_stable_state(stable, horses)
+	local ownedStalls = get_owned_stalls(stable)
+	local emptySlotName = get_first_empty_slot_name(stable.HorseSlots, ownedStalls)
+
+	if not emptySlotName then
+		if stableChanged then
+			save_stable(player, stable)
+		end
+
+		return nil, "NoStableSlotAvailable"
+	end
+
 	horses.NextHorseInstanceId = (horses.NextHorseInstanceId or 0) + 1
 
 	local horse = HorseFactory.Create(catalogId, horses.NextHorseInstanceId, {
@@ -666,12 +691,13 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 
 	horses.Owned[horse.Id] = horse
 	TableUtility.InsertUnique(horses.OrderedIds, horse.Id)
+	stable.HorseSlots[emptySlotName] = horse.Id
 
 	if options.EquipOnGrant or horses.EquippedHorseId == "" then
 		horses.EquippedHorseId = horse.Id
 	end
 
-	local stableChanged = ensure_stable_state(stable, horses)
+	stableChanged = ensure_stable_state(stable, horses) or stableChanged
 
 	TableUtility.InsertUnique(collection.DiscoveredHorseIds, catalogId)
 	TableUtility.InsertUnique(collection.OwnedHorseCatalogIds, catalogId)
@@ -811,6 +837,76 @@ function HorseService.clear_stable_slot(player: Player, slotName: string): (bool
 	save_stable(player, stable)
 
 	return true, slotName
+end
+
+function HorseService.get_owned_stalls(player: Player): (number?, string?)
+	local stable = DataUtility.server.get(player, "Stable")
+	if not stable then
+		return nil, "DataUnavailable"
+	end
+
+	return get_owned_stalls(stable), nil
+end
+
+function HorseService.buy_stable_slot(player: Player, slotName: string): (boolean, string, number?)
+	if not is_valid_slot_name(slotName) then
+		return false, "InvalidSlot", nil
+	end
+
+	if slotName == PRIMARY_HORSE_SLOT_NAME then
+		return false, "StarterSlotAlwaysOwned", nil
+	end
+
+	local slotPrice = get_slot_purchase_price(slotName)
+	if type(slotPrice) ~= "number" or slotPrice <= 0 then
+		return false, "SlotNotPurchasable", nil
+	end
+
+	local horses = DataUtility.server.get(player, "Horses")
+	local stable = DataUtility.server.get(player, "Stable")
+	if not horses or not stable then
+		return false, "DataUnavailable", nil
+	end
+
+	local stableChanged = ensure_stable_state(stable, horses)
+	local ownedStalls = get_owned_stalls(stable)
+	local slotIndex = get_slot_index(slotName)
+	local nextSlotName = get_next_purchasable_slot_name(ownedStalls)
+
+	if stableChanged then
+		save_stable(player, stable)
+	end
+
+	if not slotIndex then
+		return false, "InvalidSlot", nil
+	end
+
+	if slotIndex <= ownedStalls then
+		return false, "SlotAlreadyOwned", ownedStalls
+	end
+
+	if slotName ~= nextSlotName then
+		return false, "PreviousSlotRequired", ownedStalls
+	end
+
+	local currentHorseshoes = DataUtility.server.get(player, "Currencies.Horseshoes") or 0
+	if currentHorseshoes < slotPrice then
+		return false, "NotEnoughHorseshoes", ownedStalls
+	end
+
+	stable.OwnedStalls = math.min(
+		ownedStalls + 1,
+		StableDictionary.MaxOwnedStalls or #StableDictionary.HorseSlotOrder
+	)
+
+	if ensure_stable_state(stable, horses) then
+		-- ensure_stable_state may auto-fill newly unlocked slots with already owned horses.
+	end
+
+	DataUtility.server.set(player, "Currencies.Horseshoes", currentHorseshoes - slotPrice)
+	save_stable(player, stable)
+
+	return true, slotName, stable.OwnedStalls
 end
 
 function HorseService.clear_plot_horses(plot: Instance): (boolean, string)
@@ -968,6 +1064,8 @@ HorseService.CreateHorseForPlayer = HorseService.create_horse_for_player
 HorseService.EnsureStarterHorse = HorseService.ensure_starter_horse
 HorseService.SetStableSlotHorse = HorseService.set_stable_slot_horse
 HorseService.ClearStableSlot = HorseService.clear_stable_slot
+HorseService.GetOwnedStalls = HorseService.get_owned_stalls
+HorseService.BuyStableSlot = HorseService.buy_stable_slot
 HorseService.ClearPlotHorses = HorseService.clear_plot_horses
 HorseService.SyncPlotHorses = HorseService.sync_plot_horses
 HorseService.GetPlayerHorse = HorseService.get_player_horse

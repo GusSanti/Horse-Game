@@ -2,7 +2,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
-local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -164,9 +163,13 @@ local function build_entries_payload(round)
 			PlayerName = participant.Player.Name,
 			HorseId = participant.HorseId,
 			HorseName = participant.HorseSummary.Name,
+			CatalogId = participant.HorseSummary.CatalogId,
+			PlaceholderModelKey = participant.HorseSummary.PlaceholderModelKey,
 			SlotIndex = participant.SlotIndex,
 			Progress = round_to_tenths(participant.Progress),
 			Distance = RaceConfig.RaceDistance,
+			VisualSpeed = round_to_tenths(participant.SegmentTargetSpeed or participant.BaseSpeed),
+			SegmentIndex = math.floor((participant.SegmentStartProgress or 0) / RaceConfig.SegmentLength),
 			Rank = index,
 		}
 	end
@@ -406,25 +409,9 @@ local function play_segment_tweens(participant)
 	local segmentDistance = math.max(0.001, participant.SegmentEndProgress - participant.SegmentStartProgress)
 	local averageSpeed = math.max(0.1, (participant.SegmentStartSpeed + participant.SegmentTargetSpeed) * 0.5)
 	local duration = math.max(0.05, segmentDistance / averageSpeed)
-	local targetPivot = build_pivot_from_progress(participant, participant.SegmentEndProgress)
-	local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
-	local activeTweens = {}
 
 	participant.SegmentDuration = duration
 	participant.SegmentStartedAt = os.clock()
-
-	for part, offset in pairs(participant.PartOffsets) do
-		if part and part.Parent then
-			local tween = TweenService:Create(part, tweenInfo, {
-				CFrame = targetPivot * offset,
-			})
-
-			activeTweens[#activeTweens + 1] = tween
-			tween:Play()
-		end
-	end
-
-	participant.ActiveTweens = activeTweens
 end
 
 local function get_aligned_slot_pivot(model, slot)
@@ -448,7 +435,6 @@ local function create_race_model(round, horseSummary)
 	end
 
 	prepare_model(model)
-	model.Parent = round.Assets.HorsesFolder
 	return model
 end
 

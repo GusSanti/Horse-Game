@@ -11,6 +11,10 @@ local PLOT_NUMBER_ATTRIBUTE = "PlotNumber"
 local PLOT_NUMBER_LOWER_ATTRIBUTE = "plotnumber"
 local OWNER_USER_ID_ATTRIBUTE = "OwnerUserId"
 local OWNER_NAME_ATTRIBUTE = "OwnerName"
+local HORSE_FOLDER_NAME = "HorseFolder"
+local SLOT_PROMPT_PART_NAME = "Proximity"
+local SLOT_PROMPT_ACTION_TEXT = "Comprar"
+local SLOT_PROMPT_HOLD_DURATION = 0
 
 type PlotData = {
 	instance: Instance,
@@ -20,6 +24,7 @@ type PlotData = {
 ------------------//VARIABLES
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Libraries = Modules:WaitForChild("Libraries")
+local StableDictionary = require(Modules:WaitForChild("Dictionary"):WaitForChild("StableDictionary"))
 local DataUtility = require(Modules:WaitForChild("Utility"):WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local Trove = require(Libraries:WaitForChild("Trove"))
@@ -28,6 +33,7 @@ local stablesFolder: Instance = workspace:WaitForChild(STABLES_FOLDER_NAME)
 local assignedPlotByPlayer: {[Player]: PlotData} = {}
 local plotOwnerByInstance: {[Instance]: Player} = {}
 local playerTroves: {[Player]: any} = {}
+local disable_plot_slot_prompts
 
 ------------------//FUNCTIONS
 local function set_plot_number_attributes(instance: Instance, plotNumber: number?): ()
@@ -147,6 +153,7 @@ local function release_plot(player: Player): ()
 	local plotData = assignedPlotByPlayer[player]
 	if plotData then
 		HorseService.clear_plot_horses(plotData.instance)
+		disable_plot_slot_prompts(plotData.instance)
 
 		if plotOwnerByInstance[plotData.instance] == player then
 			plotOwnerByInstance[plotData.instance] = nil
@@ -179,6 +186,96 @@ local function sync_plot_horses(player: Player): ()
 	end
 
 	HorseService.sync_plot_horses(player, plotData.instance)
+end
+
+local function get_owned_stalls_from_stable(stable): number
+	local ownedStalls = tonumber(stable and stable.OwnedStalls) or StableDictionary.DefaultOwnedStalls
+	return math.clamp(
+		math.floor(ownedStalls),
+		0,
+		StableDictionary.MaxOwnedStalls or #StableDictionary.HorseSlotOrder
+	)
+end
+
+local function get_slot_prompt(plot: Instance, slotName: string): ProximityPrompt?
+	local horseFolder = plot:FindFirstChild(HORSE_FOLDER_NAME)
+	local slotFolder = horseFolder and horseFolder:FindFirstChild(slotName)
+	local proximityPart = slotFolder and slotFolder:FindFirstChild(SLOT_PROMPT_PART_NAME)
+	if not proximityPart then
+		return nil
+	end
+
+	for _, child in ipairs(proximityPart:GetChildren()) do
+		if child:IsA("ProximityPrompt") then
+			return child
+		end
+	end
+
+	return nil
+end
+
+disable_plot_slot_prompts = function(plot: Instance): ()
+	for _, slotName: string in ipairs(StableDictionary.HorseSlotOrder) do
+		local prompt = get_slot_prompt(plot, slotName)
+		if prompt then
+			prompt.Enabled = false
+		end
+	end
+end
+
+local function refresh_plot_slot_prompts(player: Player): ()
+	local plotData = assignedPlotByPlayer[player]
+	if not plotData then
+		return
+	end
+
+	local stable = DataUtility.server.get(player, "Stable")
+	if not stable then
+		disable_plot_slot_prompts(plotData.instance)
+		return
+	end
+
+	local ownedStalls = get_owned_stalls_from_stable(stable)
+
+	for slotIndex, slotName: string in ipairs(StableDictionary.HorseSlotOrder) do
+		local prompt = get_slot_prompt(plotData.instance, slotName)
+		if prompt then
+			local slotPrice = StableDictionary.get_slot_purchase_price(slotName)
+			local isStarterSlot = slotIndex == 1
+			local isOwned = slotIndex <= ownedStalls
+			local isNextLockedSlot = slotIndex == (ownedStalls + 1)
+			local isPurchasable = (not isStarterSlot)
+				and (not isOwned)
+				and isNextLockedSlot
+				and type(slotPrice) == "number"
+				and slotPrice > 0
+
+			prompt.Enabled = isPurchasable
+			prompt.HoldDuration = SLOT_PROMPT_HOLD_DURATION
+			prompt.ActionText = SLOT_PROMPT_ACTION_TEXT
+			prompt.ObjectText = type(slotPrice) == "number"
+				and ("Slot %d - %d Horseshoes"):format(slotIndex, slotPrice)
+				or ("Slot %d"):format(slotIndex)
+		end
+	end
+end
+
+local function bind_plot_slot_prompts(player: Player, playerTrove, plot: Instance): ()
+	for _, slotName: string in ipairs(StableDictionary.HorseSlotOrder) do
+		local prompt = get_slot_prompt(plot, slotName)
+		if prompt then
+			playerTrove:Add(prompt.Triggered:Connect(function(triggeringPlayer: Player)
+				if triggeringPlayer ~= player then
+					return
+				end
+
+				HorseService.BuyStableSlot(player, slotName)
+				refresh_plot_slot_prompts(player)
+			end))
+		end
+	end
+
+	refresh_plot_slot_prompts(player)
 end
 
 local function teleport_character_to_plot(player: Player, character: Model): ()
@@ -220,6 +317,11 @@ local function on_player_added(player: Player): ()
 	local playerTrove = Trove.new()
 	playerTroves[player] = playerTrove
 
+	local plotData = assignedPlotByPlayer[player]
+	if plotData then
+		bind_plot_slot_prompts(player, playerTrove, plotData.instance)
+	end
+
 	local horsesConnection = DataUtility.server.bind(player, "Horses", function()
 		sync_plot_horses(player)
 	end)
@@ -230,6 +332,7 @@ local function on_player_added(player: Player): ()
 
 	local stableConnection = DataUtility.server.bind(player, "Stable", function()
 		sync_plot_horses(player)
+		refresh_plot_slot_prompts(player)
 	end)
 
 	if stableConnection then
