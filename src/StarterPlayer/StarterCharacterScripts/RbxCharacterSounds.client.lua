@@ -11,8 +11,66 @@ RbxCharacterSounds - DO NOT MODIFY THIS SCRIPT UNLESS YOU KNOW WHAT YOU'RE DOING
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
-local FootstepsSoundGroup = game:GetService("SoundService"):WaitForChild("Footsteps")
+
+local function ensureDefaultMaterialSound(parent, materialName)
+	local sound = parent:FindFirstChild(materialName)
+	if sound and sound:IsA("Sound") then
+		return sound
+	end
+
+	if sound then
+		sound:Destroy()
+	end
+
+	sound = Instance.new("Sound")
+	sound.Name = materialName
+	sound.SoundId = "rbxasset://sounds/action_footsteps_plastic.mp3"
+	sound.Volume = 0.65
+	sound.PlaybackSpeed = 1
+	sound.Parent = parent
+
+	return sound
+end
+
+local function ensureFootstepsFolder()
+	local footstepsFolder = SoundService:FindFirstChild("Footsteps")
+
+	if not footstepsFolder then
+		footstepsFolder = Instance.new("Folder")
+		footstepsFolder.Name = "Footsteps"
+		footstepsFolder.Parent = SoundService
+	end
+
+	ensureDefaultMaterialSound(footstepsFolder, "Plastic")
+
+	return footstepsFolder
+end
+
+local FootstepsSoundGroup = ensureFootstepsFolder()
+
+local function getMaterialSound(materialName)
+	local materialNode = FootstepsSoundGroup:FindFirstChild(materialName)
+	if materialNode and materialNode:IsA("Sound") then
+		return materialNode
+	end
+
+	local plastic = ensureDefaultMaterialSound(FootstepsSoundGroup, "Plastic")
+	if materialName == "Plastic" then
+		return plastic
+	end
+
+	if materialNode then
+		materialNode:Destroy()
+	end
+
+	local fallback = plastic:Clone()
+	fallback.Name = materialName
+	fallback.Parent = FootstepsSoundGroup
+
+	return fallback
+end
 
 local SOUND_DATA = {
 	Climbing = {
@@ -227,7 +285,7 @@ local function initializeSoundSystem(player, humanoid, rootPart)
 
 		[sounds.Running] = function(dt, sound, vel)
 			local materialName = humanoid.FloorMaterial.Name
-			local materialNode = FootstepsSoundGroup:FindFirstChild(materialName)
+			local materialNode = getMaterialSound(materialName)
 
 			if not materialNode then
 				warn("Material não encontrado no Footsteps: " .. materialName .. " - Usando Plastic")
@@ -364,9 +422,9 @@ Humanoid.Changed:Connect(function(property)
 
 end)
 
-Humanoid.Running:connect(function(a)
+Humanoid.Running:Connect(function(a)
 	local materialName = Humanoid.FloorMaterial.Name
-	local materialNode = FootstepsSoundGroup:FindFirstChild(materialName)
+	local materialNode = getMaterialSound(materialName)
 
 	if not materialNode then
 		materialNode = FootstepsSoundGroup:FindFirstChild("Plastic")

@@ -29,8 +29,7 @@ type TroveInternal = Trove & {
 	_cleanupObject: (self: TroveInternal, object: any, cleanupMethod: string?) -> (),
 }
 
-export type Trackable =
-	| Instance
+export type Trackable = Instance
 	| RBXScriptConnection
 	| ConnectionLike
 	| ConnectionLikeMetatable
