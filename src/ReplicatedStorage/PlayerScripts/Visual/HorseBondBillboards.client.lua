@@ -4,7 +4,7 @@ local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage"
 local RunService: RunService = game:GetService("RunService")
 
 ------------------//CONSTANTS
-local ENABLED = true
+local ENABLED = false
 local PLOT_VALUE_NAME = "Plot"
 local HORSE_FOLDER_NAME = "HorseFolder"
 local VISUAL_HORSE_ATTRIBUTE = "IsStableVisualHorse"
@@ -18,11 +18,13 @@ local EXTRA_STUDS_OFFSET = 1.75
 ------------------//VARIABLES
 local localPlayer: Player = Players.LocalPlayer
 local modules: Folder = ReplicatedStorage:WaitForChild("Modules")
+local gameData: Folder = modules:WaitForChild("GameData")
 local services: Folder = modules:WaitForChild("Services")
 local utility: Folder = modules:WaitForChild("Utility")
 
 local DataUtility = require(utility:WaitForChild("DataUtility"))
 local HorseBondService = require(services:WaitForChild("HorseBondService"))
+local HorseStatusBillboardConfig = require(gameData:WaitForChild("HorseStatusBillboardConfig"))
 
 local plotValue: ObjectValue = localPlayer:WaitForChild(PLOT_VALUE_NAME)
 
@@ -62,6 +64,14 @@ local function destroy_all_billboards(): ()
 
 	for _, horseVisual in visualsToDestroy do
 		destroy_billboard(horseVisual)
+	end
+end
+
+local function remove_stale_billboard_gui(horseVisual: Instance): ()
+	for _, child: Instance in horseVisual:GetChildren() do
+		if child.Name == BILLBOARD_NAME and child:IsA("BillboardGui") then
+			child:Destroy()
+		end
 	end
 end
 
@@ -167,7 +177,10 @@ local function create_billboard(horseVisual: Instance)
 		return nil
 	end
 
+	remove_stale_billboard_gui(horseVisual)
+
 	local extents = get_horse_extents(horseVisual)
+	local stackedOffset = HorseStatusBillboardConfig.Enabled and 3.25 or 0
 
 	local billboardGui = mark_placeholder(Instance.new("BillboardGui"))
 	billboardGui.Name = BILLBOARD_NAME
@@ -176,7 +189,7 @@ local function create_billboard(horseVisual: Instance)
 	billboardGui.LightInfluence = 0
 	billboardGui.MaxDistance = MAX_DISTANCE
 	billboardGui.Size = UDim2.fromOffset(220, 132)
-	billboardGui.StudsOffset = Vector3.new(0, (extents.Y * 0.5) + EXTRA_STUDS_OFFSET, 0)
+	billboardGui.StudsOffset = Vector3.new(0, (extents.Y * 0.5) + EXTRA_STUDS_OFFSET + stackedOffset, 0)
 	billboardGui.Parent = horseVisual
 
 	local mainFrame = mark_placeholder(Instance.new("Frame"))

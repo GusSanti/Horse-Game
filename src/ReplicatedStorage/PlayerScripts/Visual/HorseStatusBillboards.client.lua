@@ -16,6 +16,7 @@ local utility: Folder = modules:WaitForChild("Utility")
 
 local DataUtility = require(utility:WaitForChild("DataUtility"))
 local HorseStatusBillboardConfig = require(gameData:WaitForChild("HorseStatusBillboardConfig"))
+local HorseBondService = require(services:WaitForChild("HorseBondService"))
 local horseStatusModule = services:WaitForChild("HorseStatusService", 10)
 if not horseStatusModule then
 	warn("HorseStatusBillboards could not find ReplicatedStorage.Modules.Services.HorseStatusService")
@@ -162,6 +163,31 @@ local function destroy_all_billboards(): ()
 	end
 end
 
+local function remove_stale_billboard_gui(horseVisual: Instance): ()
+	for _, child: Instance in horseVisual:GetChildren() do
+		if child:IsA("BillboardGui") and (child.Name == BILLBOARD_NAME or child.Name == "HorseBondBillboard") then
+			child:Destroy()
+		end
+	end
+end
+
+local function create_info_label(parent: Instance, name: string)
+	local label = mark_placeholder(Instance.new("TextLabel"))
+	label.Name = name
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.GothamMedium
+	label.Text = "--"
+	label.TextColor3 = HorseStatusBillboardConfig.LabelColor
+	label.TextSize = HorseStatusBillboardConfig.StatusTextSize
+	label.TextWrapped = true
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.Size = UDim2.new(1, 0, 0, 18)
+	label.Parent = parent
+
+	return label
+end
+
 local function create_status_row(parent: Instance, statusName: string)
 	local row = mark_placeholder(Instance.new("Frame"))
 	row.Name = statusName .. "Row"
@@ -205,6 +231,8 @@ local function create_billboard(horseVisual: Instance)
 	if not focusPart then
 		return nil
 	end
+
+	remove_stale_billboard_gui(horseVisual)
 
 	local extents = get_horse_extents(horseVisual)
 	local billboardSize = HorseStatusBillboardConfig.BillboardSize
@@ -264,6 +292,10 @@ local function create_billboard(horseVisual: Instance)
 	titleLabel.Size = UDim2.new(1, 0, 0, 20)
 	titleLabel.Parent = mainFrame
 
+	local trustLabel = create_info_label(mainFrame, "TrustLabel")
+	local bondLabel = create_info_label(mainFrame, "BondLabel")
+	local qualityLabel = create_info_label(mainFrame, "QualityLabel")
+
 	local statusLabels = {}
 
 	for _, statusName: string in ipairs(HorseStatusService.StatusOrder) do
@@ -275,6 +307,9 @@ local function create_billboard(horseVisual: Instance)
 		horseId = horseId,
 		horseVisual = horseVisual,
 		titleLabel = titleLabel,
+		trustLabel = trustLabel,
+		bondLabel = bondLabel,
+		qualityLabel = qualityLabel,
 		statusLabels = statusLabels,
 	}
 end
@@ -282,11 +317,40 @@ end
 local function update_billboard(entry): ()
 	local horse, resolvedHorseId = HorseStatusService.GetHorse(entry.horseId)
 	local statuses = HorseStatusService.GetStatuses(entry.horseId)
+	local displayData = nil
 
 	if horse then
 		entry.titleLabel.Text = horse.Nickname or horse.DisplayName or resolvedHorseId or entry.horseId
+		displayData = HorseBondService.GetDisplayData(horse)
 	else
 		entry.titleLabel.Text = entry.horseId
+	end
+
+	if not displayData then
+		entry.trustLabel.Text = "Confianca: --"
+		entry.bondLabel.Text = "Nivel: --"
+		entry.qualityLabel.Text = "Cuidado: --"
+	else
+		entry.trustLabel.Text = ("Confianca: %s  (%d/%d)"):format(
+			displayData.TrustState,
+			math.round(displayData.Friendship),
+			math.round(displayData.MaxFriendship)
+		)
+
+		if displayData.XPToNextLevel > 0 then
+			entry.bondLabel.Text = ("Nivel %d  XP %d/%d"):format(
+				displayData.Level,
+				math.floor(displayData.XP + 0.5),
+				displayData.XPToNextLevel
+			)
+		else
+			entry.bondLabel.Text = ("Nivel %d  XP MAX"):format(displayData.Level)
+		end
+
+		entry.qualityLabel.Text = ("Cuidado: %s  Streak %d"):format(
+			displayData.CareQuality,
+			displayData.CareStreak
+		)
 	end
 
 	for _, statusName: string in ipairs(HorseStatusService.StatusOrder) do

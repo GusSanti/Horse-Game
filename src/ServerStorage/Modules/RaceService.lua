@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -13,6 +14,8 @@ local Net = require(Libraries:WaitForChild("Net"))
 local RaceConfig = require(GameData:WaitForChild("RaceConfig"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+local RaceStateEvent = Net.Event.RaceState
+local RaceActionFunction = Net.Function.RaceAction
 
 local RaceService = {}
 
@@ -172,7 +175,7 @@ local function build_entries_payload(round)
 end
 
 local function broadcast_state(payload)
-	Net.Event.RaceState:FireAll(payload)
+	RaceStateEvent:FireAll(payload)
 end
 
 local function broadcast_queue_update(round)
@@ -214,9 +217,8 @@ local function create_part(parent, name, size, color, cframe)
 	return part
 end
 
-local function create_name_tag(model, horseName, playerName)
-	local adornee = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-	if not adornee then
+local function create_intro_tag(adornee, horseName, playerName)
+	if not adornee or (not adornee:IsA("BasePart") and not adornee:IsA("Attachment")) then
 		return
 	end
 
@@ -270,7 +272,8 @@ local function create_name_tag(model, horseName, playerName)
 	playerLabel.Text = playerName
 	playerLabel.Parent = holder
 
-	billboard.Parent = model
+	billboard.Parent = Workspace.Terrain
+	return billboard
 end
 
 local function find_template_model(modelKey, raceFolder)
@@ -340,7 +343,6 @@ local function build_fallback_horse_model(horseSummary)
 	end
 
 	model.PrimaryPart = root
-	create_name_tag(model, horseSummary.Name, horseSummary.PlayerName)
 	return model
 end
 
@@ -353,6 +355,76 @@ local function prepare_model(model)
 			descendant.CanTouch = false
 		end
 	end
+end
+
+local function capture_part_offsets(model)
+	local pivot = model:GetPivot()
+	local offsets = {}
+
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			offsets[descendant] = pivot:ToObjectSpace(descendant.CFrame)
+		end
+	end
+
+	return offsets
+end
+
+local function build_pivot_from_progress(participant, progress)
+	local startPosition = participant.StartPivot.Position
+	return CFrame.new(
+		startPosition.X,
+		startPosition.Y,
+		startPosition.Z - progress
+	) * participant.StartRotation
+end
+
+local function clear_participant_tweens(participant)
+	local activeTweens = participant.ActiveTweens
+	if not activeTweens then
+		return
+	end
+
+	for _, tween in ipairs(activeTweens) do
+		tween:Cancel()
+	end
+
+	participant.ActiveTweens = {}
+end
+
+local function destroy_intro_tag(participant)
+	if participant.IntroTag and participant.IntroTag.Parent then
+		participant.IntroTag:Destroy()
+	end
+
+	participant.IntroTag = nil
+end
+
+local function play_segment_tweens(participant)
+	clear_participant_tweens(participant)
+
+	local segmentDistance = math.max(0.001, participant.SegmentEndProgress - participant.SegmentStartProgress)
+	local averageSpeed = math.max(0.1, (participant.SegmentStartSpeed + participant.SegmentTargetSpeed) * 0.5)
+	local duration = math.max(0.05, segmentDistance / averageSpeed)
+	local targetPivot = build_pivot_from_progress(participant, participant.SegmentEndProgress)
+	local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+	local activeTweens = {}
+
+	participant.SegmentDuration = duration
+	participant.SegmentStartedAt = os.clock()
+
+	for part, offset in pairs(participant.PartOffsets) do
+		if part and part.Parent then
+			local tween = TweenService:Create(part, tweenInfo, {
+				CFrame = targetPivot * offset,
+			})
+
+			activeTweens[#activeTweens + 1] = tween
+			tween:Play()
+		end
+	end
+
+	participant.ActiveTweens = activeTweens
 end
 
 local function get_aligned_slot_pivot(model, slot)
@@ -371,7 +443,6 @@ local function create_race_model(round, horseSummary)
 	if template then
 		model = template:Clone()
 		model.Name = ("%s_RaceModel"):format(horseSummary.Id)
-		create_name_tag(model, horseSummary.Name, horseSummary.PlayerName)
 	else
 		model = build_fallback_horse_model(horseSummary)
 	end
@@ -421,9 +492,13 @@ local function advance_segment(round, participant)
 	participant.SegmentEndProgress = math.min(RaceConfig.RaceDistance, participant.SegmentStartProgress + RaceConfig.SegmentLength)
 	participant.SegmentStartSpeed = participant.SegmentTargetSpeed
 	participant.SegmentTargetSpeed = compute_target_speed(round, participant)
+	play_segment_tweens(participant)
 end
 
 local function destroy_participant_model(participant)
+	clear_participant_tweens(participant)
+	destroy_intro_tag(participant)
+
 	if participant.Model then
 		participant.Model:Destroy()
 		participant.Model = nil
@@ -512,6 +587,11 @@ local function create_participant(round, player, horseSummary)
 		SegmentEndProgress = math.min(RaceConfig.SegmentLength, RaceConfig.RaceDistance),
 		SegmentStartSpeed = 0,
 		SegmentTargetSpeed = 0,
+		SegmentDuration = 0,
+		SegmentStartedAt = 0,
+		PartOffsets = capture_part_offsets(model),
+		ActiveTweens = {},
+		IntroTag = create_intro_tag(slot, horseSummary.Name, horseSummary.PlayerName),
 		IsRemoved = false,
 	}
 
@@ -563,17 +643,6 @@ local function finish_round(round, winnerParticipant)
 	end)
 end
 
-local function update_participant_model(participant)
-	local startPosition = participant.StartPivot.Position
-	local targetPivot = CFrame.new(
-		startPosition.X,
-		startPosition.Y,
-		startPosition.Z - participant.Progress
-	) * participant.StartRotation
-
-	participant.Model:PivotTo(targetPivot)
-end
-
 local function begin_race(round)
 	if activeRound ~= round or round.State ~= "Invite" then
 		return
@@ -595,6 +664,11 @@ local function begin_race(round)
 		participant.SegmentEndProgress = math.min(RaceConfig.SegmentLength, RaceConfig.RaceDistance)
 		participant.SegmentStartSpeed = participant.BaseSpeed * 0.88
 		participant.SegmentTargetSpeed = compute_target_speed(round, participant)
+		play_segment_tweens(participant)
+
+		task.delay(RaceConfig.IntroTagDuration, function()
+			destroy_intro_tag(participant)
+		end)
 	end
 
 	broadcast_state({
@@ -606,7 +680,7 @@ local function begin_race(round)
 		Entries = build_entries_payload(round),
 	})
 
-	round.Connection = RunService.Heartbeat:Connect(function(deltaTime)
+	round.Connection = RunService.Heartbeat:Connect(function()
 		if activeRound ~= round or round.State ~= "Racing" then
 			return
 		end
@@ -618,21 +692,28 @@ local function begin_race(round)
 
 		for _, participant in ipairs(round.Participants) do
 			if participant.IsRemoved ~= true then
-				local segmentDistance = math.max(0.001, participant.SegmentEndProgress - participant.SegmentStartProgress)
+				local segmentDuration = math.max(0.001, participant.SegmentDuration or 0.001)
 				local segmentAlpha = math.clamp(
-					(participant.Progress - participant.SegmentStartProgress) / segmentDistance,
+					(os.clock() - (participant.SegmentStartedAt or os.clock())) / segmentDuration,
 					0,
 					1
 				)
-				local currentSpeed = participant.SegmentStartSpeed
-					+ (participant.SegmentTargetSpeed - participant.SegmentStartSpeed) * segmentAlpha
 
-				participant.Progress = math.min(RaceConfig.RaceDistance, participant.Progress + currentSpeed * deltaTime)
-				update_participant_model(participant)
+				participant.Progress = participant.SegmentStartProgress
+					+ ((participant.SegmentEndProgress - participant.SegmentStartProgress) * segmentAlpha)
 
-				while participant.Progress >= participant.SegmentEndProgress
+				while segmentAlpha >= 1
 					and participant.SegmentEndProgress < RaceConfig.RaceDistance do
 					advance_segment(round, participant)
+
+					segmentDuration = math.max(0.001, participant.SegmentDuration or 0.001)
+					segmentAlpha = math.clamp(
+						(os.clock() - (participant.SegmentStartedAt or os.clock())) / segmentDuration,
+						0,
+						1
+					)
+					participant.Progress = participant.SegmentStartProgress
+						+ ((participant.SegmentEndProgress - participant.SegmentStartProgress) * segmentAlpha)
 				end
 
 				if participant.Progress >= RaceConfig.RaceDistance then
@@ -715,7 +796,7 @@ function RaceService.SyncPlayer(player)
 		return
 	end
 
-	Net.Event.RaceState:Fire(player, {
+	RaceStateEvent:Fire(player, {
 		Kind = "InviteOpened",
 		RoundId = round.Id,
 		SecondsRemaining = math.max(0, round.InviteEndsAt - os.clock()),
@@ -727,7 +808,7 @@ function RaceService.SyncPlayer(player)
 
 	local participant = get_round_participant(round, player)
 	if participant then
-		Net.Event.RaceState:Fire(player, {
+		RaceStateEvent:Fire(player, {
 			Kind = "QueueUpdated",
 			RoundId = round.Id,
 			ParticipantCount = #get_live_participants(round),
@@ -859,6 +940,27 @@ function RaceService.HandleAction(player, payload)
 		}
 	end
 
+	local raceReadiness, readinessError = HorseService.GetRaceReadiness(player, selectedHorseId)
+	if not raceReadiness then
+		return {
+			Success = false,
+			Code = readinessError or "HorseStatusUnavailable",
+		}
+	end
+
+	if raceReadiness.CanRace ~= true then
+		return {
+			Success = false,
+			Code = "HorseNeedsTooLow",
+			HorseId = selectedHorseId,
+			HorseOptions = HorseService.GetOwnedHorseSummaries(player),
+			BlockedStatus = raceReadiness.BlockedStatus,
+			BlockedStatusDisplay = raceReadiness.BlockedStatusDisplay,
+			BlockedPercent = raceReadiness.BlockedPercent,
+			MinimumPercent = raceReadiness.MinimumPercent,
+		}
+	end
+
 	selectedHorseSummary.PlayerName = player.Name
 
 	local participant, createError = create_participant(round, player, selectedHorseSummary)
@@ -891,7 +993,7 @@ function RaceService.Init()
 		return
 	end
 
-	Net.Function.RaceAction:Respond(function(player, payload)
+	RaceActionFunction:Respond(function(player, payload)
 		return RaceService.HandleAction(player, payload)
 	end)
 

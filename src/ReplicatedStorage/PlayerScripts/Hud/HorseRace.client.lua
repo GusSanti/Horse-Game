@@ -22,6 +22,8 @@ local horseButtons = {}
 local selectedHorseId = nil
 local previousCameraType = nil
 local previousCameraSubject = nil
+local update_visibility
+local update_dynamic_text
 
 local state = {
 	Phase = "Idle",
@@ -34,6 +36,7 @@ local state = {
 	HorseOptions = {},
 	Entries = {},
 	Result = nil,
+	NoticeText = "",
 	CameraLocked = false,
 	CameraMoving = false,
 	CameraBaseCFrame = nil,
@@ -139,6 +142,37 @@ local function find_local_entry()
 	return nil
 end
 
+local function find_horse_option(horseId)
+	if type(horseId) ~= "string" or horseId == "" then
+		return nil
+	end
+
+	for _, horse in ipairs(state.HorseOptions) do
+		if horse.Id == horseId then
+			return horse
+		end
+	end
+
+	return nil
+end
+
+local function get_selected_horse_option()
+	return find_horse_option(selectedHorseId)
+end
+
+local function set_button_enabled(button, enabled, enabledColor, disabledColor)
+	if not button then
+		return
+	end
+
+	button.Active = enabled
+	button.AutoButtonColor = enabled
+	button.BackgroundColor3 = enabled
+		and (enabledColor or Color3.fromRGB(35, 103, 77))
+		or (disabledColor or Color3.fromRGB(58, 62, 68))
+	button.TextTransparency = enabled and 0 or 0.18
+end
+
 local function lock_controls(shouldLock)
 	if shouldLock then
 		ContextActionService:BindActionAtPriority(
@@ -214,6 +248,7 @@ local function reset_state()
 	state.HorseOptions = {}
 	state.Entries = {}
 	state.Result = nil
+	state.NoticeText = ""
 	state.CameraSpeed = RaceConfig.CameraSpeed
 	state.CameraDistance = RaceConfig.RaceDistance
 	selectedHorseId = nil
@@ -311,8 +346,12 @@ end
 
 local function update_horse_selection_visuals()
 	for horseId, button in pairs(horseButtons) do
+		local horse = find_horse_option(horseId)
 		local selected = horseId == selectedHorseId
-		button.BackgroundColor3 = selected and Color3.fromRGB(52, 122, 94) or Color3.fromRGB(27, 31, 36)
+		local canRace = horse and horse.CanRace ~= false
+		button.BackgroundColor3 = selected
+			and (canRace and Color3.fromRGB(52, 122, 94) or Color3.fromRGB(123, 78, 52))
+			or (canRace and Color3.fromRGB(27, 31, 36) or Color3.fromRGB(46, 32, 32))
 	end
 end
 
@@ -321,15 +360,18 @@ local function refresh_horse_options()
 
 	for _, horse in ipairs(state.HorseOptions) do
 		local title = horse.Name or horse.DisplayName or horse.Id
-		local stats = ("%s wins:%d affinity:%.2f"):format(
-			horse.DisplayName or horse.CatalogId or "Horse",
-			horse.RacesWon or 0,
-			horse.RaceAffinity or 0
-		)
+		local canRace = horse.CanRace ~= false
+		local metaText = canRace
+			and "Pronto para correr"
+			or ("%s %d%%  |  minimo %d%%"):format(
+				horse.RaceBlockedStatusDisplay or horse.RaceLowestStatusDisplay or "Status",
+				horse.RaceBlockedPercent or horse.RaceLowestPercent or 0,
+				horse.RaceMinPercent or 50
+			)
 
 		local button = create_button(ui.SelectList, horse.Id, {
-			BackgroundColor3 = Color3.fromRGB(27, 31, 36),
-			Size = UDim2.new(1, 0, 0, 52),
+			BackgroundColor3 = canRace and Color3.fromRGB(27, 31, 36) or Color3.fromRGB(46, 32, 32),
+			Size = UDim2.new(1, 0, 0, 46),
 			Text = "",
 		})
 
@@ -337,30 +379,48 @@ local function refresh_horse_options()
 			Size = UDim2.new(1, -14, 0.52, 0),
 			Position = UDim2.new(0, 8, 0, 4),
 			Text = title .. (horse.IsEquipped and "  [equipado]" or ""),
-			TextSize = 15,
+			TextSize = 14,
 		})
 
 		create_label(button, "HorseMeta", {
 			Size = UDim2.new(1, -14, 0.36, 0),
 			Position = UDim2.new(0, 8, 0.6, -1),
-			Text = stats,
+			Text = metaText,
 			TextSize = 12,
-			TextColor3 = Color3.fromRGB(164, 173, 184),
+			TextColor3 = canRace and Color3.fromRGB(164, 173, 184) or Color3.fromRGB(244, 184, 164),
 		})
 
 		button.MouseButton1Click:Connect(function()
 			selectedHorseId = horse.Id
 			update_horse_selection_visuals()
+			local selectedHorse = get_selected_horse_option()
+			local selectedCanRace = selectedHorse and selectedHorse.CanRace ~= false
+			set_button_enabled(ui.SelectConfirm, selectedCanRace, Color3.fromRGB(35, 103, 77))
+			ui.SelectConfirm.Text = selectedCanRace and "Entrar" or "Cuidar primeiro"
 		end)
 
 		horseButtons[horse.Id] = button
 	end
 
-	if not selectedHorseId and state.HorseOptions[1] then
-		selectedHorseId = state.HorseOptions[1].Id
+	if not selectedHorseId or not find_horse_option(selectedHorseId) then
+		for _, horse in ipairs(state.HorseOptions) do
+			if horse.CanRace ~= false then
+				selectedHorseId = horse.Id
+				break
+			end
+		end
+
+		if not selectedHorseId and state.HorseOptions[1] then
+			selectedHorseId = state.HorseOptions[1].Id
+		end
 	end
 
 	update_horse_selection_visuals()
+
+	local selectedHorse = get_selected_horse_option()
+	local selectedCanRace = selectedHorse and selectedHorse.CanRace ~= false
+	set_button_enabled(ui.SelectConfirm, selectedCanRace, Color3.fromRGB(35, 103, 77))
+	ui.SelectConfirm.Text = selectedCanRace and "Entrar" or "Cuidar primeiro"
 end
 
 local function submit_leave_request()
@@ -415,6 +475,7 @@ local function submit_join_request(horseId)
 		state.LocalJoined = true
 		state.Phase = "Queue"
 		state.InviteDismissed = true
+		state.NoticeText = ""
 		ui.SelectFrame.Visible = false
 		if response.CameraCFrame then
 			lock_camera(response.CameraCFrame, false)
@@ -425,9 +486,21 @@ local function submit_join_request(horseId)
 	end
 
 	if response.Code == "HorseSelectionRequired" then
+		state.NoticeText = ""
 		state.HorseOptions = response.HorseOptions or state.HorseOptions
 		refresh_horse_options()
 		ui.SelectFrame.Visible = true
+	elseif response.Code == "HorseNeedsTooLow" then
+		state.HorseOptions = response.HorseOptions or state.HorseOptions
+		state.NoticeText = ("%s em %d%%. Precisa ficar acima de %d%%."):format(
+			response.BlockedStatusDisplay or "Status",
+			response.BlockedPercent or 0,
+			response.MinimumPercent or 50
+		)
+		selectedHorseId = response.HorseId or selectedHorseId
+		refresh_horse_options()
+		ui.SelectFrame.Visible = true
+		state.InviteDismissed = true
 	elseif response.Code == "InviteExpired" or response.Code == "InviteClosed" or response.Code == "NoActiveRound" then
 		reset_state()
 		destroy_existing_rows()
@@ -448,7 +521,7 @@ local function build_ui()
 		Name = "CommandBar",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -24),
-		Size = UDim2.fromOffset(760, 116),
+		Size = UDim2.fromOffset(520, 92),
 		Parent = screenGui,
 	})
 	apply_panel_style(commandBar, Color3.fromRGB(115, 224, 170))
@@ -457,7 +530,7 @@ local function build_ui()
 		Name = "InviteFrame",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0.5, 0, 0.5, -28),
-		Size = UDim2.fromOffset(520, 214),
+		Size = UDim2.fromOffset(360, 120),
 		Parent = screenGui,
 	})
 	apply_panel_style(inviteFrame, Color3.fromRGB(233, 182, 96))
@@ -466,7 +539,7 @@ local function build_ui()
 		Name = "SelectFrame",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0.5, 0, 0.5, -18),
-		Size = UDim2.fromOffset(560, 360),
+		Size = UDim2.fromOffset(430, 296),
 		Parent = screenGui,
 	})
 	apply_panel_style(selectFrame, Color3.fromRGB(115, 224, 170))
@@ -475,7 +548,7 @@ local function build_ui()
 		Name = "BoardFrame",
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -18, 0, 18),
-		Size = UDim2.fromOffset(320, 270),
+		Size = UDim2.fromOffset(300, 270),
 		Parent = screenGui,
 	})
 	apply_panel_style(boardFrame, Color3.fromRGB(115, 224, 170))
@@ -484,7 +557,7 @@ local function build_ui()
 		Name = "ResultFrame",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 18),
-		Size = UDim2.fromOffset(520, 92),
+		Size = UDim2.fromOffset(460, 74),
 		Parent = screenGui,
 	})
 	apply_panel_style(resultFrame, Color3.fromRGB(233, 182, 96))
@@ -497,9 +570,9 @@ local function build_ui()
 	ui.ResultFrame = resultFrame
 
 	ui.CommandTitle = create_label(commandBar, "Title", {
-		Size = UDim2.new(0.55, 0, 0, 20),
+		Size = UDim2.new(0.55, 0, 0, 18),
 		Position = UDim2.new(0, 0, 0, 0),
-		Text = "> horse_race -- idle",
+		Text = "Corrida",
 		TextSize = 15,
 	})
 
@@ -513,32 +586,33 @@ local function build_ui()
 
 	ui.CommandStatus = create_label(commandBar, "Status", {
 		Size = UDim2.new(1, -220, 0, 30),
-		Position = UDim2.new(0, 0, 0, 26),
-		Text = "Aguardando proxima corrida.",
-		TextSize = 22,
+		Position = UDim2.new(0, 0, 0, 24),
+		Text = "Aguardando corrida.",
+		TextSize = 20,
 	})
 
 	ui.CommandMeta = create_label(commandBar, "Meta", {
 		Size = UDim2.new(1, -220, 0, 18),
-		Position = UDim2.new(0, 0, 0, 62),
-		Text = "Slots: 0/0",
-		TextSize = 14,
+		Position = UDim2.new(0, 0, 0, 56),
+		Text = "",
+		TextSize = 13,
 		TextColor3 = Color3.fromRGB(164, 173, 184),
 	})
 
 	ui.CommandHint = create_label(commandBar, "Hint", {
 		Size = UDim2.new(1, -220, 0, 18),
 		Position = UDim2.new(0, 0, 0, 84),
-		Text = "A corrida anda apenas no eixo Z.",
+		Text = "",
 		TextSize = 13,
 		TextColor3 = Color3.fromRGB(110, 118, 129),
 	})
+	ui.CommandHint.Visible = false
 
 	ui.CommandAction = create_button(commandBar, "Action", {
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, 0, 1, 0),
-		Size = UDim2.fromOffset(176, 40),
-		Text = "Participar",
+		Size = UDim2.fromOffset(150, 36),
+		Text = "Entrar",
 	})
 
 	ui.InviteTitle = create_label(inviteFrame, "InviteTitle", {
@@ -553,7 +627,7 @@ local function build_ui()
 		Position = UDim2.new(0, 0, 0, 34),
 		TextWrapped = true,
 		TextYAlignment = Enum.TextYAlignment.Top,
-		Text = "Seu cavalo entra no slot livre, a camera trava em Race.Camera e a largada sai em 20s.",
+		Text = "Convite aberto.",
 		TextSize = 18,
 	})
 
@@ -567,7 +641,7 @@ local function build_ui()
 	ui.InviteMeta = create_label(inviteFrame, "InviteMeta", {
 		Size = UDim2.new(1, 0, 0, 18),
 		Position = UDim2.new(0, 0, 0, 136),
-		Text = "Slots confirmados: 0/0",
+		Text = "",
 		TextSize = 13,
 		TextColor3 = Color3.fromRGB(164, 173, 184),
 	})
@@ -588,14 +662,14 @@ local function build_ui()
 	ui.SelectTitle = create_label(selectFrame, "SelectTitle", {
 		Size = UDim2.new(1, 0, 0, 22),
 		Position = UDim2.new(0, 0, 0, 0),
-		Text = "> escolha o cavalo",
+		Text = "Escolha o cavalo",
 		TextSize = 18,
 	})
 
 	ui.SelectMeta = create_label(selectFrame, "SelectMeta", {
 		Size = UDim2.new(1, 0, 0, 18),
 		Position = UDim2.new(0, 0, 0, 28),
-		Text = "Se voce tem um cavalo so, entra direto.",
+		Text = "Apenas cavalos acima de 50% podem correr.",
 		TextSize = 13,
 		TextColor3 = Color3.fromRGB(164, 173, 184),
 	})
@@ -609,7 +683,7 @@ local function build_ui()
 		CanvasSize = UDim2.new(),
 		Position = UDim2.new(0, 0, 0, 56),
 		ScrollBarThickness = 6,
-		Size = UDim2.new(1, 0, 1, -116),
+		Size = UDim2.new(1, 0, 1, -108),
 		Parent = selectFrame,
 	})
 
@@ -623,37 +697,38 @@ local function build_ui()
 
 	ui.SelectConfirm = create_button(selectFrame, "SelectConfirm", {
 		Position = UDim2.new(0, 0, 1, -44),
-		Size = UDim2.fromOffset(196, 40),
-		Text = "Confirmar cavalo",
+		Size = UDim2.fromOffset(156, 40),
+		Text = "Entrar",
 	})
 
 	ui.SelectCancel = create_button(selectFrame, "SelectCancel", {
 		BackgroundColor3 = Color3.fromRGB(54, 61, 68),
-		Position = UDim2.new(1, -176, 1, -44),
-		Size = UDim2.fromOffset(176, 40),
+		Position = UDim2.new(1, -156, 1, -44),
+		Size = UDim2.fromOffset(156, 40),
 		Text = "Voltar",
 	})
 
 	ui.BoardTitle = create_label(boardFrame, "BoardTitle", {
 		Size = UDim2.new(1, 0, 0, 22),
 		Position = UDim2.new(0, 0, 0, 0),
-		Text = "> placar da corrida",
+		Text = "Placar",
 		TextSize = 17,
 	})
 
 	ui.BoardSubtitle = create_label(boardFrame, "BoardSubtitle", {
 		Size = UDim2.new(1, 0, 0, 16),
 		Position = UDim2.new(0, 0, 0, 24),
-		Text = "Atualiza conforme os cavalos trocam de ritmo.",
+		Text = "",
 		TextSize = 12,
 		TextColor3 = Color3.fromRGB(164, 173, 184),
 	})
+	ui.BoardSubtitle.Visible = false
 
 	ui.BoardList = create_instance("Frame", {
 		Name = "BoardList",
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 0, 0, 52),
-		Size = UDim2.new(1, 0, 1, -52),
+		Position = UDim2.new(0, 0, 0, 34),
+		Size = UDim2.new(1, 0, 1, -34),
 		Parent = boardFrame,
 	})
 
@@ -682,7 +757,16 @@ local function build_ui()
 		end
 
 		if #state.HorseOptions <= 1 then
-			submit_join_request(state.HorseOptions[1] and state.HorseOptions[1].Id or nil)
+			local onlyHorse = state.HorseOptions[1]
+			if onlyHorse and onlyHorse.CanRace == false then
+				selectedHorseId = onlyHorse.Id
+				refresh_horse_options()
+				ui.SelectFrame.Visible = true
+				state.InviteDismissed = true
+				return
+			end
+
+			submit_join_request(onlyHorse and onlyHorse.Id or nil)
 			return
 		end
 
@@ -692,7 +776,16 @@ local function build_ui()
 
 	ui.InviteJoin.MouseButton1Click:Connect(function()
 		if #state.HorseOptions <= 1 then
-			submit_join_request(state.HorseOptions[1] and state.HorseOptions[1].Id or nil)
+			local onlyHorse = state.HorseOptions[1]
+			if onlyHorse and onlyHorse.CanRace == false then
+				selectedHorseId = onlyHorse.Id
+				refresh_horse_options()
+				ui.SelectFrame.Visible = true
+				state.InviteDismissed = true
+				return
+			end
+
+			submit_join_request(onlyHorse and onlyHorse.Id or nil)
 		else
 			ui.SelectFrame.Visible = true
 			state.InviteDismissed = true
@@ -725,14 +818,14 @@ local function build_ui()
 	ui.ResultFrame.Visible = false
 end
 
-local function update_visibility()
+update_visibility = function()
 	local now = os.clock()
 	local inviteActive = state.RoundId ~= nil and now < state.InviteDeadline and state.Phase ~= "Race"
 	local hasResult = state.Result ~= nil and now < state.ResultDeadline
 	local shouldShowBar = inviteActive or state.LocalJoined or state.LocalWatchingRace or hasResult
 
 	ui.CommandBar.Visible = shouldShowBar
-	ui.InviteFrame.Visible = inviteActive and not state.LocalJoined and not state.InviteDismissed and not ui.SelectFrame.Visible
+	ui.InviteFrame.Visible = false
 	ui.BoardFrame.Visible = (state.LocalJoined or state.LocalWatchingRace or hasResult) and #state.Entries > 0
 	ui.ResultFrame.Visible = hasResult
 
@@ -740,61 +833,71 @@ local function update_visibility()
 	ui.SelectFrame.Visible = shouldShowSelect
 end
 
-local function update_dynamic_text()
+update_dynamic_text = function()
 	local now = os.clock()
 	local localEntry = find_local_entry()
 	local participantCount = #state.Entries
 	local inviteRemaining = math.max(0, state.InviteDeadline - now)
 	local resultRemaining = math.max(0, state.ResultDeadline - now)
+	local inviteHorse = state.HorseOptions[1]
+	local inviteHorseReady = inviteHorse and inviteHorse.CanRace ~= false
+	local inviteNotice = state.NoticeText
 
 	if state.Phase == "Race" then
-		ui.CommandTitle.Text = "> horse_race -- race_live"
+		ui.CommandTitle.Text = "Corrida"
 		ui.CommandStatus.Text = localEntry
-			and ("Seu cavalo: %s | slot %d"):format(localEntry.HorseName or "Horse", localEntry.SlotIndex or 0)
+			and ("%s correndo"):format(localEntry.HorseName or "Horse")
 			or "Corrida em andamento."
-		ui.CommandMeta.Text = ("Participantes: %d | distancia: %d studs"):format(participantCount, RaceConfig.RaceDistance)
-		ui.CommandHint.Text = "Velocidade muda suavemente a cada 30 studs para forcar ultrapassagens."
+		ui.CommandMeta.Text = ("%d corredores  |  %d studs"):format(participantCount, RaceConfig.RaceDistance)
 		ui.CommandCountdown.Text = "LIVE"
 		ui.CommandAction.Visible = false
 	elseif state.Phase == "Queue" then
-		ui.CommandTitle.Text = "> horse_race -- staging"
+		ui.CommandTitle.Text = "Na fila"
 		ui.CommandStatus.Text = localEntry
-			and ("Aguardando largada com %s no slot %d."):format(localEntry.HorseName or "Horse", localEntry.SlotIndex or 0)
+			and ("%s pronto para largar"):format(localEntry.HorseName or "Horse")
 			or "Aguardando largada."
-		ui.CommandMeta.Text = ("Confirmados: %d | max: %d"):format(participantCount, RaceConfig.MaxParticipants)
-		ui.CommandHint.Text = "A camera ja esta presa em Race.Camera; a largada sai quando o contador zerar."
+		ui.CommandMeta.Text = ("%d/%d confirmados"):format(participantCount, RaceConfig.MaxParticipants)
 		ui.CommandCountdown.Text = format_countdown(inviteRemaining)
 		ui.CommandAction.Visible = inviteRemaining > 0
-		ui.CommandAction.Text = "Sair da fila"
+		ui.CommandAction.Text = "Sair"
+		set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
 	elseif state.Phase == "Invite" then
-		ui.CommandTitle.Text = "> horse_race -- invite_open"
-		ui.CommandStatus.Text = "Tem corrida aberta. Seu cavalo vai correr 220 studs no eixo Z."
-		ui.CommandMeta.Text = ("Confirmados: %d | cavalos: %d"):format(participantCount, #state.HorseOptions)
-		ui.CommandHint.Text = "Se tiver mais de um cavalo, voce escolhe antes de entrar."
+		ui.CommandTitle.Text = "Corrida aberta"
+		ui.CommandStatus.Text = (#state.HorseOptions <= 1)
+			and ((inviteHorse and inviteHorseReady) and "Seu cavalo esta pronto." or "Seu cavalo precisa de cuidado.")
+			or "Escolha um cavalo."
+		ui.CommandMeta.Text = inviteNotice ~= ""
+			and inviteNotice
+			or ("%d/%d na fila"):format(participantCount, RaceConfig.MaxParticipants)
 		ui.CommandCountdown.Text = format_countdown(inviteRemaining)
 		ui.CommandAction.Visible = true
-		ui.CommandAction.Text = "Participar"
+		if #state.HorseOptions <= 1 then
+			ui.CommandAction.Text = inviteHorseReady and "Entrar" or "Ver cavalo"
+			set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
+		else
+			ui.CommandAction.Text = "Escolher"
+			set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
+		end
 	elseif state.Result and resultRemaining > 0 then
-		ui.CommandTitle.Text = "> horse_race -- result"
+		ui.CommandTitle.Text = "Resultado"
 		ui.CommandStatus.Text = ui.ResultLabel.Text
-		ui.CommandMeta.Text = ("Encerrando em %s"):format(format_countdown(resultRemaining))
-		ui.CommandHint.Text = "Os assets e a camera voltam ao normal quando esse timer fechar."
+		ui.CommandMeta.Text = ("Fecha em %s"):format(format_countdown(resultRemaining))
 		ui.CommandCountdown.Text = format_countdown(resultRemaining)
 		ui.CommandAction.Visible = false
 	else
-		ui.CommandTitle.Text = "> horse_race -- idle"
-		ui.CommandStatus.Text = "Aguardando proxima corrida."
-		ui.CommandMeta.Text = "O proximo convite abre automaticamente."
-		ui.CommandHint.Text = "A corrida anda apenas diminuindo Z, com camera em ritmo constante."
+		ui.CommandTitle.Text = "Corrida"
+		ui.CommandStatus.Text = "Aguardando corrida."
+		ui.CommandMeta.Text = ""
 		ui.CommandCountdown.Text = "00:00"
 		ui.CommandAction.Visible = false
 	end
 
-	ui.InviteCountdown.Text = ("Fecha em %s"):format(format_countdown(inviteRemaining))
-	ui.InviteMeta.Text = ("Slots confirmados: %d/%d"):format(participantCount, RaceConfig.MaxParticipants)
-	ui.InviteBody.Text = (#state.HorseOptions <= 1)
-		and "Seu cavalo entra direto no primeiro slot vago e espera a largada com a camera travada na pista."
-		or "Voce tem mais de um cavalo. Escolha qual entra no slot antes da largada para evitar erro no join."
+	ui.InviteCountdown.Text = format_countdown(inviteRemaining)
+	ui.InviteMeta.Text = inviteNotice
+	ui.InviteBody.Text = "Corrida aberta."
+	ui.SelectMeta.Text = inviteNotice ~= ""
+		and inviteNotice
+		or "Apenas cavalos acima de 50% podem correr."
 
 	if state.Result and resultRemaining > 0 and state.Result.Winner then
 		local winner = state.Result.Winner
@@ -819,6 +922,7 @@ local function handle_invite(payload)
 	state.LocalWatchingRace = false
 	state.Result = nil
 	state.ResultDeadline = 0
+	state.NoticeText = ""
 	selectedHorseId = nil
 	refresh_horse_options()
 	update_visibility()
@@ -833,6 +937,7 @@ local function handle_queue_update(payload)
 	state.RoundId = payload.RoundId
 	state.InviteDeadline = os.clock() + math.max(0, payload.SecondsRemaining or 0)
 	state.Entries = payload.Entries or {}
+	state.NoticeText = ""
 
 	local localEntry = find_local_entry()
 	state.LocalJoined = localEntry ~= nil
@@ -867,6 +972,7 @@ local function handle_race_started(payload)
 	state.CameraSpeed = payload.CameraSpeed or RaceConfig.CameraSpeed
 	state.CameraDistance = payload.Distance or RaceConfig.RaceDistance
 	state.InviteDismissed = true
+	state.NoticeText = ""
 	ui.SelectFrame.Visible = false
 
 	if state.LocalWatchingRace and payload.CameraCFrame then
@@ -920,6 +1026,7 @@ local function handle_result(payload)
 	state.LocalJoined = false
 	state.LocalWatchingRace = find_local_entry() ~= nil or (payload.Winner and payload.Winner.UserId == localPlayer.UserId)
 	state.CameraMoving = false
+	state.NoticeText = ""
 
 	refresh_leaderboard()
 	update_visibility()

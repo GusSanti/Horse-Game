@@ -7,13 +7,9 @@ local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-<<<<<<< HEAD
-
-=======
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 
 local DEFAULT_STATUS_MAX = 100
->>>>>>> main
 local STATUS_ORDER = {
 	"Happiness",
 	"Hunger",
@@ -22,7 +18,6 @@ local STATUS_ORDER = {
 	"Health",
 }
 
-<<<<<<< HEAD
 local OVERFLOW_ALLOWED_NEEDS = {
 	Hunger = true,
 	Thirst = true,
@@ -33,20 +28,14 @@ local ZERO_NEED_DECAY_MULTIPLIER = {
 	Health = 3,
 }
 
-local HorseStatusService = {
-	StatusOrder = table.clone(STATUS_ORDER),
-}
-=======
 local HorseStatusService = {}
 
 HorseStatusService.StatusOrder = TableUtility.DeepCopy(STATUS_ORDER)
->>>>>>> main
 
 local function is_player(value): boolean
 	return typeof(value) == "Instance" and value:IsA("Player")
 end
 
-<<<<<<< HEAD
 local function clamp_number(value: number, minValue: number, maxValue: number): number
 	if value < minValue then
 		return minValue
@@ -54,7 +43,11 @@ local function clamp_number(value: number, minValue: number, maxValue: number): 
 
 	if value > maxValue then
 		return maxValue
-=======
+	end
+
+	return value
+end
+
 local function get_definition_for_horse(horse)
 	local catalogId = nil
 
@@ -72,19 +65,24 @@ local function get_definition_status_value(definition, groupName: string, status
 
 	if type(value) ~= "number" then
 		return fallback
->>>>>>> main
 	end
 
 	return value
 end
 
-<<<<<<< HEAD
-=======
-local function clamp_status_value(value: number, maxValue: number): number
+local function clamp_to_max(value: number, maxValue: number): number
 	local resolvedValue = if type(value) == "number" then value else 0
 	local resolvedMax = if type(maxValue) == "number" then math.max(0, maxValue) else DEFAULT_STATUS_MAX
 
 	return math.clamp(resolvedValue, 0, resolvedMax)
+end
+
+local function clamp_status_value(statusName: string, value: number, maxValue: number): number
+	if OVERFLOW_ALLOWED_NEEDS[statusName] then
+		return math.max(0, value)
+	end
+
+	return math.clamp(value, 0, maxValue)
 end
 
 local function sync_dirty_state(horse): boolean
@@ -92,8 +90,11 @@ local function sync_dirty_state(horse): boolean
 		horse.State = {}
 	end
 
-	local maxCleanliness = tonumber(horse.Needs.Max.Cleanliness) or DEFAULT_STATUS_MAX
-	local currentCleanliness = tonumber(horse.Needs.Values.Cleanliness) or 0
+	local needs = horse.Needs or {}
+	local maxValues = needs.Max or {}
+	local values = needs.Values or {}
+	local maxCleanliness = tonumber(maxValues.Cleanliness) or DEFAULT_STATUS_MAX
+	local currentCleanliness = tonumber(values.Cleanliness) or 0
 	local isDirty = currentCleanliness < maxCleanliness
 	local changed = horse.State.IsDirty ~= isDirty
 
@@ -102,19 +103,12 @@ local function sync_dirty_state(horse): boolean
 	return changed
 end
 
->>>>>>> main
 local function get_horses_container(player: Player?)
 	if RunService:IsServer() then
 		if not is_player(player) then
 			return nil
 		end
 
-<<<<<<< HEAD
-		return DataUtility.server.get(player, "Horses")
-	end
-
-	return DataUtility.client.get("Horses")
-=======
 		local horses = DataUtility.server.get(player, "Horses")
 		if type(horses) ~= "table" then
 			return nil
@@ -129,7 +123,6 @@ local function get_horses_container(player: Player?)
 	end
 
 	return horses
->>>>>>> main
 end
 
 local function resolve_default_horse_id(horses): string?
@@ -153,7 +146,6 @@ local function resolve_default_horse_id(horses): string?
 	return nil
 end
 
-<<<<<<< HEAD
 local function get_need_max(horse, statusName: string): number
 	local needs = horse.Needs or {}
 	local maxValues = needs.Max or {}
@@ -163,14 +155,8 @@ local function get_need_max(horse, statusName: string): number
 		return math.max(0, value)
 	end
 
-	local definition = HorseCatalog.GetDefinition(horse.CatalogId or "")
-	local fallback = definition and definition.Needs and definition.Needs.Max and definition.Needs.Max[statusName]
-
-	if type(fallback) == "number" then
-		return math.max(0, fallback)
-	end
-
-	return 100
+	local definition = get_definition_for_horse(horse)
+	return math.max(0, get_definition_status_value(definition, "Max", statusName, DEFAULT_STATUS_MAX))
 end
 
 local function get_need_value(horse, statusName: string): number
@@ -186,7 +172,7 @@ local function get_need_value(horse, statusName: string): number
 		return math.max(0, value)
 	end
 
-	return clamp_number(value, 0, get_need_max(horse, statusName))
+	return clamp_to_max(value, get_need_max(horse, statusName))
 end
 
 local function get_decay_per_hour(horse, statusName: string): number
@@ -198,14 +184,8 @@ local function get_decay_per_hour(horse, statusName: string): number
 		return math.max(0, value)
 	end
 
-	local definition = HorseCatalog.GetDefinition(horse.CatalogId or "")
-	local fallback = definition and definition.Needs and definition.Needs.DecayPerHour and definition.Needs.DecayPerHour[statusName]
-
-	if type(fallback) == "number" then
-		return math.max(0, fallback)
-	end
-
-	return 0
+	local definition = get_definition_for_horse(horse)
+	return math.max(0, get_definition_status_value(definition, "DecayPerHour", statusName, 0))
 end
 
 local function get_last_updated_at(horse, now: number): number
@@ -234,7 +214,7 @@ local function get_active_modifier(horse, statusName: string, lastUpdatedAt: num
 
 	return {
 		Multiplier = clamp_number(tonumber(modifier.Multiplier) or 1, 0.1, 5),
-		ExpiresAt = modifier.ExpiresAt,
+		ExpiresAt = math.max(lastUpdatedAt, math.min(now, modifier.ExpiresAt)),
 	}
 end
 
@@ -265,14 +245,6 @@ local function has_zero_other_need(statuses, targetNeed: string): boolean
 	end
 
 	return false
-end
-
-local function clamp_status_value(statusName: string, value: number, maxValue: number): number
-	if OVERFLOW_ALLOWED_NEEDS[statusName] then
-		return math.max(0, value)
-	end
-
-	return math.clamp(value, 0, maxValue)
 end
 
 local function apply_zero_need_penalties(horse, statuses, lastUpdatedAt: number, now: number)
@@ -319,34 +291,6 @@ local function compute_pending_health_gain(horse, lastUpdatedAt: number, now: nu
 	return pendingGain
 end
 
-function HorseStatusService.GetHorse(playerOrHorseId, horseId: string?): (any?, string?)
-	local horses = nil
-	local resolvedHorseId = horseId
-
-	if RunService:IsServer() then
-		horses = get_horses_container(playerOrHorseId)
-	else
-		horses = get_horses_container(nil)
-
-		if type(playerOrHorseId) == "string" and playerOrHorseId ~= "" then
-			resolvedHorseId = playerOrHorseId
-		end
-	end
-
-	if type(horses) ~= "table" or type(horses.Owned) ~= "table" then
-		return nil, nil
-	end
-
-	if type(resolvedHorseId) ~= "string" or resolvedHorseId == "" then
-		resolvedHorseId = resolve_default_horse_id(horses)
-	end
-
-	if not resolvedHorseId then
-		return nil, nil
-	end
-
-	return horses.Owned[resolvedHorseId], resolvedHorseId
-=======
 function HorseStatusService.NormalizeHorse(horse, now: number?): boolean
 	if type(horse) ~= "table" then
 		return false
@@ -388,6 +332,16 @@ function HorseStatusService.NormalizeHorse(horse, now: number?): boolean
 		changed = true
 	end
 
+	if type(needs.Modifiers) ~= "table" then
+		needs.Modifiers = {}
+		changed = true
+	end
+
+	if type(needs.ActiveEffects) ~= "table" then
+		needs.ActiveEffects = {}
+		changed = true
+	end
+
 	if type(needs.LastUpdatedAt) ~= "number" or needs.LastUpdatedAt <= 0 then
 		needs.LastUpdatedAt = timestamp
 		changed = true
@@ -404,7 +358,7 @@ function HorseStatusService.NormalizeHorse(horse, now: number?): boolean
 			changed = true
 		end
 
-		currentValue = clamp_status_value(currentValue, maxValue)
+		currentValue = clamp_status_value(statusName, currentValue, maxValue)
 
 		if needs.Max[statusName] ~= maxValue then
 			needs.Max[statusName] = maxValue
@@ -429,70 +383,9 @@ function HorseStatusService.NormalizeHorse(horse, now: number?): boolean
 	return changed
 end
 
-function HorseStatusService.GetComputedStatuses(horse, now: number?)
-	if type(horse) ~= "table" then
-		return nil
-	end
-
-	local timestamp = if type(now) == "number" then now else os.time()
-	HorseStatusService.NormalizeHorse(horse, timestamp)
-
-	local needs = horse.Needs
-	local lastUpdatedAt = needs.LastUpdatedAt or timestamp
-	local elapsedSeconds = math.max(0, timestamp - math.min(lastUpdatedAt, timestamp))
-	local elapsedHours = elapsedSeconds / 3600
-	local statuses = {}
-
-	for _, statusName: string in ipairs(STATUS_ORDER) do
-		local maxValue = tonumber(needs.Max[statusName]) or DEFAULT_STATUS_MAX
-		local currentValue = clamp_status_value(needs.Values[statusName], maxValue)
-		local decayPerHour = math.max(0, tonumber(needs.DecayPerHour[statusName]) or 0)
-
-		statuses[statusName] = clamp_status_value(currentValue - (decayPerHour * elapsedHours), maxValue)
-	end
-
-	return statuses
-end
-
-function HorseStatusService.ApplyDecay(horse, now: number?): (boolean, {[string]: number}?)
-	if type(horse) ~= "table" then
-		return false, nil
-	end
-
-	local timestamp = if type(now) == "number" then now else os.time()
-	local changed = HorseStatusService.NormalizeHorse(horse, timestamp)
-	local statuses = HorseStatusService.GetComputedStatuses(horse, timestamp)
-	local needs = horse.Needs
-
-	for _, statusName: string in ipairs(STATUS_ORDER) do
-		local nextValue = statuses[statusName]
-
-		if needs.Values[statusName] ~= nextValue then
-			needs.Values[statusName] = nextValue
-			changed = true
-		end
-	end
-
-	if needs.LastUpdatedAt ~= timestamp then
-		needs.LastUpdatedAt = timestamp
-		changed = true
-	end
-
-	if sync_dirty_state(horse) then
-		changed = true
-	end
-
-	return changed, statuses
->>>>>>> main
-end
-
 function HorseStatusService.GetOwnedHorseIds(player: Player?): {string}
 	local horses = get_horses_container(player)
-<<<<<<< HEAD
-	if type(horses) ~= "table" or type(horses.Owned) ~= "table" then
-=======
 	if not horses or type(horses.Owned) ~= "table" then
->>>>>>> main
 		return {}
 	end
 
@@ -516,13 +409,14 @@ function HorseStatusService.GetOwnedHorseIds(player: Player?): {string}
 	return orderedHorseIds
 end
 
-<<<<<<< HEAD
 function HorseStatusService.GetComputedStatuses(horse, now: number?)
 	if type(horse) ~= "table" then
 		return nil
 	end
 
 	local timestamp = if type(now) == "number" then now else os.time()
+	HorseStatusService.NormalizeHorse(horse, timestamp)
+
 	local lastUpdatedAt = get_last_updated_at(horse, timestamp)
 	local statuses = {}
 	local pendingHealthGain = compute_pending_health_gain(horse, lastUpdatedAt, timestamp)
@@ -549,7 +443,87 @@ function HorseStatusService.GetComputedStatuses(horse, now: number?)
 	apply_zero_need_penalties(horse, statuses, lastUpdatedAt, timestamp)
 
 	return statuses
-=======
+end
+
+function HorseStatusService.ApplyDecay(horse, now: number?): (boolean, {[string]: number}?)
+	if type(horse) ~= "table" then
+		return false, nil
+	end
+
+	local timestamp = if type(now) == "number" then now else os.time()
+	local changed = HorseStatusService.NormalizeHorse(horse, timestamp)
+	local lastUpdatedAt = get_last_updated_at(horse, timestamp)
+	local statuses = HorseStatusService.GetComputedStatuses(horse, timestamp)
+	local needs = horse.Needs
+
+	for _, statusName: string in ipairs(STATUS_ORDER) do
+		local nextValue = statuses[statusName]
+
+		if needs.Values[statusName] ~= nextValue then
+			needs.Values[statusName] = nextValue
+			changed = true
+		end
+	end
+
+	if type(needs.Modifiers) == "table" then
+		for statusName, modifier in pairs(needs.Modifiers) do
+			if type(modifier) ~= "table" or type(modifier.ExpiresAt) ~= "number" or modifier.ExpiresAt <= timestamp then
+				needs.Modifiers[statusName] = nil
+				changed = true
+			end
+		end
+	end
+
+	if type(needs.ActiveEffects) == "table" then
+		local keptEffects = {}
+
+		for _, effect in ipairs(needs.ActiveEffects) do
+			if type(effect) == "table" and effect.Type == "HealthOverTime" then
+				local expiresAt = tonumber(effect.ExpiresAt) or timestamp
+				local lastTickAt = tonumber(effect.LastTickAt) or lastUpdatedAt
+				local remainingGain = math.max(0, tonumber(effect.RemainingGain) or 0)
+				local ratePerSecond = math.max(0, tonumber(effect.RatePerSecond) or 0)
+				local effectEnd = math.min(timestamp, expiresAt)
+				local elapsedSeconds = math.max(0, effectEnd - lastTickAt)
+				local appliedGain = math.min(remainingGain, ratePerSecond * elapsedSeconds)
+
+				if appliedGain > 0 then
+					effect.RemainingGain = remainingGain - appliedGain
+					changed = true
+				end
+
+				if effect.LastTickAt ~= effectEnd then
+					effect.LastTickAt = effectEnd
+					changed = true
+				end
+
+				if (effect.RemainingGain or 0) > 0.05 and expiresAt > effectEnd then
+					keptEffects[#keptEffects + 1] = effect
+				else
+					changed = true
+				end
+			else
+				changed = true
+			end
+		end
+
+		if #keptEffects ~= #needs.ActiveEffects then
+			needs.ActiveEffects = keptEffects
+		end
+	end
+
+	if needs.LastUpdatedAt ~= timestamp then
+		needs.LastUpdatedAt = timestamp
+		changed = true
+	end
+
+	if sync_dirty_state(horse) then
+		changed = true
+	end
+
+	return changed, statuses
+end
+
 function HorseStatusService.GetHorse(playerOrHorseId, horseId: string?): (any?, string?)
 	local horses = nil
 	local resolvedHorseId = horseId
@@ -584,7 +558,6 @@ function HorseStatusService.GetHorse(playerOrHorseId, horseId: string?): (any?, 
 	HorseStatusService.NormalizeHorse(horse)
 
 	return horse, resolvedHorseId
->>>>>>> main
 end
 
 function HorseStatusService.GetStatuses(target, horseIdOrNow, now: number?)

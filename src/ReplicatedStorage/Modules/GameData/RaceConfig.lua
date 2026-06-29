@@ -6,7 +6,7 @@ local RaceConfig = {
 	InviteInterval = isStudio and 60 or 300,
 	InitialInviteDelay = isStudio and 10 or 300,
 	InviteDuration = 20,
-	RaceDistance = 220,
+	RaceDistance = 440,
 	SegmentLength = 30,
 	BaseSpeed = 24.5,
 	MinSpeed = 19,
@@ -23,6 +23,7 @@ local RaceConfig = {
 	CameraSpeed = 24.25,
 	StatusBroadcastInterval = 0.15,
 	ResultDuration = 6,
+	IntroTagDuration = 3.5,
 	WinnerReward = 125,
 	MaxParticipants = 8,
 }

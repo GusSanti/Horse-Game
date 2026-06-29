@@ -157,13 +157,9 @@ local ProfileTemplate = {
 		TotalQuestsCompleted = 0,
 		TotalArenaRuns = 0,
 		TotalCropsHarvested = 0,
-<<<<<<< Updated upstream
 		TotalHorsesOwned = 1,
-=======
-		TotalHorsesOwned = 0,
 		TotalRacesEntered = 0,
 		TotalRaceWins = 0,
->>>>>>> Stashed changes
 	},
 
 	LiveOps = {

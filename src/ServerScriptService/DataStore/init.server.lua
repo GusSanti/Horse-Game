@@ -14,12 +14,11 @@ local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChi
 local store = ProfileStore.New(STORE_NAME, ProfileTemplate)
 local profilesByUserId: {[number]: any} = {}
 
-
 ------------------//FUNCTIONS
 local function attach_player_profile(player)
 	local profile = store:StartSessionAsync(tostring(player.UserId))
 	if not profile then
-		warn("Falha ao iniciar sessão do perfil para " .. player.Name)
+		warn("Falha ao iniciar sessao do perfil para " .. player.Name)
 		return
 	end
 
@@ -39,7 +38,7 @@ local function attach_player_profile(player)
 
 	DataUtility.server.attach_profile(player, profile)
 
-	print(profile.Data,"- " .. player.Name .. " - " .. player.UserId) 
+	print(profile.Data, "- " .. player.Name .. " - " .. player.UserId)
 
 	profile.OnSessionEnd:Connect(function()
 		DataUtility.server.detach_profile(player)
@@ -67,8 +66,8 @@ end
 ------------------//INIT
 DataUtility.server.ensure_remotes()
 
-for _, p in Players:GetPlayers() do
-	on_player_added(p)
+for _, player in Players:GetPlayers() do
+	on_player_added(player)
 end
 
 Players.PlayerAdded:Connect(on_player_added)

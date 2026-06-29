@@ -3,8 +3,8 @@ local HorseStatusBillboardConfig = {
 	Enabled = true,
 	RefreshInterval = 0.25,
 	MaxDistance = 80,
-	StudsOffset = 1.6,
-	BillboardSize = Vector2.new(220, 158),
+	StudsOffset = 1.9,
+	BillboardSize = Vector2.new(252, 242),
 	BackgroundColor = Color3.fromRGB(20, 24, 30),
 	BackgroundTransparency = 0.15,
 	StrokeColor = Color3.fromRGB(255, 255, 255),
@@ -15,7 +15,7 @@ local HorseStatusBillboardConfig = {
 	ValueSuffix = "%",
 	ValueDecimals = 0,
 	TitleTextSize = 16,
-	StatusTextSize = 14,
+	StatusTextSize = 13,
 }
 
 return HorseStatusBillboardConfig
