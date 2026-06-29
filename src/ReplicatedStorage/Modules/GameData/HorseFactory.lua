@@ -41,10 +41,18 @@ function HorseFactory.Create(catalogId, instanceId, options)
 		Bond = {
 			Level = 1,
 			XP = 0,
+			TotalXP = 0,
 			MaxLevel = definition.Bonding.MaxBondLevel,
 			Friendship = definition.Bonding.StartingFriendship,
 			MaxFriendship = definition.Bonding.MaxFriendship,
 			CareBonus = TableUtility.DeepCopy(definition.Bonding.CareBonus),
+			LastProgressAt = now,
+			AccruedCareSeconds = 0,
+			CareStreak = 0,
+			BestCareStreak = 0,
+			SuccessfulCareWindows = 0,
+			LastQualifiedAt = 0,
+			TrustState = "Wary",
 		},
 		Needs = {
 			Values = TableUtility.DeepCopy(definition.Needs.Starting),

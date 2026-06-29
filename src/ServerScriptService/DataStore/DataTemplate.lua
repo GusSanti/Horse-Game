@@ -130,6 +130,14 @@ local ProfileTemplate = {
 		TotalRewardsEarned = 0,
 	},
 
+	Race = {
+		RacesEntered = 0,
+		RacesWon = 0,
+		BestRaceTimeMs = 0,
+		LastRaceAt = 0,
+		TotalRewardsEarned = 0,
+	},
+
 	Collection = {
 		DiscoveredHorseIds = { defaultHorse.CatalogId },
 		OwnedHorseCatalogIds = { defaultHorse.CatalogId },
@@ -146,7 +154,13 @@ local ProfileTemplate = {
 		TotalQuestsCompleted = 0,
 		TotalArenaRuns = 0,
 		TotalCropsHarvested = 0,
+<<<<<<< Updated upstream
 		TotalHorsesOwned = 1,
+=======
+		TotalHorsesOwned = 0,
+		TotalRacesEntered = 0,
+		TotalRaceWins = 0,
+>>>>>>> Stashed changes
 	},
 
 	LiveOps = {

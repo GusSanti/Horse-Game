@@ -1,10 +1,12 @@
 ------------------//SERVICES
+local Players: Players = game:GetService("Players")
 local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 ------------------//CONSTANTS
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Dictionary = Modules:WaitForChild("Dictionary")
 local GameData = Modules:WaitForChild("GameData")
+local Services = Modules:WaitForChild("Services")
 local Utility = Modules:WaitForChild("Utility")
 
 local HORSE_FOLDER_NAME = "HorseFolder"
@@ -13,16 +15,21 @@ local PRIMARY_HORSE_SLOT_NAME = "Slot1"
 local VISUAL_HORSE_ATTRIBUTE = "IsStableVisualHorse"
 local HORSE_ID_ATTRIBUTE = "HorseId"
 local HORSE_CATALOG_ID_ATTRIBUTE = "HorseCatalogId"
+local STATUS_UPDATE_INTERVAL_SECONDS = 60
 
 ------------------//VARIABLES
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
+local HorseBondService = require(Services:WaitForChild("HorseBondService"))
+local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 
 local HorseService = {}
+local statusDecayLoopStarted = false
 
+<<<<<<< Updated upstream
 ------------------//FUNCTIONS
 local function get_first_owned_horse_id(horses): string?
 	local orderedIds = horses.OrderedIds or {}
@@ -30,6 +37,20 @@ local function get_first_owned_horse_id(horses): string?
 
 	for _, horseId: string in orderedIds do
 		if ownedHorses[horseId] then
+=======
+local function get_display_name(horse)
+	local nickname = horse.Nickname or ""
+	if nickname ~= "" then
+		return nickname
+	end
+
+	return horse.DisplayName or horse.CatalogId or horse.Id
+end
+
+local function get_first_owned_horse_id(horses)
+	for _, horseId in ipairs(horses.OrderedIds or {}) do
+		if horses.Owned[horseId] then
+>>>>>>> Stashed changes
 			return horseId
 		end
 	end
@@ -41,6 +62,7 @@ local function get_first_owned_horse_id(horses): string?
 	return nil
 end
 
+<<<<<<< Updated upstream
 local function get_owned_horse_ids_in_order(horses): {string}
 	local orderedHorseIds: {string} = {}
 	local addedHorseIds: {[string]: boolean} = {}
@@ -195,6 +217,54 @@ local function save_stable(player: Player, stable): ()
 	DataUtility.server.set(player, "Stable", stable)
 end
 
+local function save_owned_horses(player: Player, horses): ()
+	DataUtility.server.set(player, "Horses.Owned", horses.Owned)
+end
+
+local function refresh_owned_horse_statuses(player: Player, horses, horseId: string?): (boolean, string)
+	if not horses or type(horses.Owned) ~= "table" then
+		return false, "DataUnavailable"
+	end
+
+	local now = os.time()
+	local changed = false
+	local totalBondXP = 0
+
+	if horseId and horseId ~= "" then
+		local horse = horses.Owned[horseId]
+		if not horse then
+			return false, "HorseNotOwned"
+		end
+
+		local horseChanged = HorseStatusService.ApplyDecay(horse, now)
+		local bondChanged, xpGained = HorseBondService.ApplyPassiveProgress(horse, now)
+		changed = changed or horseChanged
+		changed = changed or bondChanged
+		totalBondXP += xpGained or 0
+	else
+		for _, horse in horses.Owned do
+			local horseChanged = HorseStatusService.ApplyDecay(horse, now)
+			local bondChanged, xpGained = HorseBondService.ApplyPassiveProgress(horse, now)
+			changed = changed or horseChanged
+			changed = changed or bondChanged
+			totalBondXP += xpGained or 0
+		end
+	end
+
+	if changed then
+		save_owned_horses(player, horses)
+
+		if totalBondXP > 0 then
+			local currentBondPoints = DataUtility.server.get(player, "Stats.TotalBondPointsEarned") or 0
+			DataUtility.server.set(player, "Stats.TotalBondPointsEarned", currentBondPoints + totalBondXP)
+		end
+
+		return true, "Updated"
+	end
+
+	return true, "Unchanged"
+end
+
 local function get_horse_assets_folder(): Instance?
 	local assetsFolder = ReplicatedStorage:FindFirstChild("Assets")
 	if not assetsFolder then
@@ -347,6 +417,40 @@ end
 
 ------------------//MAIN FUNCTIONS
 function HorseService.get_player_horse(player: Player, horseId: string?): (any?, string)
+=======
+local function get_owned_horses_state(player)
+	local horses = DataUtility.server.get(player, "Horses")
+	if not horses then
+		return nil, nil
+	end
+
+	return horses, horses.Owned or {}
+end
+
+local function build_horse_summary(horse, equippedHorseId)
+	local movement = horse.Movement or {}
+	local stats = horse.Stats or {}
+
+	return {
+		Id = horse.Id,
+		CatalogId = horse.CatalogId,
+		Name = get_display_name(horse),
+		DisplayName = horse.DisplayName or horse.CatalogId or horse.Id,
+		Nickname = horse.Nickname or "",
+		PlaceholderModelKey = horse.PlaceholderModelKey or "",
+		RaceAffinity = movement.RaceAffinity or 0.5,
+		SprintSpeed = movement.SprintSpeed or 24,
+		Acceleration = movement.Acceleration or 0.8,
+		Stamina = movement.Stamina or 100,
+		RacesEntered = stats.RacesEntered or 0,
+		RacesWon = stats.RacesWon or 0,
+		BestRaceTimeMs = stats.BestRaceTimeMs or 0,
+		IsEquipped = horse.Id == equippedHorseId,
+	}
+end
+
+function HorseService.EquipHorse(player, horseId)
+>>>>>>> Stashed changes
 	local horses = DataUtility.server.get(player, "Horses")
 	if not horses or not horses.Owned then
 		return nil, "DataUnavailable"
@@ -391,7 +495,79 @@ function HorseService.equip_horse(player: Player, horseId: string): (boolean, st
 	return true, horseId
 end
 
+<<<<<<< Updated upstream
 function HorseService.create_horse_for_player(player: Player, catalogId: string, options): (any, string)
+=======
+function HorseService.GetOwnedHorse(player, horseId)
+	local _, owned = get_owned_horses_state(player)
+	if not owned then
+		return nil
+	end
+
+	return owned[horseId]
+end
+
+function HorseService.GetOwnedHorses(player)
+	local horses, owned = get_owned_horses_state(player)
+	if not horses or not owned then
+		return {}
+	end
+
+	local ordered = {}
+	local inserted = {}
+
+	for _, horseId in ipairs(horses.OrderedIds or {}) do
+		local horse = owned[horseId]
+		if horse then
+			ordered[#ordered + 1] = horse
+			inserted[horseId] = true
+		end
+	end
+
+	for horseId, horse in pairs(owned) do
+		if not inserted[horseId] then
+			ordered[#ordered + 1] = horse
+		end
+	end
+
+	return ordered
+end
+
+function HorseService.GetOwnedHorseSummaries(player)
+	local horses = DataUtility.server.get(player, "Horses")
+	if not horses then
+		return {}
+	end
+
+	local summaries = {}
+	for _, horse in ipairs(HorseService.GetOwnedHorses(player)) do
+		summaries[#summaries + 1] = build_horse_summary(horse, horses.EquippedHorseId)
+	end
+
+	return summaries
+end
+
+function HorseService.GetEquippedHorse(player)
+	local horses, owned = get_owned_horses_state(player)
+	if not horses or not owned then
+		return nil
+	end
+
+	local equippedHorseId = horses.EquippedHorseId or ""
+	if equippedHorseId ~= "" and owned[equippedHorseId] then
+		return owned[equippedHorseId]
+	end
+
+	local fallbackHorseId = get_first_owned_horse_id(horses)
+	if fallbackHorseId then
+		return owned[fallbackHorseId]
+	end
+
+	return nil
+end
+
+function HorseService.CreateHorseForPlayer(player, catalogId, options)
+>>>>>>> Stashed changes
 	options = options or {}
 
 	local horses = DataUtility.server.get(player, "Horses")
@@ -416,6 +592,8 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 		IsStarterGrant = options.IsStarterGrant,
 		ObtainedAt = options.ObtainedAt,
 	})
+	HorseBondService.NormalizeBond(horse, os.time())
+	HorseStatusService.NormalizeHorse(horse, os.time())
 
 	horses.Owned[horse.Id] = horse
 	TableUtility.InsertUnique(horses.OrderedIds, horse.Id)
@@ -505,6 +683,7 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 	return currentHorse, "Granted"
 end
 
+<<<<<<< Updated upstream
 function HorseService.set_stable_slot_horse(player: Player, slotName: string, horseId: string): (boolean, string)
 	if not is_valid_slot_name(slotName) then
 		return false, "InvalidSlot"
@@ -622,6 +801,29 @@ function HorseService.sync_plot_horses(player: Player, plot: Instance): (boolean
 	return true, "Synced"
 end
 
+function HorseService.refresh_horse_statuses(player: Player, horseId: string?): (boolean, string)
+	local horses = DataUtility.server.get(player, "Horses")
+	return refresh_owned_horse_statuses(player, horses, horseId)
+end
+
+function HorseService.start_status_decay_loop(): ()
+	if statusDecayLoopStarted then
+		return
+	end
+
+	statusDecayLoopStarted = true
+
+	task.spawn(function()
+		while statusDecayLoopStarted do
+			task.wait(STATUS_UPDATE_INTERVAL_SECONDS)
+
+			for _, player: Player in Players:GetPlayers() do
+				HorseService.refresh_horse_statuses(player)
+			end
+		end
+	end)
+end
+
 HorseService.EquipHorse = HorseService.equip_horse
 HorseService.CreateHorseForPlayer = HorseService.create_horse_for_player
 HorseService.EnsureStarterHorse = HorseService.ensure_starter_horse
@@ -630,6 +832,76 @@ HorseService.ClearStableSlot = HorseService.clear_stable_slot
 HorseService.ClearPlotHorses = HorseService.clear_plot_horses
 HorseService.SyncPlotHorses = HorseService.sync_plot_horses
 HorseService.GetPlayerHorse = HorseService.get_player_horse
+HorseService.RefreshHorseStatuses = HorseService.refresh_horse_statuses
+HorseService.StartStatusDecayLoop = HorseService.start_status_decay_loop
 
 ------------------//INIT
+=======
+function HorseService.RecordRaceEntry(player, horseId)
+	local horses, owned = get_owned_horses_state(player)
+	if not horses or not owned or not owned[horseId] then
+		return false, "HorseNotOwned"
+	end
+
+	local horse = owned[horseId]
+	horse.Stats = horse.Stats or {}
+	horse.Stats.RacesEntered = (horse.Stats.RacesEntered or 0) + 1
+	owned[horseId] = horse
+	horses.Owned = owned
+
+	DataUtility.server.set(player, "Horses", horses)
+
+	local totalRacesEntered = (DataUtility.server.get(player, "Stats.TotalRacesEntered") or 0) + 1
+	DataUtility.server.set(player, "Stats.TotalRacesEntered", totalRacesEntered)
+
+	local raceStats = DataUtility.server.get(player, "Race")
+	if raceStats then
+		raceStats.RacesEntered = (raceStats.RacesEntered or 0) + 1
+		raceStats.LastRaceAt = os.time()
+		DataUtility.server.set(player, "Race", raceStats)
+	end
+
+	return true, build_horse_summary(horse, horses.EquippedHorseId)
+end
+
+function HorseService.RecordRaceWin(player, horseId, finishTimeMs, rewardAmount)
+	local horses, owned = get_owned_horses_state(player)
+	if not horses or not owned or not owned[horseId] then
+		return false, "HorseNotOwned"
+	end
+
+	local horse = owned[horseId]
+	horse.Stats = horse.Stats or {}
+	horse.Stats.RacesWon = (horse.Stats.RacesWon or 0) + 1
+
+	local currentBestTime = horse.Stats.BestRaceTimeMs or 0
+	if finishTimeMs and finishTimeMs > 0 and (currentBestTime <= 0 or finishTimeMs < currentBestTime) then
+		horse.Stats.BestRaceTimeMs = finishTimeMs
+	end
+
+	owned[horseId] = horse
+	horses.Owned = owned
+	DataUtility.server.set(player, "Horses", horses)
+
+	local totalRaceWins = (DataUtility.server.get(player, "Stats.TotalRaceWins") or 0) + 1
+	DataUtility.server.set(player, "Stats.TotalRaceWins", totalRaceWins)
+
+	local raceStats = DataUtility.server.get(player, "Race")
+	if raceStats then
+		raceStats.RacesWon = (raceStats.RacesWon or 0) + 1
+		raceStats.LastRaceAt = os.time()
+
+		local currentBestRaceTime = raceStats.BestRaceTimeMs or 0
+		if finishTimeMs and finishTimeMs > 0 and (currentBestRaceTime <= 0 or finishTimeMs < currentBestRaceTime) then
+			raceStats.BestRaceTimeMs = finishTimeMs
+		end
+
+		raceStats.TotalRewardsEarned = (raceStats.TotalRewardsEarned or 0) + math.max(0, rewardAmount or 0)
+		DataUtility.server.set(player, "Race", raceStats)
+	end
+
+	return true, build_horse_summary(horse, horses.EquippedHorseId)
+end
+
+>>>>>>> Stashed changes
 return HorseService
