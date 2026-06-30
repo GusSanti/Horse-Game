@@ -7,6 +7,8 @@ local NetworkConfig = {
 		FolderName = "Admin",
 		GetItemCatalog = "GetItemCatalog",
 		RequestItemTool = "RequestItemTool",
+		GetHorseRouletteState = "GetHorseRouletteState",
+		RollHorseRoulette = "RollHorseRoulette",
 	},
 }
 

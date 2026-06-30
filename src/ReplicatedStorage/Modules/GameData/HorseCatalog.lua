@@ -1,37 +1,96 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local Utility = Modules:WaitForChild("Utility")
+
+local TableUtility = require(Utility:WaitForChild("TableUtility"))
+
 local HorseCatalog = {}
 
-HorseCatalog.StarterPool = {
-	"Default",
+local SHARED_BONDING = {
+	MaxFriendship = 100,
+	StartingFriendship = 15,
+	MaxBondLevel = 10,
+	CareBonus = {
+		Feed = 4,
+		Water = 4,
+		Groom = 4,
+		Clean = 4,
+		Quest = 12,
+	},
 }
 
+local SHARED_DEPENDENCIES = {
+	FavoriteFoods = { "hay_bale", "apple_treat" },
+	FavoriteGroomingItems = { "soft_brush", "grooming_kit" },
+	FavoriteActivities = { "DailyCare", "ArenaSprint" },
+	StableNeeds = { "WaterBucket", "CleanStall" },
+}
+
+local SHARED_NEEDS = {
+	Max = {
+		Happiness = 100,
+		Hunger = 100,
+		Thirst = 100,
+		Cleanliness = 100,
+		Health = 100,
+	},
+	Starting = {
+		Happiness = 88,
+		Hunger = 92,
+		Thirst = 92,
+		Cleanliness = 90,
+		Health = 100,
+	},
+	DecayPerHour = {
+		Happiness = 2.8,
+		Hunger = 2.9,
+		Thirst = 2.9,
+		Cleanliness = 2.8,
+		Health = 3.1,
+	},
+}
+
+local function create_definition(definition)
+	return {
+		CatalogId = definition.CatalogId,
+		DisplayName = definition.DisplayName,
+		ShortName = definition.ShortName or definition.DisplayName,
+		Tier = definition.Tier or "Starter",
+		Rarity = definition.Rarity or "Common",
+		LaunchGroup = definition.LaunchGroup or "Launch",
+		PlaceholderModelKey = definition.PlaceholderModelKey or definition.DisplayName,
+		Description = definition.Description or "",
+		Bonding = TableUtility.DeepCopy(definition.Bonding or SHARED_BONDING),
+		Dependencies = TableUtility.DeepCopy(definition.Dependencies or SHARED_DEPENDENCIES),
+		Movement = TableUtility.DeepCopy(definition.Movement or {}),
+		Temperament = TableUtility.DeepCopy(definition.Temperament or {}),
+		Needs = TableUtility.DeepCopy(definition.Needs or SHARED_NEEDS),
+	}
+end
+
+HorseCatalog.RoulettePrice = 500
+
+HorseCatalog.RoulettePool = {
+	{ CatalogId = "quarter_horse", Weight = 38 },
+	{ CatalogId = "american_paint_horse", Weight = 28 },
+	{ CatalogId = "andalusian", Weight = 16 },
+	{ CatalogId = "american_saddlebred", Weight = 10 },
+	{ CatalogId = "lipizzaner", Weight = 6 },
+	{ CatalogId = "friesian", Weight = 2 },
+}
+
+HorseCatalog.StarterPool = HorseCatalog.RoulettePool
+
 HorseCatalog.Definitions = {
-	Default = {
+	Default = create_definition({
 		CatalogId = "Default",
 		DisplayName = "Default",
 		ShortName = "Default",
 		Tier = "Starter",
 		Rarity = "Common",
-		LaunchGroup = "Launch",
 		PlaceholderModelKey = "Default",
-		Description = "The default horse every player starts with.",
-		Bonding = {
-			MaxFriendship = 100,
-			StartingFriendship = 15,
-			MaxBondLevel = 10,
-			CareBonus = {
-				Feed = 4,
-				Water = 4,
-				Groom = 4,
-				Clean = 4,
-				Quest = 10,
-			},
-		},
-		Dependencies = {
-			FavoriteFoods = { "hay_bale" },
-			FavoriteGroomingItems = { "soft_brush" },
-			FavoriteActivities = { "DailyCare" },
-			StableNeeds = { "WaterBucket" },
-		},
+		Description = "Fallback horse definition used when a specific catalog id is unavailable.",
 		Movement = {
 			WalkSpeed = 14,
 			TrotSpeed = 18,
@@ -44,132 +103,21 @@ HorseCatalog.Definitions = {
 			RaceAffinity = 0.66,
 		},
 		Temperament = {
-			Gentleness = 85,
+			Gentleness = 82,
 			Energy = 68,
-			Bravery = 72,
+			Bravery = 74,
 			Focus = 78,
 			Sociability = 80,
 		},
-		Needs = {
-			Max = {
-				Happiness = 100,
-				Hunger = 100,
-				Thirst = 100,
-				Cleanliness = 100,
-				Health = 100,
-			},
-			Starting = {
-				Happiness = 80,
-				Hunger = 85,
-				Thirst = 85,
-				Cleanliness = 90,
-				Health = 100,
-			},
-			DecayPerHour = {
-				Happiness = 2.9,
-				Hunger = 5.8,
-				Thirst = 5.8,
-				Cleanliness = 4.35,
-				Health = 1.45,
-			},
-		},
-	},
-	starter_meadow_bay = {
-		CatalogId = "starter_meadow_bay",
-		DisplayName = "Meadow Bay",
-		ShortName = "Meadow",
+	}),
+	american_paint_horse = create_definition({
+		CatalogId = "american_paint_horse",
+		DisplayName = "American Paint Horse",
+		ShortName = "Paint",
 		Tier = "Starter",
 		Rarity = "Common",
-		LaunchGroup = "Launch",
-		PlaceholderModelKey = "Horse_MeadowBay",
-		Description = "A calm starter horse with balanced bond growth and steady movement.",
-		Bonding = {
-			MaxFriendship = 100,
-			StartingFriendship = 15,
-			MaxBondLevel = 10,
-			CareBonus = {
-				Feed = 4,
-				Water = 3,
-				Groom = 5,
-				Clean = 3,
-				Quest = 12,
-			},
-		},
-		Dependencies = {
-			FavoriteFoods = { "hay_bale", "apple_treat" },
-			FavoriteGroomingItems = { "soft_brush", "grooming_kit" },
-			FavoriteActivities = { "DailyCare", "ArenaSprint" },
-			StableNeeds = { "WaterBucket", "CleanStall" },
-		},
-		Movement = {
-			WalkSpeed = 14,
-			TrotSpeed = 18,
-			CanterSpeed = 22,
-			SprintSpeed = 26,
-			Acceleration = 0.82,
-			TurnRate = 0.78,
-			Stamina = 100,
-			Jump = 0.75,
-			RaceAffinity = 0.65,
-		},
-		Temperament = {
-			Gentleness = 88,
-			Energy = 62,
-			Bravery = 70,
-			Focus = 78,
-			Sociability = 82,
-		},
-		Needs = {
-			Max = {
-				Happiness = 100,
-				Hunger = 100,
-				Thirst = 100,
-				Cleanliness = 100,
-				Health = 100,
-			},
-			Starting = {
-				Happiness = 78,
-				Hunger = 86,
-				Thirst = 84,
-				Cleanliness = 90,
-				Health = 100,
-			},
-			DecayPerHour = {
-				Happiness = 2.9,
-				Hunger = 5.8,
-				Thirst = 7.25,
-				Cleanliness = 4.35,
-				Health = 1.45,
-			},
-		},
-	},
-	starter_dusty_chestnut = {
-		CatalogId = "starter_dusty_chestnut",
-		DisplayName = "Dusty Chestnut",
-		ShortName = "Dusty",
-		Tier = "Starter",
-		Rarity = "Common",
-		LaunchGroup = "Launch",
-		PlaceholderModelKey = "Horse_DustyChestnut",
-		Description = "A friendly horse that bonds quickly and keeps good pace in simple races.",
-		Bonding = {
-			MaxFriendship = 100,
-			StartingFriendship = 18,
-			MaxBondLevel = 10,
-			CareBonus = {
-				Feed = 3,
-				Water = 3,
-				Groom = 6,
-				Clean = 4,
-				Quest = 10,
-			},
-		},
-		Dependencies = {
-			FavoriteFoods = { "apple_treat", "carrot_bunch" },
-			FavoriteGroomingItems = { "soft_brush", "shine_kit" },
-			FavoriteActivities = { "DailyCare", "StablePhoto" },
-			StableNeeds = { "CleanStall", "FreshHay" },
-		},
+		PlaceholderModelKey = "American Paint Horse",
+		Description = "A balanced all-rounder with a calm presence and reliable pace.",
 		Movement = {
 			WalkSpeed = 14,
 			TrotSpeed = 19,
@@ -177,180 +125,188 @@ HorseCatalog.Definitions = {
 			SprintSpeed = 27,
 			Acceleration = 0.86,
 			TurnRate = 0.8,
-			Stamina = 96,
+			Stamina = 100,
 			Jump = 0.8,
 			RaceAffinity = 0.72,
 		},
 		Temperament = {
-			Gentleness = 84,
+			Gentleness = 86,
 			Energy = 72,
-			Bravery = 76,
-			Focus = 74,
-			Sociability = 88,
+			Bravery = 72,
+			Focus = 76,
+			Sociability = 86,
 		},
-		Needs = {
-			Max = {
-				Happiness = 100,
-				Hunger = 100,
-				Thirst = 100,
-				Cleanliness = 100,
-				Health = 100,
-			},
-			Starting = {
-				Happiness = 82,
-				Hunger = 84,
-				Thirst = 82,
-				Cleanliness = 88,
-				Health = 100,
-			},
-			DecayPerHour = {
-				Happiness = 2.9,
-				Hunger = 5.8,
-				Thirst = 7.25,
-				Cleanliness = 5.8,
-				Health = 1.45,
-			},
+	}),
+	andalusian = create_definition({
+		CatalogId = "andalusian",
+		DisplayName = "Andalusian",
+		ShortName = "Andalusian",
+		Tier = "Sport",
+		Rarity = "Uncommon",
+		PlaceholderModelKey = "Andalusian",
+		Description = "A focused endurance horse built for steady runs and composed handling.",
+		Movement = {
+			WalkSpeed = 13,
+			TrotSpeed = 18,
+			CanterSpeed = 22,
+			SprintSpeed = 26,
+			Acceleration = 0.8,
+			TurnRate = 0.77,
+			Stamina = 110,
+			Jump = 0.76,
+			RaceAffinity = 0.68,
 		},
-	},
-	starter_moon_gray = {
-		CatalogId = "starter_moon_gray",
-		DisplayName = "Moon Gray",
-		ShortName = "Moon",
-		Tier = "Starter",
-		Rarity = "Common",
-		LaunchGroup = "Launch",
-		PlaceholderModelKey = "Horse_MoonGray",
-		Description = "A focused and reliable horse with strong stamina for longer activities.",
-		Bonding = {
-			MaxFriendship = 100,
-			StartingFriendship = 12,
-			MaxBondLevel = 10,
-			CareBonus = {
-				Feed = 4,
-				Water = 4,
-				Groom = 4,
-				Clean = 3,
-				Quest = 14,
-			},
+		Temperament = {
+			Gentleness = 78,
+			Energy = 64,
+			Bravery = 84,
+			Focus = 88,
+			Sociability = 68,
 		},
-		Dependencies = {
-			FavoriteFoods = { "hay_bale", "mint_treat" },
-			FavoriteGroomingItems = { "grooming_kit", "shine_kit" },
-			FavoriteActivities = { "ArenaSprint", "TrailWalk" },
-			StableNeeds = { "WaterBucket", "QuietCorner" },
+	}),
+	friesian = create_definition({
+		CatalogId = "friesian",
+		DisplayName = "Friesian",
+		ShortName = "Friesian",
+		Tier = "Elite",
+		Rarity = "Legendary",
+		PlaceholderModelKey = "Friesian",
+		Description = "A striking powerhouse with deep stamina and an unmistakable silhouette.",
+		Movement = {
+			WalkSpeed = 13,
+			TrotSpeed = 17,
+			CanterSpeed = 21,
+			SprintSpeed = 24,
+			Acceleration = 0.74,
+			TurnRate = 0.73,
+			Stamina = 116,
+			Jump = 0.72,
+			RaceAffinity = 0.6,
 		},
+		Temperament = {
+			Gentleness = 72,
+			Energy = 56,
+			Bravery = 88,
+			Focus = 82,
+			Sociability = 60,
+		},
+	}),
+	lipizzaner = create_definition({
+		CatalogId = "lipizzaner",
+		DisplayName = "Lipizzaner",
+		ShortName = "Lipizzaner",
+		Tier = "Elite",
+		Rarity = "Epic",
+		PlaceholderModelKey = "Lipizzaner",
+		Description = "A poised specialist with high focus, elegant movement, and precise jumps.",
 		Movement = {
 			WalkSpeed = 13,
 			TrotSpeed = 18,
 			CanterSpeed = 22,
 			SprintSpeed = 25,
 			Acceleration = 0.78,
-			TurnRate = 0.76,
-			Stamina = 112,
-			Jump = 0.74,
-			RaceAffinity = 0.68,
+			TurnRate = 0.79,
+			Stamina = 104,
+			Jump = 0.9,
+			RaceAffinity = 0.64,
 		},
 		Temperament = {
-			Gentleness = 80,
-			Energy = 58,
-			Bravery = 82,
-			Focus = 90,
-			Sociability = 68,
+			Gentleness = 76,
+			Energy = 60,
+			Bravery = 80,
+			Focus = 92,
+			Sociability = 64,
 		},
-		Needs = {
-			Max = {
-				Happiness = 100,
-				Hunger = 100,
-				Thirst = 100,
-				Cleanliness = 100,
-				Health = 100,
-			},
-			Starting = {
-				Happiness = 74,
-				Hunger = 88,
-				Thirst = 86,
-				Cleanliness = 89,
-				Health = 100,
-			},
-			DecayPerHour = {
-				Happiness = 2.9,
-				Hunger = 4.35,
-				Thirst = 5.8,
-				Cleanliness = 4.35,
-				Health = 1.45,
-			},
-		},
-	},
-	starter_midnight_black = {
-		CatalogId = "starter_midnight_black",
-		DisplayName = "Midnight Black",
-		ShortName = "Midnight",
+	}),
+	quarter_horse = create_definition({
+		CatalogId = "quarter_horse",
+		DisplayName = "Quarter Horse",
+		ShortName = "Quarter",
 		Tier = "Starter",
 		Rarity = "Common",
-		LaunchGroup = "Launch",
-		PlaceholderModelKey = "Horse_MidnightBlack",
-		Description = "A fast, energetic horse with higher race potential and slightly fussier care needs.",
-		Bonding = {
-			MaxFriendship = 100,
-			StartingFriendship = 10,
-			MaxBondLevel = 10,
-			CareBonus = {
-				Feed = 3,
-				Water = 3,
-				Groom = 5,
-				Clean = 5,
-				Quest = 15,
-			},
-		},
-		Dependencies = {
-			FavoriteFoods = { "carrot_bunch", "mint_treat" },
-			FavoriteGroomingItems = { "soft_brush", "shine_kit" },
-			FavoriteActivities = { "ArenaSprint", "JumpPractice" },
-			StableNeeds = { "FreshHay", "CleanStall" },
-		},
+		PlaceholderModelKey = "Quarter Horse",
+		Description = "An explosive sprinter with quick acceleration and strong race instincts.",
 		Movement = {
 			WalkSpeed = 14,
 			TrotSpeed = 20,
 			CanterSpeed = 24,
 			SprintSpeed = 29,
 			Acceleration = 0.92,
-			TurnRate = 0.84,
-			Stamina = 94,
-			Jump = 0.82,
-			RaceAffinity = 0.82,
+			TurnRate = 0.82,
+			Stamina = 96,
+			Jump = 0.78,
+			RaceAffinity = 0.8,
 		},
 		Temperament = {
-			Gentleness = 72,
-			Energy = 88,
-			Bravery = 80,
-			Focus = 76,
-			Sociability = 66,
+			Gentleness = 80,
+			Energy = 84,
+			Bravery = 74,
+			Focus = 78,
+			Sociability = 76,
 		},
-		Needs = {
-			Max = {
-				Happiness = 100,
-				Hunger = 100,
-				Thirst = 100,
-				Cleanliness = 100,
-				Health = 100,
-			},
-			Starting = {
-				Happiness = 76,
-				Hunger = 82,
-				Thirst = 80,
-				Cleanliness = 86,
-				Health = 100,
-			},
-			DecayPerHour = {
-				Happiness = 4.35,
-				Hunger = 7.25,
-				Thirst = 7.25,
-				Cleanliness = 5.8,
-				Health = 1.45,
-			},
+	}),
+	american_saddlebred = create_definition({
+		CatalogId = "american_saddlebred",
+		DisplayName = "American Saddlebred",
+		ShortName = "Saddlebred",
+		Tier = "Show",
+		Rarity = "Rare",
+		PlaceholderModelKey = "American Saddlebred",
+		Description = "A stylish control horse that keeps rhythm well and handles cleanly at speed.",
+		Movement = {
+			WalkSpeed = 14,
+			TrotSpeed = 20,
+			CanterSpeed = 24,
+			SprintSpeed = 28,
+			Acceleration = 0.88,
+			TurnRate = 0.84,
+			Stamina = 98,
+			Jump = 0.82,
+			RaceAffinity = 0.75,
 		},
-	},
+		Temperament = {
+			Gentleness = 82,
+			Energy = 80,
+			Bravery = 70,
+			Focus = 80,
+			Sociability = 78,
+		},
+	}),
 }
+
+local function get_roulette_entry(catalogId)
+	for _, entry in ipairs(HorseCatalog.RoulettePool) do
+		if entry.CatalogId == catalogId then
+			return entry
+		end
+	end
+
+	return nil
+end
+
+local function roll_weighted_catalog_id(pool)
+	local totalWeight = 0
+
+	for _, entry in ipairs(pool) do
+		totalWeight += math.max(0, tonumber(entry.Weight) or 0)
+	end
+
+	if totalWeight <= 0 then
+		return "Default"
+	end
+
+	local roll = math.random(1, totalWeight)
+	local runningTotal = 0
+
+	for _, entry in ipairs(pool) do
+		runningTotal += math.max(0, tonumber(entry.Weight) or 0)
+		if roll <= runningTotal then
+			return entry.CatalogId
+		end
+	end
+
+	return pool[#pool] and pool[#pool].CatalogId or "Default"
+end
 
 function HorseCatalog.GetDefinition(catalogId)
 	return HorseCatalog.Definitions[catalogId]
@@ -360,10 +316,39 @@ function HorseCatalog.GetStarterPool()
 	return HorseCatalog.StarterPool
 end
 
-function HorseCatalog.GetStarterHorseIdForPlayer(userId)
-	local pool = HorseCatalog.GetStarterPool()
-	local index = (math.abs(userId) % #pool) + 1
-	return pool[index]
+function HorseCatalog.GetRoulettePool()
+	return HorseCatalog.RoulettePool
+end
+
+function HorseCatalog.GetRouletteEntry(catalogId)
+	return get_roulette_entry(catalogId)
+end
+
+function HorseCatalog.GetRouletteHorseOptions()
+	local options = {}
+
+	for _, entry in ipairs(HorseCatalog.RoulettePool) do
+		local definition = HorseCatalog.GetDefinition(entry.CatalogId)
+		if definition then
+			options[#options + 1] = {
+				CatalogId = definition.CatalogId,
+				DisplayName = definition.DisplayName,
+				Rarity = definition.Rarity,
+				Weight = entry.Weight,
+				ModelKey = definition.PlaceholderModelKey,
+			}
+		end
+	end
+
+	return options
+end
+
+function HorseCatalog.RollRouletteHorseId()
+	return roll_weighted_catalog_id(HorseCatalog.RoulettePool)
+end
+
+function HorseCatalog.GetStarterHorseIdForPlayer(_userId)
+	return HorseCatalog.RollRouletteHorseId()
 end
 
 return HorseCatalog

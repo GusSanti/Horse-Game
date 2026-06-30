@@ -36,7 +36,12 @@ local function bootstrap_player(player: Player): ()
 
 		FarmingShopService.SyncSeedTools(player)
 		update_login_data(player)
-		HorseService.ensure_starter_horse(player)
+
+		local starterHorse, starterCode = HorseService.ensure_starter_horse(player)
+		if not starterHorse and starterCode ~= "AlreadyGranted" then
+			warn(("[GameBootstrap] ensure_starter_horse falhou para %s: %s"):format(player.Name, tostring(starterCode)))
+		end
+
 		HorseService.refresh_horse_statuses(player)
 		QuestService.EnsureDailyQuest(player)
 		RaceService.SyncPlayer(player)

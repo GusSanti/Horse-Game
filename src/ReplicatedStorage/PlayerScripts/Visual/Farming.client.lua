@@ -191,7 +191,7 @@ local function activate_watering_tool(tool: Tool)
 end
 
 local function handle_tool_equipped(tool: Tool)
-	if tool.Name == FarmingUtility.SEED_TOOL_NAME then
+	if FarmingUtility.IsSeedTool(tool) then
 		activate_seed_tool(tool)
 		return
 	end

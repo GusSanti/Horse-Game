@@ -4,22 +4,11 @@ local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage"
 ------------------//CONSTANTS
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Dictionary = Modules:WaitForChild("Dictionary")
-local GameData = Modules:WaitForChild("GameData")
 
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
-local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
 
 ------------------//VARIABLES
-local defaultHorse = HorseFactory.Create("Default", 0, {
-	HorseId = "Default",
-	Nickname = "Default",
-	Source = "ProfileTemplate",
-	IsStarterGrant = true,
-	ObtainedAt = 0,
-})
-
 local defaultHorseSlots = StableDictionary.get_default_horse_slots()
-defaultHorseSlots.Slot1 = defaultHorse.Id
 
 local ProfileTemplate = {
 	ProfileVersion = 1,
@@ -44,7 +33,7 @@ local ProfileTemplate = {
 	Progression = {
 		TutorialCompleted = false,
 		TutorialStep = "NotStarted",
-		FirstHorseGranted = true,
+		FirstHorseGranted = false,
 		UnlockedFeatures = {
 			Stable = true,
 			TackShop = false,
@@ -55,12 +44,10 @@ local ProfileTemplate = {
 	},
 
 	Horses = {
-		EquippedHorseId = defaultHorse.Id,
+		EquippedHorseId = "",
 		NextHorseInstanceId = 0,
-		OrderedIds = { defaultHorse.Id },
-		Owned = {
-			[defaultHorse.Id] = defaultHorse,
-		},
+		OrderedIds = {},
+		Owned = {},
 	},
 
 	Inventory = {
@@ -74,6 +61,7 @@ local ProfileTemplate = {
 			Medical = {},
 			Misc = {},
 		},
+		Fruits = {},
 		Seeds = {},
 		Trophies = {},
 	},
@@ -141,8 +129,8 @@ local ProfileTemplate = {
 	},
 
 	Collection = {
-		DiscoveredHorseIds = { defaultHorse.CatalogId },
-		OwnedHorseCatalogIds = { defaultHorse.CatalogId },
+		DiscoveredHorseIds = {},
+		OwnedHorseCatalogIds = {},
 		UnlockedCosmeticIds = {},
 	},
 
@@ -157,7 +145,7 @@ local ProfileTemplate = {
 		TotalQuestsCompleted = 0,
 		TotalArenaRuns = 0,
 		TotalCropsHarvested = 0,
-		TotalHorsesOwned = 1,
+		TotalHorsesOwned = 0,
 		TotalRacesEntered = 0,
 		TotalRaceWins = 0,
 	},

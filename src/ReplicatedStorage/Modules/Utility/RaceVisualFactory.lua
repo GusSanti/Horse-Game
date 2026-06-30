@@ -9,6 +9,30 @@ end
 local RaceVisualFactory = {}
 
 local HORSE_COLORS = {
+	american_paint_horse = {
+		Body = Color3.fromRGB(172, 131, 102),
+		Mane = Color3.fromRGB(84, 58, 43),
+	},
+	andalusian = {
+		Body = Color3.fromRGB(180, 184, 191),
+		Mane = Color3.fromRGB(104, 108, 116),
+	},
+	friesian = {
+		Body = Color3.fromRGB(42, 44, 50),
+		Mane = Color3.fromRGB(15, 16, 20),
+	},
+	lipizzaner = {
+		Body = Color3.fromRGB(225, 227, 232),
+		Mane = Color3.fromRGB(169, 172, 180),
+	},
+	quarter_horse = {
+		Body = Color3.fromRGB(154, 107, 76),
+		Mane = Color3.fromRGB(80, 49, 34),
+	},
+	american_saddlebred = {
+		Body = Color3.fromRGB(126, 80, 57),
+		Mane = Color3.fromRGB(44, 28, 19),
+	},
 	starter_meadow_bay = {
 		Body = Color3.fromRGB(142, 101, 70),
 		Mane = Color3.fromRGB(57, 37, 25),

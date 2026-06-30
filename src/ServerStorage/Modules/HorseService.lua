@@ -750,14 +750,14 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 
 	if not hasAnyHorse then
 		local starterHorseId = HorseCatalog.GetStarterHorseIdForPlayer(player.UserId)
-		local starterHorse = HorseService.create_horse_for_player(player, starterHorseId, {
+		local starterHorse, starterError = HorseService.create_horse_for_player(player, starterHorseId, {
 			Source = "StarterGrant",
 			IsStarterGrant = true,
 			EquipOnGrant = true,
 		})
 
 		if not starterHorse then
-			return nil, "StarterGrantFailed"
+			return nil, starterError or "StarterGrantFailed"
 		end
 	end
 

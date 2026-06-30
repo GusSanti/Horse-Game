@@ -7,6 +7,7 @@ local GameData = Modules:WaitForChild("GameData")
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local AdminAccessService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("AdminAccessService"))
+local HorseRouletteService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseRouletteService"))
 
 local function ensure_folder(parent, folderName)
 	local folder = parent:FindFirstChild(folderName)
@@ -193,6 +194,8 @@ local adminFolder = ensure_folder(gameplayRemotes, NetworkConfig.Admin.FolderNam
 
 local getCatalogRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.GetItemCatalog)
 local requestItemRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.RequestItemTool)
+local getHorseRouletteStateRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.GetHorseRouletteState)
+local rollHorseRouletteRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.RollHorseRoulette)
 
 getCatalogRemote.OnServerInvoke = function(player)
 	local hasAccess = AdminAccessService.HasAccess(player)
@@ -297,4 +300,28 @@ requestItemRemote.OnServerInvoke = function(player, request)
 		Success = false,
 		Code = "UnsupportedMode",
 	}
+end
+
+getHorseRouletteStateRemote.OnServerInvoke = function(player)
+	local hasAccess = AdminAccessService.HasAccess(player)
+	if not hasAccess then
+		return {
+			Success = false,
+			Code = "AccessDenied",
+		}
+	end
+
+	return HorseRouletteService.GetState(player)
+end
+
+rollHorseRouletteRemote.OnServerInvoke = function(player)
+	local hasAccess = AdminAccessService.HasAccess(player)
+	if not hasAccess then
+		return {
+			Success = false,
+			Code = "AccessDenied",
+		}
+	end
+
+	return HorseRouletteService.Roll(player)
 end
