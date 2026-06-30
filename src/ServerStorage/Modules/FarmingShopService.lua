@@ -265,6 +265,7 @@ end
 local function create_placeholder_tool(itemDefinition): Tool
 	local tool = Instance.new("Tool")
 	tool.Name = itemDefinition.ToolName
+	tool.RequiresHandle = false
 	tool.CanBeDropped = false
 
 	local handle = Instance.new("Part")
@@ -289,8 +290,17 @@ local function get_item_tool_template(itemDefinition): Instance
 	return create_placeholder_tool(itemDefinition)
 end
 
+local function strip_tool_scripts(root: Instance)
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
+			descendant:Destroy()
+		end
+	end
+end
+
 local function sanitize_tool(tool: Tool, itemDefinition)
 	tool.Name = itemDefinition.ToolName
+	tool.RequiresHandle = false
 	tool.ToolTip = itemDefinition.DisplayName
 	tool.CanBeDropped = false
 	tool:SetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE, itemDefinition.ItemId)
@@ -333,10 +343,12 @@ local function clone_item_tool(itemDefinition): Tool
 	else
 		tool = Instance.new("Tool")
 		tool.Name = itemDefinition.ToolName
+		tool.RequiresHandle = false
 		tool.CanBeDropped = false
 		template:Clone().Parent = tool
 	end
 
+	strip_tool_scripts(tool)
 	sanitize_tool(tool, itemDefinition)
 	return tool
 end

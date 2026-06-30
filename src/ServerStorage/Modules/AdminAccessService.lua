@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
 local AdminAccessService = {}
 
@@ -19,6 +20,7 @@ end
 
 function AdminAccessService.ApplyAccessAttributes(player)
 	local rank, rankError = read_group_rank(player)
+	local hasStudioOverride = RunService:IsStudio()
 	if rankError ~= nil then
 		warn(("AdminAccess failed to read rank for %s: %s"):format(player.Name, tostring(rankError)))
 	end
@@ -26,9 +28,9 @@ function AdminAccessService.ApplyAccessAttributes(player)
 	player:SetAttribute("AdminGroupId", AdminAccessService.GROUP_ID)
 	player:SetAttribute("AdminMinimumRank", AdminAccessService.MINIMUM_ADMIN_RANK)
 	player:SetAttribute("AdminRank", rank)
-	player:SetAttribute("CanOpenAdminPanel", rank >= AdminAccessService.MINIMUM_ADMIN_RANK)
+	player:SetAttribute("CanOpenAdminPanel", hasStudioOverride or rank >= AdminAccessService.MINIMUM_ADMIN_RANK)
 
-	return rank >= AdminAccessService.MINIMUM_ADMIN_RANK, rank
+	return hasStudioOverride or rank >= AdminAccessService.MINIMUM_ADMIN_RANK, rank
 end
 
 function AdminAccessService.HasAccess(player)

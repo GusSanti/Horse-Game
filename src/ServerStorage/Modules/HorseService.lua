@@ -515,6 +515,47 @@ local function build_horse_summary(horse, equippedHorseId, now: number?)
 	}
 end
 
+local function build_horse_reveal_payload(horse)
+	if type(horse) ~= "table" then
+		return nil
+	end
+
+	local definition = HorseCatalog.GetDefinition(horse.CatalogId) or HorseCatalog.GetDefinition("Default")
+	if not definition then
+		return nil
+	end
+
+	return {
+		HorseId = horse.Id,
+		CatalogId = definition.CatalogId,
+		DisplayName = definition.DisplayName,
+		Rarity = definition.Rarity,
+		ModelKey = definition.PlaceholderModelKey,
+		Source = horse.Acquisition and horse.Acquisition.Source or "",
+	}
+end
+
+local function find_starter_granted_horse(horses)
+	if type(horses) ~= "table" or type(horses.Owned) ~= "table" then
+		return nil
+	end
+
+	for _, horseId: string in ipairs(horses.OrderedIds or {}) do
+		local horse = horses.Owned[horseId]
+		if horse and horse.Acquisition and horse.Acquisition.Source == "StarterGrant" then
+			return horse
+		end
+	end
+
+	for _, horse in pairs(horses.Owned) do
+		if horse and horse.Acquisition and horse.Acquisition.Source == "StarterGrant" then
+			return horse
+		end
+	end
+
+	return nil
+end
+
 ------------------//MAIN FUNCTIONS
 function HorseService.get_player_horse(player: Player, horseId: string?): (any?, string)
 	local horses = DataUtility.server.get(player, "Horses")
@@ -735,6 +776,14 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 	end
 
 	if progression.FirstHorseGranted and hasAnyHorse then
+		if progression.StarterRevealAcknowledged ~= true and type(progression.PendingHorseReveal) ~= "table" then
+			local starterHorse = find_starter_granted_horse(horses)
+			local revealPayload = build_horse_reveal_payload(starterHorse)
+			if revealPayload then
+				DataUtility.server.set(player, "Progression.PendingHorseReveal", revealPayload)
+			end
+		end
+
 		local stableChanged = ensure_stable_state(stable, horses)
 		if stableChanged then
 			save_stable(player, stable)
@@ -758,6 +807,11 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 
 		if not starterHorse then
 			return nil, starterError or "StarterGrantFailed"
+		end
+
+		local revealPayload = build_horse_reveal_payload(starterHorse)
+		if revealPayload then
+			DataUtility.server.set(player, "Progression.PendingHorseReveal", revealPayload)
 		end
 	end
 

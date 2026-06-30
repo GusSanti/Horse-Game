@@ -61,13 +61,16 @@ end
 
 local function move_instance_to_position(instance: Instance, worldPosition: Vector3)
 	if instance:IsA("Model") then
-		instance:PivotTo(CFrame.new(worldPosition))
+		local pivot = instance:GetPivot()
+		local rotation = CFrame.fromMatrix(Vector3.zero, pivot.XVector, pivot.YVector, pivot.ZVector)
+		instance:PivotTo(CFrame.new(worldPosition) * rotation)
 		return
 	end
 
 	local basePart = FarmingUtility.GetFirstBasePart(instance)
 	if basePart then
-		basePart.CFrame = CFrame.new(worldPosition)
+		local rotation = CFrame.fromMatrix(Vector3.zero, basePart.CFrame.XVector, basePart.CFrame.YVector, basePart.CFrame.ZVector)
+		basePart.CFrame = CFrame.new(worldPosition) * rotation
 	end
 end
 
@@ -209,6 +212,13 @@ function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
 		return {
 			Success = false,
 			Code = "InvalidSoil",
+		}
+	end
+
+	if not FarmingUtility.GetStageTemplate(cropDefinition, 1) then
+		return {
+			Success = false,
+			Code = "StageTemplateMissing",
 		}
 	end
 

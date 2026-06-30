@@ -16,6 +16,7 @@ local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 local SCREEN_GUI_NAME = "AdminPanelGui"
 local ITEM_TAB_NAME = "Items"
 local HORSE_TAB_NAME = "Cavalos"
+local STUDIO_ACCESS_OVERRIDE = RunService:IsStudio()
 
 local RARITY_STYLES = {
 	Common = {
@@ -871,7 +872,7 @@ set_active_tab = function(tabName)
 end
 
 local function refresh_access_state()
-	hasAccess = localPlayer:GetAttribute("CanOpenAdminPanel") == true
+	hasAccess = STUDIO_ACCESS_OVERRIDE or localPlayer:GetAttribute("CanOpenAdminPanel") == true
 	adminRank = localPlayer:GetAttribute("AdminRank") or 0
 
 	if rankValueLabel then
@@ -885,7 +886,9 @@ local function refresh_access_state()
 
 	if hintLabel then
 		if hasAccess then
-			hintLabel.Text = "Pressione M para abrir, depois troque entre as abas de items e cavalos."
+			hintLabel.Text = STUDIO_ACCESS_OVERRIDE
+				and "Acesso liberado no Studio. Pressione M para abrir e testar."
+				or "Pressione M para abrir, depois troque entre as abas de items e cavalos."
 		else
 			local minimumRank = localPlayer:GetAttribute("AdminMinimumRank") or 250
 			local groupId = localPlayer:GetAttribute("AdminGroupId") or 1071228359

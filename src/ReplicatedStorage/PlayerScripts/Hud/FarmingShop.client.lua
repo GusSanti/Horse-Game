@@ -19,9 +19,37 @@ local rootTrove = Trove.new()
 local uiTrove = Trove.new()
 local cardTrove = Trove.new()
 
-local currentUi = nil
+type ShopUi = {
+	Main: Instance,
+	CoinsLabel: TextLabel,
+	ScrollingFrame: ScrollingFrame,
+	SeedTemplate: Frame,
+	FruitTemplate: Frame,
+	SeedsButton: TextButton,
+	FoodsButton: TextButton,
+	SeedTemplateSource: GuiObject?,
+	FruitTemplateSource: GuiObject?,
+}
+
+local currentUi: ShopUi? = nil
 local activeTab = "Seed"
 local requestInFlight = false
+
+local COINS_FRAME_NAMES = { "Coins", "Coin" }
+local COINS_LABEL_NAMES = { "Current", "Currents" }
+local SHOP_FRAME_NAMES = { "Shop", "Store" }
+local SCROLLING_FRAME_NAMES = { "ScrollingFrame", "ScrollFrame", "Scroll" }
+local SEED_TEMPLATE_NAMES = { "Seed", "Seeds" }
+local FRUIT_TEMPLATE_NAMES = { "Fruit", "Fruits", "Food", "Foods" }
+local SEED_TAB_NAMES = { "SeedsBT", "SeedBT", "SeedsButton" }
+local FRUIT_TAB_NAMES = { "FoodsBT", "FoodBT", "FruitsBT", "FruitBT", "FoodsButton", "FruitsButton" }
+local BUY_BUTTON_NAMES = { "BuyButton", "BuyBT", "Buy" }
+local SELL_BUTTON_NAMES = { "SellButton", "SellBT", "Sell" }
+local NAME_LABEL_NAMES = { "Name", "Title", "ItemName" }
+local STOCK_LABEL_NAMES = { "Stock", "Owned", "Amount", "Count", "Quantity", "Qtd" }
+local VALUE_LABEL_NAMES = { "Value", "Price", "SellValue" }
+local IMAGE_CONTAINER_NAMES = { "SeedImage", "FruitImage", "ItemImage", "Image", "Icon" }
+local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
 
 local function get_seed_items()
 	if type(FarmingCatalog.GetSeedItems) == "function" then
@@ -51,55 +79,119 @@ local function get_item_count(bucket, itemId): number
 	return bucket[itemId] or 0
 end
 
-local function find_text_label(root: Instance?, name: string): TextLabel?
-	local instance = root and root:FindFirstChild(name, true)
-	if instance and instance:IsA("TextLabel") then
-		return instance
+local function normalize_key(value): string?
+	if type(value) ~= "string" then
+		return nil
+	end
+
+	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+	if normalizedValue == "" then
+		return nil
+	end
+
+	return normalizedValue
+end
+
+local function matches_alias(instance: Instance, aliases): boolean
+	local normalizedName = normalize_key(instance.Name)
+	if not normalizedName then
+		return false
+	end
+
+	for _, alias in ipairs(aliases or {}) do
+		if normalize_key(alias) == normalizedName then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function find_named_instance(root: Instance?, aliases, className: string?, recursive: boolean?): Instance?
+	if not root then
+		return nil
+	end
+
+	for _, child in ipairs(root:GetChildren()) do
+		if matches_alias(child, aliases) and (not className or child:IsA(className)) then
+			return child
+		end
+	end
+
+	if recursive == false then
+		return nil
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if matches_alias(descendant, aliases) and (not className or descendant:IsA(className)) then
+			return descendant
+		end
 	end
 
 	return nil
 end
 
-local function find_button(root: Instance?, name: string): GuiButton?
-	local instance = root and root:FindFirstChild(name, true)
-	if instance and instance:IsA("GuiButton") then
-		return instance
+local function find_text_label(root: Instance?, aliases): TextLabel?
+	local instance = find_named_instance(root, aliases, "TextLabel")
+	if instance then
+		return instance :: TextLabel
 	end
 
 	return nil
 end
 
-local function get_main_ui(main: Instance)
-	local coins = main:FindFirstChild("Coins")
-	local shop = main:FindFirstChild("Shop")
-	local scrollingFrame = shop and shop:FindFirstChild("ScrollingFrame")
-	local seedTemplate = scrollingFrame and scrollingFrame:FindFirstChild("Seed")
-	local fruitTemplate = scrollingFrame and scrollingFrame:FindFirstChild("Fruit")
-	local seedsButton = main:FindFirstChild("SeedsBT", true)
-	local foodsButton = main:FindFirstChild("FoodsBT", true)
-	local currentLabel = find_text_label(coins, "Current") or find_text_label(coins, "Currents")
-
-	if not currentLabel then
-		return nil
+local function find_text_button(root: Instance?, aliases): TextButton?
+	local instance = find_named_instance(root, aliases, "TextButton")
+	if instance then
+		return instance :: TextButton
 	end
 
-	if not scrollingFrame or not scrollingFrame:IsA("ScrollingFrame") then
-		return nil
+	return nil
+end
+
+local function find_gui_button(root: Instance?, aliases): GuiButton?
+	local instance = find_named_instance(root, aliases, "GuiButton")
+	if instance then
+		return instance :: GuiButton
 	end
 
-	if not seedTemplate or not seedTemplate:IsA("GuiObject") then
-		return nil
+	return nil
+end
+
+local function find_frame(root: Instance?, aliases): Frame?
+	local directFrame = find_named_instance(root, aliases, "Frame", false)
+	if directFrame then
+		return directFrame :: Frame
 	end
 
-	if not fruitTemplate or not fruitTemplate:IsA("GuiObject") then
-		return nil
+	local recursiveFrame = find_named_instance(root, aliases, "Frame")
+	if recursiveFrame then
+		return recursiveFrame :: Frame
 	end
 
-	if not seedsButton or not seedsButton:IsA("GuiButton") then
-		return nil
+	return nil
+end
+
+local function find_scrolling_frame(root: Instance?): ScrollingFrame?
+	local instance = find_named_instance(root, SCROLLING_FRAME_NAMES, "ScrollingFrame")
+	if instance then
+		return instance :: ScrollingFrame
 	end
 
-	if not foodsButton or not foodsButton:IsA("GuiButton") then
+	return nil
+end
+
+local function get_main_ui(main: Instance): ShopUi?
+	local coinsFrame = find_named_instance(main, COINS_FRAME_NAMES, nil)
+	local shopFrame = find_named_instance(main, SHOP_FRAME_NAMES, nil)
+	local scrollingFrame = find_scrolling_frame(shopFrame or main)
+	local seedTemplate = find_frame(scrollingFrame, SEED_TEMPLATE_NAMES)
+	local fruitTemplate = find_frame(scrollingFrame, FRUIT_TEMPLATE_NAMES)
+	local seedsButton = find_text_button(main, SEED_TAB_NAMES)
+	local foodsButton = find_text_button(main, FRUIT_TAB_NAMES)
+	local currentLabel = find_text_label(coinsFrame, COINS_LABEL_NAMES) or find_text_label(main, COINS_LABEL_NAMES)
+
+	if not currentLabel or not scrollingFrame or not seedTemplate or not fruitTemplate or not seedsButton or not foodsButton then
 		return nil
 	end
 
@@ -114,7 +206,7 @@ local function get_main_ui(main: Instance)
 	}
 end
 
-local function find_main_ui()
+local function find_main_ui(): ShopUi?
 	for _, descendant in ipairs(playerGui:GetDescendants()) do
 		if descendant.Name == "Main" then
 			local ui = get_main_ui(descendant)
@@ -246,8 +338,11 @@ local function prepare_viewport_model(root: Instance)
 end
 
 local function populate_viewport(card: Instance, itemDefinition)
-	local seedImage = card:FindFirstChild("SeedImage", true)
-	local viewportFrame = seedImage and seedImage:FindFirstChild("ViewportFrame", true)
+	local imageContainer = find_named_instance(card, IMAGE_CONTAINER_NAMES, nil)
+	local viewportFrame = imageContainer and find_named_instance(imageContainer, VIEWPORT_FRAME_NAMES, "ViewportFrame")
+	if not viewportFrame then
+		viewportFrame = find_named_instance(card, VIEWPORT_FRAME_NAMES, "ViewportFrame")
+	end
 
 	if not viewportFrame or not viewportFrame:IsA("ViewportFrame") then
 		return
@@ -317,9 +412,9 @@ local function configure_card(card: GuiObject, itemDefinition, amount: number)
 	card.Visible = true
 	card.LayoutOrder = itemDefinition.SortOrder or 0
 
-	local nameLabel = find_text_label(card, "Name")
-	local stockLabel = find_text_label(card, "Stock")
-	local valueLabel = find_text_label(card, "Value")
+	local nameLabel = find_text_label(card, NAME_LABEL_NAMES)
+	local stockLabel = find_text_label(card, STOCK_LABEL_NAMES)
+	local valueLabel = find_text_label(card, VALUE_LABEL_NAMES)
 
 	if nameLabel then
 		nameLabel.Text = itemDefinition.DisplayName
@@ -356,9 +451,9 @@ local function render_shop()
 
 		configure_card(card, itemDefinition, get_item_count(inventoryBucket, itemDefinition.ItemId))
 
-		local buttonName = activeTab == "Seed" and "BuyButton" or "SellButton"
 		local remoteName = activeTab == "Seed" and "BuySeed" or "SellFruit"
-		local button = find_button(card, buttonName)
+		local buttonAliases = activeTab == "Seed" and BUY_BUTTON_NAMES or SELL_BUTTON_NAMES
+		local button = find_gui_button(card, buttonAliases)
 
 		if button then
 			cardTrove:Add(button.Activated:Connect(function()

@@ -44,6 +44,19 @@ local function copy_array(values)
 	return clone
 end
 
+local function normalize_shop_id(shopId)
+	if type(shopId) ~= "string" then
+		return nil
+	end
+
+	local trimmedShopId = string.gsub(shopId, "^%s*(.-)%s*$", "%1")
+	if trimmedShopId == "" then
+		return nil
+	end
+
+	return trimmedShopId
+end
+
 local function initialize_shops()
 	for shopId, shopDefinition in pairs(ShopDefinitions) do
 		ToolItems.Shops[shopId] = {
@@ -67,8 +80,10 @@ local function register_item(itemDefinition)
 	ToolItems.ItemsByCategory[toolCategory] = ToolItems.ItemsByCategory[toolCategory] or {}
 	ToolItems.ItemsByCategory[toolCategory][#ToolItems.ItemsByCategory[toolCategory] + 1] = itemDefinition
 
-	local shopId = itemDefinition.ShopId
-	if shopId ~= nil then
+	local shopId = normalize_shop_id(itemDefinition.ShopId)
+	itemDefinition.ShopId = shopId
+
+	if shopId then
 		assert(
 			ToolItems.Shops[shopId] ~= nil,
 			("Tool item '%s' references unknown shop '%s'"):format(itemId, tostring(shopId))

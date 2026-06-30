@@ -10,6 +10,10 @@ local NetworkConfig = {
 		GetHorseRouletteState = "GetHorseRouletteState",
 		RollHorseRoulette = "RollHorseRoulette",
 	},
+	Horse = {
+		FolderName = "Horse",
+		AcknowledgeReveal = "AcknowledgeReveal",
+	},
 }
 
 return NetworkConfig

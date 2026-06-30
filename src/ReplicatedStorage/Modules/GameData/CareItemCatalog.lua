@@ -9,9 +9,19 @@ local CareItemCatalog = {}
 local orderedDefinitions = {}
 local categoryOrder = { "Food", "Water" }
 
+local function should_include_in_care_catalog(categoryId, itemDefinition)
+	if categoryId == "Food" or categoryId == "Water" then
+		return itemDefinition.CareType == categoryId
+	end
+
+	return true
+end
+
 for _, categoryId in ipairs(categoryOrder) do
 	for _, itemDefinition in ipairs(ToolItems.GetItemsByToolCategory(categoryId)) do
-		orderedDefinitions[#orderedDefinitions + 1] = itemDefinition
+		if should_include_in_care_catalog(categoryId, itemDefinition) then
+			orderedDefinitions[#orderedDefinitions + 1] = itemDefinition
+		end
 	end
 end
 

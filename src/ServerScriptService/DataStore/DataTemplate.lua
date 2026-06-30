@@ -34,6 +34,7 @@ local ProfileTemplate = {
 		TutorialCompleted = false,
 		TutorialStep = "NotStarted",
 		FirstHorseGranted = false,
+		StarterRevealAcknowledged = false,
 		UnlockedFeatures = {
 			Stable = true,
 			TackShop = false,
