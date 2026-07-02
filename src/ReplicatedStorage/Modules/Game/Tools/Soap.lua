@@ -3,6 +3,73 @@ local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage"
 local ServerStorage: ServerStorage = game:GetService("ServerStorage")
 
 ------------------//VARIABLES
+local Modules: Folder = ReplicatedStorage:WaitForChild("Modules")
+local GameData: Folder = Modules:WaitForChild("GameData")
+local Utility: Folder = Modules:WaitForChild("Utility")
+
+local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+
+local MANAGED_TOOL_ATTRIBUTE = "InventoryManaged"
+
+local function normalize_inventory_path(path: string?): string?
+	if type(path) ~= "string" then
+		return nil
+	end
+
+	local trimmedPath = string.gsub(path, "^%s*(.-)%s*$", "%1")
+	if trimmedPath == "" then
+		return nil
+	end
+
+	if string.sub(trimmedPath, 1, #"Inventory.") == "Inventory." then
+		return trimmedPath
+	end
+
+	return ("Inventory.%s"):format(trimmedPath)
+end
+
+local function get_inventory_path(itemDefinition): string?
+	if not itemDefinition then
+		return nil
+	end
+
+	return normalize_inventory_path(itemDefinition.InventoryPath)
+end
+
+local function consume_managed_tool(player: Player, tool: Tool?, itemId: string, amount: number?): boolean
+	if not tool or tool:GetAttribute(MANAGED_TOOL_ATTRIBUTE) ~= true then
+		return true
+	end
+
+	local itemDefinition = ToolItemCatalog.GetItemDefinition(itemId)
+	local inventoryPath = get_inventory_path(itemDefinition)
+	if not itemDefinition or not inventoryPath then
+		return false
+	end
+
+	local bucket = DataUtility.server.get(player, inventoryPath)
+	if type(bucket) ~= "table" then
+		return false
+	end
+
+	local consumeAmount = math.max(1, math.floor(amount or 1))
+	local currentCount = bucket[itemDefinition.ItemId] or 0
+	if currentCount < consumeAmount then
+		return false
+	end
+
+	local updatedCount = currentCount - consumeAmount
+	if updatedCount > 0 then
+		bucket[itemDefinition.ItemId] = updatedCount
+	else
+		bucket[itemDefinition.ItemId] = nil
+	end
+
+	DataUtility.server.set(player, inventoryPath, bucket)
+	return true
+end
+
 local soap = {
 	id = "soap",
 	toolNames = {
@@ -18,9 +85,6 @@ local soap = {
 	},
 	consumeOnUse = true,
 	onUse = function(context)
-		local modules: Folder = ReplicatedStorage:WaitForChild("Modules")
-		local utility: Folder = modules:WaitForChild("Utility")
-		local DataUtility = require(utility:WaitForChild("DataUtility"))
 		local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 
 		local horses = DataUtility.server.get(context.player, "Horses")
@@ -32,6 +96,11 @@ local soap = {
 		local horse = horses.Owned[context.horseId]
 		local now = os.time()
 		local cleanBonus = 0
+
+		local consumedFromInventory = consume_managed_tool(context.player, context.tool, soap.id, 1)
+		if consumedFromInventory ~= true then
+			return false, "ItemUnavailable"
+		end
 
 		if horse.Bond and horse.Bond.CareBonus then
 			cleanBonus = horse.Bond.CareBonus.Clean or 0

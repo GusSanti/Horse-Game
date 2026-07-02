@@ -630,6 +630,12 @@ local function finish_round(round, winnerParticipant)
 	DataUtility.server.set(winnerParticipant.Player, "Currencies.Horseshoes", currentHorseshoes + winnerReward)
 	HorseService.RecordRaceWin(winnerParticipant.Player, winnerParticipant.HorseId, finishTimeMs, winnerReward)
 
+	local rankedParticipants = get_ranked_participants(round)
+	local rankedParticipantCount = #rankedParticipants
+	for placement, participant in ipairs(rankedParticipants) do
+		HorseService.RecordRacePlacement(participant.Player, participant.HorseId, placement, rankedParticipantCount)
+	end
+
 	broadcast_state({
 		Kind = "Result",
 		RoundId = round.Id,

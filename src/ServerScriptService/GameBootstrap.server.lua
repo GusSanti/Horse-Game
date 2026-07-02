@@ -3,6 +3,7 @@ local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage"
 local ServerStorage: ServerStorage = game:GetService("ServerStorage")
 
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
+local ConsumableToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("ConsumableToolService"))
 local FarmingService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingService"))
 local FarmingShopService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingShopService"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
@@ -34,14 +35,10 @@ local function bootstrap_player(player: Player): ()
 			return
 		end
 
-		FarmingShopService.SyncSeedTools(player)
+		FarmingShopService.SyncPlayerTools(player)
+		ConsumableToolService.SyncPlayerTools(player)
 		update_login_data(player)
-
-		local starterHorse, starterCode = HorseService.ensure_starter_horse(player)
-		if not starterHorse and starterCode ~= "AlreadyGranted" then
-			warn(("[GameBootstrap] ensure_starter_horse falhou para %s: %s"):format(player.Name, tostring(starterCode)))
-		end
-
+		HorseService.ensure_starter_horse(player)
 		HorseService.refresh_horse_statuses(player)
 		QuestService.EnsureDailyQuest(player)
 		RaceService.SyncPlayer(player)
@@ -49,6 +46,7 @@ local function bootstrap_player(player: Player): ()
 end
 
 FarmingShopService.Init()
+ConsumableToolService.Init()
 FarmingService.Init()
 QuestService.Init()
 RaceService.Init()

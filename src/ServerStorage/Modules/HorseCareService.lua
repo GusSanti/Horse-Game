@@ -8,10 +8,13 @@ local CareItemCatalog = require(GameData:WaitForChild("CareItemCatalog"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local TableUtility = require(Utility:WaitForChild("TableUtility"))
 
 local QuestService = require(script.Parent:WaitForChild("QuestService"))
 
 local HorseCareService = {}
+
+local MANAGED_TOOL_ATTRIBUTE = "InventoryManaged"
 
 local CARE_TYPE_TO_NEED = {
 	Food = "Hunger",
@@ -50,6 +53,85 @@ local ZERO_NEED_DECAY_MULTIPLIER = {
 	Happiness = 2,
 	Health = 3,
 }
+
+local function normalize_inventory_path(path: string?): string?
+	if type(path) ~= "string" then
+		return nil
+	end
+
+	local trimmedPath = string.gsub(path, "^%s*(.-)%s*$", "%1")
+	if trimmedPath == "" then
+		return nil
+	end
+
+	if string.sub(trimmedPath, 1, #"Inventory.") == "Inventory." then
+		return trimmedPath
+	end
+
+	return ("Inventory.%s"):format(trimmedPath)
+end
+
+local function get_inventory_path(itemDefinition): string?
+	if not itemDefinition then
+		return nil
+	end
+
+	return normalize_inventory_path(itemDefinition.InventoryPath)
+end
+
+local function get_item_count(player: Player, itemDefinition): number
+	local inventoryPath = get_inventory_path(itemDefinition)
+	if not inventoryPath then
+		return 0
+	end
+
+	local bucket = DataUtility.server.get(player, inventoryPath)
+	if type(bucket) ~= "table" then
+		return 0
+	end
+
+	return bucket[itemDefinition.ItemId] or 0
+end
+
+local function set_item_count(player: Player, itemDefinition, amount: number): number
+	local inventoryPath = get_inventory_path(itemDefinition)
+	local profileData = DataUtility.server.get(player)
+
+	if not inventoryPath or not profileData then
+		return 0
+	end
+
+	local bucket = TableUtility.EnsurePath(profileData, inventoryPath)
+	local normalizedAmount = math.max(0, math.floor(amount or 0))
+
+	if normalizedAmount > 0 then
+		bucket[itemDefinition.ItemId] = normalizedAmount
+	else
+		bucket[itemDefinition.ItemId] = nil
+	end
+
+	DataUtility.server.set(player, inventoryPath, bucket)
+	return normalizedAmount
+end
+
+local function consume_managed_tool(player: Player, tool: Tool?, itemDefinition, amount: number?): boolean
+	if not itemDefinition then
+		return false
+	end
+
+	if not tool or tool:GetAttribute(MANAGED_TOOL_ATTRIBUTE) ~= true then
+		return true
+	end
+
+	local consumeAmount = math.max(1, math.floor(amount or 1))
+	local currentCount = get_item_count(player, itemDefinition)
+	if currentCount < consumeAmount then
+		return false
+	end
+
+	set_item_count(player, itemDefinition, currentCount - consumeAmount)
+	return true
+end
 
 local function clamp_number(value, minValue, maxValue)
 	if type(value) ~= "number" then
@@ -566,7 +648,7 @@ function HorseCareService.RefreshAllPlayerHorses(player)
 	return changed
 end
 
-function HorseCareService.UseCareItem(player, horseId, itemId)
+function HorseCareService.UseCareItem(player, horseId, itemId, tool)
 	local itemDefinition = CareItemCatalog.GetItemDefinition(itemId)
 	if not itemDefinition then
 		return false, "ItemDefinitionMissing"
@@ -586,6 +668,11 @@ function HorseCareService.UseCareItem(player, horseId, itemId)
 	local horse = horses.Owned[horseId]
 	local now = os.time()
 	HorseCareService.RefreshHorse(horse, now)
+
+	local consumedFromInventory = consume_managed_tool(player, tool, itemDefinition, 1)
+	if consumedFromInventory ~= true then
+		return false, "ItemUnavailable"
+	end
 
 	local needs = horse.Needs
 	local values = needs.Values
@@ -685,7 +772,7 @@ function HorseCareService.UseCareItem(player, horseId, itemId)
 	return true, CARE_TYPE_TO_RESPONSE[itemDefinition.CareType] or "Used"
 end
 
-function HorseCareService.UseMedicalItem(player, horseId, itemId)
+function HorseCareService.UseMedicalItem(player, horseId, itemId, tool)
 	local itemDefinition = ToolItemCatalog.GetItemDefinition(itemId)
 	if not itemDefinition or itemDefinition.UseType ~= "Medicine" then
 		return false, "ItemDefinitionMissing"
@@ -700,6 +787,11 @@ function HorseCareService.UseMedicalItem(player, horseId, itemId)
 	local horse = horses.Owned[horseId]
 	local now = os.time()
 	HorseCareService.RefreshHorse(horse, now)
+
+	local consumedFromInventory = consume_managed_tool(player, tool, itemDefinition, 1)
+	if consumedFromInventory ~= true then
+		return false, "ItemUnavailable"
+	end
 
 	local needs = horse.Needs
 	local values = needs.Values

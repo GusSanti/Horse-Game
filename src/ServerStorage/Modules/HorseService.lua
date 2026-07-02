@@ -556,6 +556,40 @@ local function find_starter_granted_horse(horses)
 	return nil
 end
 
+local function compute_race_happiness_gain(placement: number, participantCount: number): number
+	local clampedParticipantCount = math.max(1, math.floor(participantCount or 1))
+	local clampedPlacement = math.clamp(math.floor(placement or clampedParticipantCount), 1, clampedParticipantCount)
+
+	if clampedParticipantCount == 1 then
+		return 2
+	end
+
+	local placementAlpha = 1 - ((clampedPlacement - 1) / (clampedParticipantCount - 1))
+	return math.max(1, math.floor((1 + (placementAlpha * 3)) + 0.5))
+end
+
+local function add_happiness_to_horse(horse, happinessGain: number, moodText: string?): ()
+	local safeGain = math.max(0, happinessGain or 0)
+	if safeGain <= 0 then
+		return
+	end
+
+	horse.Needs = horse.Needs or {}
+	horse.Needs.Values = horse.Needs.Values or {}
+	horse.Needs.Max = horse.Needs.Max or {}
+	horse.State = horse.State or {}
+
+	horse.Needs.Values.Happiness = math.clamp(
+		(horse.Needs.Values.Happiness or 0) + safeGain,
+		0,
+		horse.Needs.Max.Happiness or 100
+	)
+
+	if type(moodText) == "string" and moodText ~= "" then
+		horse.State.Mood = moodText
+	end
+end
+
 ------------------//MAIN FUNCTIONS
 function HorseService.get_player_horse(player: Player, horseId: string?): (any?, string)
 	local horses = DataUtility.server.get(player, "Horses")
@@ -1111,6 +1145,29 @@ function HorseService.RecordRaceWin(player, horseId, finishTimeMs, rewardAmount)
 	end
 
 	return true, build_horse_summary(horse, horses.EquippedHorseId)
+end
+
+function HorseService.RecordRacePlacement(player, horseId, placement, participantCount)
+	local horses, owned = get_owned_horses_state(player)
+	if not horses or not owned or not owned[horseId] then
+		return false, "HorseNotOwned"
+	end
+
+	local horse = owned[horseId]
+	local now = os.time()
+	HorseCareService.RefreshHorse(horse, now)
+
+	add_happiness_to_horse(
+		horse,
+		compute_race_happiness_gain(placement, participantCount),
+		placement == 1 and "Thrilled" or "Proud"
+	)
+
+	owned[horseId] = horse
+	horses.Owned = owned
+	DataUtility.server.set(player, "Horses", horses)
+
+	return true, build_horse_summary(horse, horses.EquippedHorseId, now)
 end
 
 HorseService.EquipHorse = HorseService.equip_horse

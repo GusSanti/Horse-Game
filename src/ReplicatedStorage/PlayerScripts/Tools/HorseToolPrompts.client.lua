@@ -158,6 +158,10 @@ local function finish_client_interaction(shouldRefreshPrompts: boolean): ()
 	end
 end
 
+local function begin_client_interaction(): ()
+	clientInteractionActive = true
+end
+
 function queue_refresh(): ()
 	if refreshQueued then
 		return
@@ -167,11 +171,11 @@ function queue_refresh(): ()
 	task.defer(function()
 		refreshQueued = false
 
-		destroy_active_prompts()
-
 		if clientInteractionActive then
 			return
 		end
+
+		destroy_active_prompts()
 
 		local equippedTool = get_equipped_tool()
 		local definition, itemId = toolRegistry.resolve_definition_from_tool(equippedTool)
@@ -197,57 +201,84 @@ function queue_refresh(): ()
 				prompt.Style = Enum.ProximityPromptStyle.Default
 				prompt.Parent = promptParent
 
-				prompt.Triggered:Connect(function()
-					if promptToken ~= activePromptToken then
-						return
-					end
+				local clientHandler = get_client_handler(definition)
+				local promptManagedByClientHandler = false
 
-					local currentTool = get_equipped_tool()
-					if currentTool ~= equippedTool then
-						return
-					end
+				if clientHandler and type(clientHandler.bindPrompt) == "function" then
+					local bindSuccess, bindResult = pcall(function()
+						return clientHandler.bindPrompt({
+							player = localPlayer,
+							tool = equippedTool,
+							itemId = itemId,
+							horseId = horseId,
+							horseVisual = horseVisual,
+							prompt = prompt,
+							promptParent = promptParent,
+							beginInteraction = begin_client_interaction,
+							invokeServerUse = function()
+								return useHorseToolRemote:InvokeServer(equippedTool, itemId, horseId)
+							end,
+							finishInteraction = finish_client_interaction,
+							queueRefresh = queue_refresh,
+						})
+					end)
 
-					local clientHandler = get_client_handler(definition)
-					if clientHandler and type(clientHandler.start) == "function" then
-						clientInteractionActive = true
-						destroy_active_prompts()
+					promptManagedByClientHandler = bindSuccess and bindResult == true
+				end
 
-						local started = false
-						local startSuccess, startResult = pcall(function()
-							return clientHandler.start({
-								player = localPlayer,
-								tool = equippedTool,
-								itemId = itemId,
-								horseId = horseId,
-								horseVisual = horseVisual,
-								promptParent = promptParent,
-								invokeServerUse = function()
-									return useHorseToolRemote:InvokeServer(equippedTool, itemId, horseId)
-								end,
-								finishInteraction = finish_client_interaction,
-							})
-						end)
-
-						if startSuccess then
-							started = startResult == true
+				if not promptManagedByClientHandler then
+					prompt.Triggered:Connect(function()
+						if promptToken ~= activePromptToken then
+							return
 						end
 
-						if not started then
-							finish_client_interaction(true)
+						local currentTool = get_equipped_tool()
+						if currentTool ~= equippedTool then
+							return
 						end
 
-						return
-					end
-
-					local success = useHorseToolRemote:InvokeServer(currentTool, itemId, horseId)
-					if success then
-						if definition.consumeOnUse == false then
-							queue_refresh()
-						else
+						if clientHandler and type(clientHandler.start) == "function" then
+							begin_client_interaction()
 							destroy_active_prompts()
+
+							local started = false
+							local startSuccess, startResult = pcall(function()
+								return clientHandler.start({
+									player = localPlayer,
+									tool = equippedTool,
+									itemId = itemId,
+									horseId = horseId,
+									horseVisual = horseVisual,
+									promptParent = promptParent,
+									beginInteraction = begin_client_interaction,
+									invokeServerUse = function()
+										return useHorseToolRemote:InvokeServer(equippedTool, itemId, horseId)
+									end,
+									finishInteraction = finish_client_interaction,
+								})
+							end)
+
+							if startSuccess then
+								started = startResult == true
+							end
+
+							if not started then
+								finish_client_interaction(true)
+							end
+
+							return
 						end
-					end
-				end)
+
+						local success = useHorseToolRemote:InvokeServer(currentTool, itemId, horseId)
+						if success then
+							if definition.consumeOnUse == false then
+								queue_refresh()
+							else
+								destroy_active_prompts()
+							end
+						end
+					end)
+				end
 
 				activePrompts[#activePrompts + 1] = prompt
 			end

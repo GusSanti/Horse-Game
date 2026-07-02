@@ -19,4 +19,21 @@ return {
 		ResponseCode = "Cleaned",
 		Tags = { "Cleaning", "Soap" },
 	}),
+	Shared.CreateMisc({
+		ItemId = "horse_brush",
+		DisplayName = "Horse Brush",
+		Description = "A soft brush used to calm your horse and make it feel cared for.",
+		Price = 3,
+		PriceLabel = "3 coin",
+		SortOrder = 20,
+		Effects = {
+			HappinessGain = 5,
+			MoodText = "Pampered",
+		},
+		EffectsSummary = "Happiness +5",
+		PromptActionText = "Brush",
+		PromptObjectText = "Your horse",
+		ResponseCode = "Brushed",
+		Tags = { "Grooming", "Brush" },
+	}),
 }
