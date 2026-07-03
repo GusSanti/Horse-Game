@@ -67,6 +67,11 @@ local ProfileTemplate = {
 		Trophies = {},
 	},
 
+	SavedTools = {
+		ItemCounts = {},
+		GenericCounts = {},
+	},
+
 	Stable = {
 		Level = 1,
 		OwnedStalls = StableDictionary.DefaultOwnedStalls,

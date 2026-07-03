@@ -76,6 +76,7 @@ local bubbleTemplateResolved: boolean = false
 local bubbleTemplate: Instance? = nil
 local showerTemplateResolved: boolean = false
 local showerTemplate: Instance? = nil
+local warnedMissingAssets = {}
 local complete_session
 
 ------------------//FUNCTIONS
@@ -95,6 +96,20 @@ local function destroy_all(instances: {Instance}): ()
 	end
 
 	table.clear(instances)
+end
+
+local function warn_missing_asset(assetName: string, fallbackName: string): ()
+	if warnedMissingAssets[assetName] then
+		return
+	end
+
+	warnedMissingAssets[assetName] = true
+	warn(("[SoapClient] Missing ReplicatedStorage.%s.%s.%s, using %s fallback."):format(
+		ASSETS_FOLDER_NAME,
+		OBJECTS_FOLDER_NAME,
+		assetName,
+		fallbackName
+	))
 end
 
 local function get_player_gui(): PlayerGui?
@@ -414,15 +429,48 @@ local function get_bubble_template(): Instance?
 
 	local assetsFolder = ReplicatedStorage:FindFirstChild(ASSETS_FOLDER_NAME)
 	if not assetsFolder then
-		return nil
+		warn_missing_asset(BUBBLE_OBJECT_NAME, "generated bubble")
+		local bubble = Instance.new("Part")
+		bubble.Name = BUBBLE_OBJECT_NAME
+		bubble.Shape = Enum.PartType.Ball
+		bubble.Size = Vector3.new(0.45, 0.45, 0.45)
+		bubble.Material = Enum.Material.Glass
+		bubble.Color = Color3.fromRGB(244, 248, 255)
+		bubble.Transparency = 0.22
+		bubble.CastShadow = false
+		bubble.CanCollide = false
+		bubble.CanTouch = false
+		bubble.CanQuery = false
+		bubble.TopSurface = Enum.SurfaceType.Smooth
+		bubble.BottomSurface = Enum.SurfaceType.Smooth
+		bubbleTemplate = bubble
+		return bubbleTemplate
 	end
 
 	local objectsFolder = assetsFolder:FindFirstChild(OBJECTS_FOLDER_NAME)
-	if not objectsFolder then
-		return nil
+	if objectsFolder then
+		bubbleTemplate = objectsFolder:FindFirstChild(BUBBLE_OBJECT_NAME)
+		if bubbleTemplate then
+			return bubbleTemplate
+		end
 	end
 
-	bubbleTemplate = objectsFolder:FindFirstChild(BUBBLE_OBJECT_NAME)
+	warn_missing_asset(BUBBLE_OBJECT_NAME, "generated bubble")
+
+	local bubble = Instance.new("Part")
+	bubble.Name = BUBBLE_OBJECT_NAME
+	bubble.Shape = Enum.PartType.Ball
+	bubble.Size = Vector3.new(0.45, 0.45, 0.45)
+	bubble.Material = Enum.Material.Glass
+	bubble.Color = Color3.fromRGB(244, 248, 255)
+	bubble.Transparency = 0.22
+	bubble.CastShadow = false
+	bubble.CanCollide = false
+	bubble.CanTouch = false
+	bubble.CanQuery = false
+	bubble.TopSurface = Enum.SurfaceType.Smooth
+	bubble.BottomSurface = Enum.SurfaceType.Smooth
+	bubbleTemplate = bubble
 	return bubbleTemplate
 end
 
@@ -435,10 +483,104 @@ local function get_shower_template(): Instance?
 
 	local assetsFolder = ReplicatedStorage:FindFirstChild(ASSETS_FOLDER_NAME)
 	if not assetsFolder then
-		return nil
+		warn_missing_asset(SHOWER_OBJECT_NAME, "generated shower")
+
+		local showerModel = Instance.new("Model")
+		showerModel.Name = SHOWER_OBJECT_NAME
+
+		local showerHead = Instance.new("Part")
+		showerHead.Name = "Head"
+		showerHead.Size = Vector3.new(1.05, 0.35, 0.8)
+		showerHead.Material = Enum.Material.SmoothPlastic
+		showerHead.Color = Color3.fromRGB(199, 206, 218)
+		showerHead.TopSurface = Enum.SurfaceType.Smooth
+		showerHead.BottomSurface = Enum.SurfaceType.Smooth
+		showerHead.CanCollide = false
+		showerHead.CFrame = CFrame.new()
+		showerHead.Parent = showerModel
+
+		local showerHandle = Instance.new("Part")
+		showerHandle.Name = "Handle"
+		showerHandle.Size = Vector3.new(0.22, 0.22, 1.05)
+		showerHandle.Material = Enum.Material.Metal
+		showerHandle.Color = Color3.fromRGB(150, 160, 173)
+		showerHandle.TopSurface = Enum.SurfaceType.Smooth
+		showerHandle.BottomSurface = Enum.SurfaceType.Smooth
+		showerHandle.CanCollide = false
+		showerHandle.CFrame = CFrame.new(0, 0, 0.88)
+		showerHandle.Parent = showerModel
+
+		local waterStream = Instance.new("Part")
+		waterStream.Name = "Water"
+		waterStream.Size = Vector3.new(0.2, 0.2, 2.7)
+		waterStream.Material = Enum.Material.Neon
+		waterStream.Color = Color3.fromRGB(132, 214, 255)
+		waterStream.Transparency = 0.18
+		waterStream.TopSurface = Enum.SurfaceType.Smooth
+		waterStream.BottomSurface = Enum.SurfaceType.Smooth
+		waterStream.CanCollide = false
+		waterStream.CFrame = CFrame.new(0, 0, -1.55)
+		waterStream.Parent = showerModel
+
+		showerModel.PrimaryPart = showerHead
+		showerTemplate = showerModel
+		return showerTemplate
+	end
+
+	local objectsFolder = assetsFolder:FindFirstChild(OBJECTS_FOLDER_NAME)
+	if objectsFolder then
+		showerTemplate = objectsFolder:FindFirstChild(SHOWER_OBJECT_NAME)
+		if showerTemplate then
+			return showerTemplate
+		end
 	end
 
 	showerTemplate = assetsFolder:FindFirstChild(SHOWER_OBJECT_NAME)
+	if showerTemplate then
+		return showerTemplate
+	end
+
+	warn_missing_asset(SHOWER_OBJECT_NAME, "generated shower")
+
+	local showerModel = Instance.new("Model")
+	showerModel.Name = SHOWER_OBJECT_NAME
+
+	local showerHead = Instance.new("Part")
+	showerHead.Name = "Head"
+	showerHead.Size = Vector3.new(1.05, 0.35, 0.8)
+	showerHead.Material = Enum.Material.SmoothPlastic
+	showerHead.Color = Color3.fromRGB(199, 206, 218)
+	showerHead.TopSurface = Enum.SurfaceType.Smooth
+	showerHead.BottomSurface = Enum.SurfaceType.Smooth
+	showerHead.CanCollide = false
+	showerHead.CFrame = CFrame.new()
+	showerHead.Parent = showerModel
+
+	local showerHandle = Instance.new("Part")
+	showerHandle.Name = "Handle"
+	showerHandle.Size = Vector3.new(0.22, 0.22, 1.05)
+	showerHandle.Material = Enum.Material.Metal
+	showerHandle.Color = Color3.fromRGB(150, 160, 173)
+	showerHandle.TopSurface = Enum.SurfaceType.Smooth
+	showerHandle.BottomSurface = Enum.SurfaceType.Smooth
+	showerHandle.CanCollide = false
+	showerHandle.CFrame = CFrame.new(0, 0, 0.88)
+	showerHandle.Parent = showerModel
+
+	local waterStream = Instance.new("Part")
+	waterStream.Name = "Water"
+	waterStream.Size = Vector3.new(0.2, 0.2, 2.7)
+	waterStream.Material = Enum.Material.Neon
+	waterStream.Color = Color3.fromRGB(132, 214, 255)
+	waterStream.Transparency = 0.18
+	waterStream.TopSurface = Enum.SurfaceType.Smooth
+	waterStream.BottomSurface = Enum.SurfaceType.Smooth
+	waterStream.CanCollide = false
+	waterStream.CFrame = CFrame.new(0, 0, -1.55)
+	waterStream.Parent = showerModel
+
+	showerModel.PrimaryPart = showerHead
+	showerTemplate = showerModel
 	return showerTemplate
 end
 

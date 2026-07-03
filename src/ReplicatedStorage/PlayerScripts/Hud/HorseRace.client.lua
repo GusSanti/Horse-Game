@@ -19,6 +19,9 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local CONTROL_ACTION_NAME = "HorseRaceLockControls"
 local VISUAL_BLEND_SECONDS = 1
+local VISUAL_CORRECTION_RATE = 10
+local VISUAL_HARD_SNAP_GAP = 8
+local VISUAL_MIN_SPEED_BLEND = 0.35
 
 local requestInFlight = false
 local rowFrames = {}
@@ -141,6 +144,22 @@ local function format_countdown(seconds)
 	return ("%02d:%02d"):format(math.floor(clamped / 60), clamped % 60)
 end
 
+local STATUS_DISPLAY_NAMES = {
+	Happiness = "Happiness",
+	Hunger = "Hunger",
+	Thirst = "Thirst",
+	Cleanliness = "Cleanliness",
+	Health = "Health",
+}
+
+local function get_status_display_name(statusName, fallback)
+	if type(statusName) ~= "string" or statusName == "" then
+		return fallback or "Status"
+	end
+
+	return STATUS_DISPLAY_NAMES[statusName] or fallback or statusName
+end
+
 local function find_local_entry()
 	for _, entry in ipairs(state.Entries) do
 		if entry.UserId == localPlayer.UserId then
@@ -260,13 +279,7 @@ local function create_progress_driver(model, name, value)
 end
 
 local function get_visual_display_progress(visual)
-	local primaryProgress = visual.PrimaryProgress and visual.PrimaryProgress.Value or visual.DisplayProgress or 0
-	if visual.OverlayProgress and visual.BlendAlpha then
-		local alpha = math.clamp(visual.BlendAlpha.Value, 0, 1)
-		return primaryProgress + ((visual.OverlayProgress.Value - primaryProgress) * alpha)
-	end
-
-	return primaryProgress
+	return visual.DisplayProgress or visual.ServerProgress or 0
 end
 
 local function apply_visual_progress(visual, progress)
@@ -274,6 +287,47 @@ local function apply_visual_progress(visual, progress)
 	if visual.Model and visual.Model.Parent then
 		visual.Model:PivotTo(build_visual_pivot(visual, progress))
 	end
+end
+
+local function get_visual_target_progress(visual, now)
+	local distance = visual.Distance or RaceConfig.RaceDistance
+	local serverProgress = visual.ServerProgress or visual.DisplayProgress or 0
+
+	if state.Phase ~= "Race" then
+		return math.clamp(serverProgress, 0, distance)
+	end
+
+	local elapsed = math.max(0, now - (visual.ServerUpdatedAt or now))
+	local visualSpeed = math.max(0, visual.VisualSpeed or 0)
+	return math.clamp(serverProgress + (visualSpeed * elapsed), 0, distance)
+end
+
+local function update_race_visual_motion(visual, deltaTime, now)
+	local targetProgress = get_visual_target_progress(visual, now)
+	local currentProgress = visual.DisplayProgress or targetProgress
+
+	if state.Phase ~= "Race" then
+		apply_visual_progress(visual, targetProgress)
+		return
+	end
+
+	if targetProgress - currentProgress > VISUAL_HARD_SNAP_GAP then
+		apply_visual_progress(visual, targetProgress)
+		return
+	end
+
+	local visualSpeed = math.max(0, visual.VisualSpeed or 0)
+	local predictedProgress = currentProgress + (visualSpeed * deltaTime)
+	local correctionAlpha = math.clamp(deltaTime * VISUAL_CORRECTION_RATE, 0, 1)
+	local correctedProgress = predictedProgress + ((targetProgress - predictedProgress) * correctionAlpha)
+	local minimumForwardProgress = currentProgress + (visualSpeed * deltaTime * VISUAL_MIN_SPEED_BLEND)
+	local nextProgress = math.max(
+		currentProgress,
+		correctedProgress,
+		math.min(targetProgress, minimumForwardProgress)
+	)
+
+	apply_visual_progress(visual, math.min(visual.Distance or RaceConfig.RaceDistance, nextProgress))
 end
 
 local function get_finish_tween_duration(progress, distance, speed)
@@ -441,6 +495,9 @@ local function create_race_visual(entry, raceFolder, slots, folder)
 		PlaceholderModelKey = entry.PlaceholderModelKey,
 		StartPivot = startPivot,
 		StartRotation = extract_rotation(startPivot),
+		Distance = entry.Distance or RaceConfig.RaceDistance,
+		ServerProgress = entry.Progress or 0,
+		ServerUpdatedAt = os.clock(),
 		DisplayProgress = entry.Progress or 0,
 		SegmentIndex = entry.SegmentIndex or 0,
 		VisualSpeed = entry.VisualSpeed or 24,
@@ -463,49 +520,22 @@ local function retarget_race_visual(visual, entry)
 		segmentIndex = math.floor(authoritativeProgress / math.max(1, RaceConfig.SegmentLength))
 	end
 
+	visual.Distance = distance
+	visual.ServerProgress = authoritativeProgress
+	visual.ServerUpdatedAt = os.clock()
+	visual.SegmentIndex = segmentIndex
+	visual.VisualSpeed = visualSpeed
+
 	if state.Phase ~= "Race" then
 		clear_overlay_tween_state(visual)
 		clear_primary_tween_state(visual)
-		visual.PrimaryProgress = create_progress_driver(visual.Model, "PrimaryRaceProgress", authoritativeProgress)
-		visual.SegmentIndex = segmentIndex
-		visual.VisualSpeed = visualSpeed
 		apply_visual_progress(visual, authoritativeProgress)
 		return
 	end
 
-	if visual.PrimaryProgress and visual.PrimaryProgress.Value < authoritativeProgress then
-		visual.PrimaryProgress.Value = authoritativeProgress
+	if authoritativeProgress - (visual.DisplayProgress or 0) > VISUAL_HARD_SNAP_GAP then
+		apply_visual_progress(visual, authoritativeProgress)
 	end
-
-	if visual.OverlayProgress and visual.OverlayProgress.Value < authoritativeProgress then
-		visual.OverlayProgress.Value = authoritativeProgress
-	end
-
-	local currentProgress = math.max(authoritativeProgress, get_visual_display_progress(visual))
-	local shouldRetarget = false
-
-	if not visual.PrimaryProgress then
-		start_primary_finish_tween(visual, currentProgress, distance, visualSpeed)
-		visual.SegmentIndex = segmentIndex
-		apply_visual_progress(visual, currentProgress)
-		return
-	end
-
-	if segmentIndex ~= visual.SegmentIndex then
-		shouldRetarget = true
-	elseif math.abs((visual.VisualSpeed or visualSpeed) - visualSpeed) > 0.05 and not visual.OverlayProgress then
-		shouldRetarget = true
-	elseif not visual.PrimaryTween and not visual.OverlayTween then
-		shouldRetarget = true
-	end
-
-	if shouldRetarget then
-		begin_overlay_finish_tween(visual, currentProgress, distance, visualSpeed, segmentIndex)
-	elseif visual.VisualSpeed ~= visualSpeed then
-		visual.VisualSpeed = visualSpeed
-	end
-
-	apply_visual_progress(visual, currentProgress)
 end
 
 local function sync_race_visuals()
@@ -750,10 +780,14 @@ local function refresh_horse_options()
 	for _, horse in ipairs(state.HorseOptions) do
 		local title = horse.Name or horse.DisplayName or horse.Id
 		local canRace = horse.CanRace ~= false
+		local blockedStatusName = get_status_display_name(
+			horse.RaceBlockedStatus or horse.RaceLowestStatus,
+			horse.RaceBlockedStatusDisplay or horse.RaceLowestStatusDisplay
+		)
 		local metaText = canRace
-			and "Pronto para correr"
-			or ("%s %d%%  |  minimo %d%%"):format(
-				horse.RaceBlockedStatusDisplay or horse.RaceLowestStatusDisplay or "Status",
+			and "Ready to race"
+			or ("%s %d%%  |  minimum %d%%"):format(
+				blockedStatusName,
 				horse.RaceBlockedPercent or horse.RaceLowestPercent or 0,
 				horse.RaceMinPercent or 50
 			)
@@ -767,7 +801,7 @@ local function refresh_horse_options()
 		create_label(button, "HorseName", {
 			Size = UDim2.new(1, -14, 0.52, 0),
 			Position = UDim2.new(0, 8, 0, 4),
-			Text = title .. (horse.IsEquipped and "  [equipado]" or ""),
+			Text = title .. (horse.IsEquipped and "  [equipped]" or ""),
 			TextSize = 14,
 		})
 
@@ -785,7 +819,7 @@ local function refresh_horse_options()
 			local selectedHorse = get_selected_horse_option()
 			local selectedCanRace = selectedHorse and selectedHorse.CanRace ~= false
 			set_button_enabled(ui.SelectConfirm, selectedCanRace, Color3.fromRGB(35, 103, 77))
-			ui.SelectConfirm.Text = selectedCanRace and "Entrar" or "Cuidar primeiro"
+			ui.SelectConfirm.Text = selectedCanRace and "Join" or "Care first"
 		end)
 
 		horseButtons[horse.Id] = button
@@ -809,7 +843,7 @@ local function refresh_horse_options()
 	local selectedHorse = get_selected_horse_option()
 	local selectedCanRace = selectedHorse and selectedHorse.CanRace ~= false
 	set_button_enabled(ui.SelectConfirm, selectedCanRace, Color3.fromRGB(35, 103, 77))
-	ui.SelectConfirm.Text = selectedCanRace and "Entrar" or "Cuidar primeiro"
+	ui.SelectConfirm.Text = selectedCanRace and "Join" or "Care first"
 end
 
 local function submit_leave_request()
@@ -883,8 +917,8 @@ local function submit_join_request(horseId)
 		ui.SelectFrame.Visible = true
 	elseif response.Code == "HorseNeedsTooLow" then
 		state.HorseOptions = response.HorseOptions or state.HorseOptions
-		state.NoticeText = ("%s em %d%%. Precisa ficar acima de %d%%."):format(
-			response.BlockedStatusDisplay or "Status",
+		state.NoticeText = ("%s is at %d%%. It must stay above %d%%."):format(
+			get_status_display_name(response.BlockedStatus, response.BlockedStatusDisplay),
 			response.BlockedPercent or 0,
 			response.MinimumPercent or 50
 		)
@@ -910,8 +944,8 @@ local function build_ui()
 
 	local commandBar = create_instance("Frame", {
 		Name = "CommandBar",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -24),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 18),
 		Size = UDim2.fromOffset(520, 92),
 		Parent = screenGui,
 	})
@@ -919,17 +953,17 @@ local function build_ui()
 
 	local inviteFrame = create_instance("Frame", {
 		Name = "InviteFrame",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0.5, 0, 0.5, -28),
-		Size = UDim2.fromOffset(360, 120),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 122),
+		Size = UDim2.fromOffset(360, 184),
 		Parent = screenGui,
 	})
 	apply_panel_style(inviteFrame, Color3.fromRGB(233, 182, 96))
 
 	local selectFrame = create_instance("Frame", {
 		Name = "SelectFrame",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0.5, 0, 0.5, -18),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 122),
 		Size = UDim2.fromOffset(430, 296),
 		Parent = screenGui,
 	})
@@ -938,7 +972,7 @@ local function build_ui()
 	local boardFrame = create_instance("Frame", {
 		Name = "BoardFrame",
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -18, 0, 18),
+		Position = UDim2.new(1, -18, 0, 122),
 		Size = UDim2.fromOffset(300, 270),
 		Parent = screenGui,
 	})
@@ -947,7 +981,7 @@ local function build_ui()
 	local resultFrame = create_instance("Frame", {
 		Name = "ResultFrame",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 18),
+		Position = UDim2.new(0.5, 0, 0, 122),
 		Size = UDim2.fromOffset(460, 74),
 		Parent = screenGui,
 	})
@@ -963,7 +997,7 @@ local function build_ui()
 	ui.CommandTitle = create_label(commandBar, "Title", {
 		Size = UDim2.new(0.55, 0, 0, 18),
 		Position = UDim2.new(0, 0, 0, 0),
-		Text = "Corrida",
+		Text = "Race",
 		TextSize = 15,
 	})
 
@@ -978,7 +1012,7 @@ local function build_ui()
 	ui.CommandStatus = create_label(commandBar, "Status", {
 		Size = UDim2.new(1, -220, 0, 30),
 		Position = UDim2.new(0, 0, 0, 24),
-		Text = "Aguardando corrida.",
+		Text = "Waiting for the next race.",
 		TextSize = 20,
 	})
 
@@ -1003,13 +1037,13 @@ local function build_ui()
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, 0, 1, 0),
 		Size = UDim2.fromOffset(150, 36),
-		Text = "Entrar",
+		Text = "Join",
 	})
 
 	ui.InviteTitle = create_label(inviteFrame, "InviteTitle", {
 		Size = UDim2.new(1, 0, 0, 24),
 		Position = UDim2.new(0, 0, 0, 0),
-		Text = "> corrida disponivel",
+		Text = "> race available",
 		TextSize = 18,
 	})
 
@@ -1018,14 +1052,14 @@ local function build_ui()
 		Position = UDim2.new(0, 0, 0, 34),
 		TextWrapped = true,
 		TextYAlignment = Enum.TextYAlignment.Top,
-		Text = "Convite aberto.",
+		Text = "Race registration is open.",
 		TextSize = 18,
 	})
 
 	ui.InviteCountdown = create_label(inviteFrame, "InviteCountdown", {
 		Size = UDim2.new(1, 0, 0, 20),
 		Position = UDim2.new(0, 0, 0, 112),
-		Text = "Fecha em 00:20",
+		Text = "Closes in 00:20",
 		TextSize = 15,
 	})
 
@@ -1040,27 +1074,27 @@ local function build_ui()
 	ui.InviteJoin = create_button(inviteFrame, "InviteJoin", {
 		Position = UDim2.new(0, 0, 1, -44),
 		Size = UDim2.fromOffset(174, 40),
-		Text = "Participar",
+		Text = "Join",
 	})
 
 	ui.InviteClose = create_button(inviteFrame, "InviteClose", {
 		BackgroundColor3 = Color3.fromRGB(54, 61, 68),
 		Position = UDim2.new(1, -174, 1, -44),
 		Size = UDim2.fromOffset(160, 40),
-		Text = "Fechar",
+		Text = "Close",
 	})
 
 	ui.SelectTitle = create_label(selectFrame, "SelectTitle", {
 		Size = UDim2.new(1, 0, 0, 22),
 		Position = UDim2.new(0, 0, 0, 0),
-		Text = "Escolha o cavalo",
+		Text = "Choose a horse",
 		TextSize = 18,
 	})
 
 	ui.SelectMeta = create_label(selectFrame, "SelectMeta", {
 		Size = UDim2.new(1, 0, 0, 18),
 		Position = UDim2.new(0, 0, 0, 28),
-		Text = "Apenas cavalos acima de 50% podem correr.",
+		Text = "Only horses above 50% can race.",
 		TextSize = 13,
 		TextColor3 = Color3.fromRGB(164, 173, 184),
 	})
@@ -1089,20 +1123,20 @@ local function build_ui()
 	ui.SelectConfirm = create_button(selectFrame, "SelectConfirm", {
 		Position = UDim2.new(0, 0, 1, -44),
 		Size = UDim2.fromOffset(156, 40),
-		Text = "Entrar",
+		Text = "Join",
 	})
 
 	ui.SelectCancel = create_button(selectFrame, "SelectCancel", {
 		BackgroundColor3 = Color3.fromRGB(54, 61, 68),
 		Position = UDim2.new(1, -156, 1, -44),
 		Size = UDim2.fromOffset(156, 40),
-		Text = "Voltar",
+		Text = "Back",
 	})
 
 	ui.BoardTitle = create_label(boardFrame, "BoardTitle", {
 		Size = UDim2.new(1, 0, 0, 22),
 		Position = UDim2.new(0, 0, 0, 0),
-		Text = "Placar",
+		Text = "Leaderboard",
 		TextSize = 17,
 	})
 
@@ -1131,7 +1165,7 @@ local function build_ui()
 		Size = UDim2.new(1, 0, 1, 0),
 		Position = UDim2.new(0, 0, 0, 0),
 		TextWrapped = true,
-		Text = "Resultado da corrida.",
+		Text = "Race results.",
 		TextSize = 22,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextYAlignment = Enum.TextYAlignment.Center,
@@ -1235,64 +1269,64 @@ update_dynamic_text = function()
 	local inviteNotice = state.NoticeText
 
 	if state.Phase == "Race" then
-		ui.CommandTitle.Text = "Corrida"
+		ui.CommandTitle.Text = "Race"
 		ui.CommandStatus.Text = localEntry
-			and ("%s correndo"):format(localEntry.HorseName or "Horse")
-			or "Corrida em andamento."
-		ui.CommandMeta.Text = ("%d corredores  |  %d studs"):format(participantCount, RaceConfig.RaceDistance)
+			and ("%s is racing"):format(localEntry.HorseName or "Horse")
+			or "Race in progress."
+		ui.CommandMeta.Text = ("%d racers  |  %d studs"):format(participantCount, RaceConfig.RaceDistance)
 		ui.CommandCountdown.Text = "LIVE"
 		ui.CommandAction.Visible = false
 	elseif state.Phase == "Queue" then
-		ui.CommandTitle.Text = "Na fila"
+		ui.CommandTitle.Text = "Queue"
 		ui.CommandStatus.Text = localEntry
-			and ("%s pronto para largar"):format(localEntry.HorseName or "Horse")
-			or "Aguardando largada."
-		ui.CommandMeta.Text = ("%d/%d confirmados"):format(participantCount, RaceConfig.MaxParticipants)
+			and ("%s is ready at the gate"):format(localEntry.HorseName or "Horse")
+			or "Waiting for the start."
+		ui.CommandMeta.Text = ("%d/%d queued"):format(participantCount, RaceConfig.MaxParticipants)
 		ui.CommandCountdown.Text = format_countdown(inviteRemaining)
 		ui.CommandAction.Visible = inviteRemaining > 0
-		ui.CommandAction.Text = "Sair"
+		ui.CommandAction.Text = "Leave"
 		set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
 	elseif state.Phase == "Invite" then
-		ui.CommandTitle.Text = "Corrida aberta"
+		ui.CommandTitle.Text = "Race Open"
 		ui.CommandStatus.Text = (#state.HorseOptions <= 1)
-			and ((inviteHorse and inviteHorseReady) and "Seu cavalo esta pronto." or "Seu cavalo precisa de cuidado.")
-			or "Escolha um cavalo."
+			and ((inviteHorse and inviteHorseReady) and "Your horse is ready to race." or "Your horse needs care first.")
+			or "Choose a horse."
 		ui.CommandMeta.Text = inviteNotice ~= ""
 			and inviteNotice
-			or ("%d/%d na fila"):format(participantCount, RaceConfig.MaxParticipants)
+			or ("%d/%d queued"):format(participantCount, RaceConfig.MaxParticipants)
 		ui.CommandCountdown.Text = format_countdown(inviteRemaining)
 		ui.CommandAction.Visible = true
 		if #state.HorseOptions <= 1 then
-			ui.CommandAction.Text = inviteHorseReady and "Entrar" or "Ver cavalo"
+			ui.CommandAction.Text = inviteHorseReady and "Join" or "View horse"
 			set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
 		else
-			ui.CommandAction.Text = "Escolher"
+			ui.CommandAction.Text = "Select"
 			set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
 		end
 	elseif state.Result and resultRemaining > 0 then
-		ui.CommandTitle.Text = "Resultado"
+		ui.CommandTitle.Text = "Results"
 		ui.CommandStatus.Text = ui.ResultLabel.Text
-		ui.CommandMeta.Text = ("Fecha em %s"):format(format_countdown(resultRemaining))
+		ui.CommandMeta.Text = ("Closes in %s"):format(format_countdown(resultRemaining))
 		ui.CommandCountdown.Text = format_countdown(resultRemaining)
 		ui.CommandAction.Visible = false
 	else
-		ui.CommandTitle.Text = "Corrida"
-		ui.CommandStatus.Text = "Aguardando corrida."
+		ui.CommandTitle.Text = "Race"
+		ui.CommandStatus.Text = "Waiting for the next race."
 		ui.CommandMeta.Text = ""
 		ui.CommandCountdown.Text = "00:00"
 		ui.CommandAction.Visible = false
 	end
 
-	ui.InviteCountdown.Text = format_countdown(inviteRemaining)
+	ui.InviteCountdown.Text = ("Closes in %s"):format(format_countdown(inviteRemaining))
 	ui.InviteMeta.Text = inviteNotice
-	ui.InviteBody.Text = "Corrida aberta."
+	ui.InviteBody.Text = "Race registration is open."
 	ui.SelectMeta.Text = inviteNotice ~= ""
 		and inviteNotice
-		or "Apenas cavalos acima de 50% podem correr."
+		or "Only horses above 50% can race."
 
 	if state.Result and resultRemaining > 0 and state.Result.Winner then
 		local winner = state.Result.Winner
-		ui.ResultLabel.Text = ("%s venceu com %s em %.2fs e ganhou %d Horseshoes.")
+		ui.ResultLabel.Text = ("%s won with %s in %.2fs and earned %d Horseshoes.")
 			:format(
 				winner.PlayerName or "Player",
 				winner.HorseName or "Horse",
@@ -1468,9 +1502,11 @@ Net.Event.RaceState:Connect(function(payload)
 end)
 
 RunService.RenderStepped:Connect(function(deltaTime)
+	local now = os.clock()
+
 	for _, visual in pairs(raceVisuals.ByUserId) do
 		if visual.Model and visual.Model.Parent then
-			apply_visual_progress(visual, get_visual_display_progress(visual))
+			update_race_visual_motion(visual, deltaTime, now)
 		end
 	end
 

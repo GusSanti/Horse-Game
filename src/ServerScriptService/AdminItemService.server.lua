@@ -131,45 +131,6 @@ local function build_catalog()
 	return categories
 end
 
-local function clear_existing_admin_item_tools(player)
-	local containers = {
-		player:FindFirstChildOfClass("Backpack"),
-		player.Character,
-	}
-
-	for _, container in ipairs(containers) do
-		if container then
-			for _, child in ipairs(container:GetChildren()) do
-				if child:IsA("Tool") and resolve_item_definition_from_tool(child) then
-					child:Destroy()
-				end
-			end
-		end
-	end
-end
-
-local function remove_matching_tool_instances(player, itemId)
-	local containers = {
-		player:FindFirstChildOfClass("Backpack"),
-		player.Character,
-	}
-
-	for _, container in ipairs(containers) do
-		if container then
-			for _, child in ipairs(container:GetChildren()) do
-				if child:IsA("Tool") then
-					local toolItemId = normalize_key(child:GetAttribute("ToolItemId"))
-						or normalize_key(child:GetAttribute("ItemId"))
-						or normalize_key(child.Name)
-					if toolItemId == normalize_key(itemId) then
-						child:Destroy()
-					end
-				end
-			end
-		end
-	end
-end
-
 local function clone_tool_to_backpack(player, toolTemplate)
 	local backpack = player:FindFirstChildOfClass("Backpack")
 	if not backpack then
@@ -181,10 +142,6 @@ local function clone_tool_to_backpack(player, toolTemplate)
 		ToolItemCatalog.ApplyToolMetadata(toolTemplate, itemDefinition)
 	end
 
-	local itemId = normalize_key(toolTemplate:GetAttribute("ToolItemId"))
-		or normalize_key(toolTemplate:GetAttribute("ItemId"))
-		or normalize_key(toolTemplate.Name)
-	remove_matching_tool_instances(player, itemId)
 	toolTemplate:Clone().Parent = backpack
 	return true, "Granted"
 end
@@ -246,8 +203,6 @@ requestItemRemote.OnServerInvoke = function(player, request)
 	end
 
 	if mode == "Category" then
-		clear_existing_admin_item_tools(player)
-
 		local grantedCount = 0
 		for _, child in ipairs(categoryFolder:GetChildren()) do
 			if child:IsA("Tool") then

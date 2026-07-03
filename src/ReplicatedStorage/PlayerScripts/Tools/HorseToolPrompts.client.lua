@@ -162,6 +162,20 @@ local function begin_client_interaction(): ()
 	clientInteractionActive = true
 end
 
+local function invoke_server_use(tool: Tool?, itemId: string, horseId: string): (boolean, string?)
+	local success, reason = useHorseToolRemote:InvokeServer(tool, itemId, horseId)
+
+	print(("[HorseToolPrompts] InvokeServer tool=%s itemId=%s horseId=%s success=%s reason=%s"):format(
+		tool and tool.Name or "nil",
+		tostring(itemId),
+		tostring(horseId),
+		tostring(success),
+		tostring(reason)
+	))
+
+	return success, reason
+end
+
 function queue_refresh(): ()
 	if refreshQueued then
 		return
@@ -216,7 +230,7 @@ function queue_refresh(): ()
 							promptParent = promptParent,
 							beginInteraction = begin_client_interaction,
 							invokeServerUse = function()
-								return useHorseToolRemote:InvokeServer(equippedTool, itemId, horseId)
+								return invoke_server_use(equippedTool, itemId, horseId)
 							end,
 							finishInteraction = finish_client_interaction,
 							queueRefresh = queue_refresh,
@@ -252,7 +266,7 @@ function queue_refresh(): ()
 									promptParent = promptParent,
 									beginInteraction = begin_client_interaction,
 									invokeServerUse = function()
-										return useHorseToolRemote:InvokeServer(equippedTool, itemId, horseId)
+										return invoke_server_use(equippedTool, itemId, horseId)
 									end,
 									finishInteraction = finish_client_interaction,
 								})
@@ -269,7 +283,7 @@ function queue_refresh(): ()
 							return
 						end
 
-						local success = useHorseToolRemote:InvokeServer(currentTool, itemId, horseId)
+						local success = invoke_server_use(currentTool, itemId, horseId)
 						if success then
 							if definition.consumeOnUse == false then
 								queue_refresh()

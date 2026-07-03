@@ -190,9 +190,9 @@ local function build_entries_payload(round)
 			CatalogId = participant.HorseSummary.CatalogId,
 			PlaceholderModelKey = participant.HorseSummary.PlaceholderModelKey,
 			SlotIndex = participant.SlotIndex,
-			Progress = round_to_tenths(participant.Progress),
+			Progress = participant.Progress,
 			Distance = RaceConfig.RaceDistance,
-			VisualSpeed = round_to_tenths(participant.SegmentTargetSpeed or participant.BaseSpeed),
+			VisualSpeed = participant.SegmentTargetSpeed or participant.BaseSpeed,
 			SegmentIndex = math.floor((participant.SegmentStartProgress or 0) / RaceConfig.SegmentLength),
 			Rank = index,
 		}

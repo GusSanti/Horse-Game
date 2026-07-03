@@ -273,6 +273,40 @@ local function round_number(value: number?): number
 	return math.floor(value + 0.5)
 end
 
+local function format_debug_number(value): string
+	if type(value) ~= "number" then
+		return "nil"
+	end
+
+	return ("%.2f"):format(value)
+end
+
+local function debug_log_cleanliness_snapshot(source: string): ()
+	local horses = DataUtility.client.get("Horses")
+	local ownedHorses = type(horses) == "table" and horses.Owned or nil
+
+	if type(ownedHorses) ~= "table" then
+		print(("[StableDebug][%s] Horses.Owned unavailable"):format(source))
+		return
+	end
+
+	for horseId, horse in pairs(ownedHorses) do
+		local needs = type(horse) == "table" and horse.Needs or nil
+		local values = type(needs) == "table" and needs.Values or nil
+		local maxValues = type(needs) == "table" and needs.Max or nil
+		local statuses = HorseStatusService.GetStatuses(horse)
+
+		print(("[StableDebug][%s] horseId=%s rawCleanliness=%s computedCleanliness=%s maxCleanliness=%s lastUpdatedAt=%s"):format(
+			source,
+			tostring(horseId),
+			format_debug_number(type(values) == "table" and values.Cleanliness or nil),
+			format_debug_number(type(statuses) == "table" and statuses.Cleanliness or nil),
+			format_debug_number(type(maxValues) == "table" and maxValues.Cleanliness or nil),
+			tostring(type(needs) == "table" and needs.LastUpdatedAt or nil)
+		))
+	end
+end
+
 local function get_stable_horses(): {StableHorseEntry}
 	local stable = DataUtility.client.get("Stable")
 	local horses = DataUtility.client.get("Horses")
@@ -949,6 +983,11 @@ rootTrove:Connect(playerGui.DescendantRemoving, function(instance: Instance)
 		task.defer(try_bind_ui)
 	end
 end)
+
+rootTrove:Add(DataUtility.client.bind("Horses.Owned", function()
+	debug_log_cleanliness_snapshot("Horses.Owned")
+	queue_render()
+end))
 
 rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 	if not currentUi or #activeCards == 0 then

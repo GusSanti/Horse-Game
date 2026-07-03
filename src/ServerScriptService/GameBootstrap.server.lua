@@ -7,6 +7,7 @@ local ConsumableToolService = require(ServerStorage:WaitForChild("Modules"):Wait
 local FarmingService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingService"))
 local FarmingShopService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingShopService"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+local PersistentToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("PersistentToolService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 local RaceService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("RaceService"))
 
@@ -37,6 +38,7 @@ local function bootstrap_player(player: Player): ()
 
 		FarmingShopService.SyncPlayerTools(player)
 		ConsumableToolService.SyncPlayerTools(player)
+		PersistentToolService.SyncPlayerTools(player)
 		update_login_data(player)
 		HorseService.ensure_starter_horse(player)
 		HorseService.refresh_horse_statuses(player)
@@ -48,6 +50,7 @@ end
 FarmingShopService.Init()
 ConsumableToolService.Init()
 FarmingService.Init()
+PersistentToolService.Init()
 QuestService.Init()
 RaceService.Init()
 HorseService.start_status_decay_loop()
