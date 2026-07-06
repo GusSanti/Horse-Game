@@ -1,35 +1,46 @@
 {
-  "name": "project",
+  "name": "MeuJogo",
   "tree": {
     "$className": "DataModel",
+
     "ReplicatedFirst": {
       "$className": "ReplicatedFirst",
-      "$ignoreUnknownInstances": true,
       "$path": "src/ReplicatedFirst"
     },
+
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
-      "$ignoreUnknownInstances": true,
       "$path": "src/ReplicatedStorage"
     },
+
     "ServerScriptService": {
       "$className": "ServerScriptService",
-      "$ignoreUnknownInstances": true,
       "$path": "src/ServerScriptService"
     },
+
     "ServerStorage": {
       "$className": "ServerStorage",
-      "$ignoreUnknownInstances": true,
       "$path": "src/ServerStorage"
     },
+
+    "StarterGui": {
+      "$className": "StarterGui",
+      "$path": "src/StarterGui"
+    },
+
+    "StarterPack": {
+      "$className": "StarterPack",
+      "$path": "src/StarterPack"
+    },
+
     "StarterPlayer": {
       "$className": "StarterPlayer",
-      "StarterCharacterScripts": {
-        "$className": "StarterCharacterScripts",
-        "$ignoreUnknownInstances": true,
-        "$path": "src/StarterPlayer/StarterCharacterScripts"
-      },
-      "$ignoreUnknownInstances": true
+      "$path": "src/StarterPlayer"
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "$path": "src/Workspace"
     }
   }
 }

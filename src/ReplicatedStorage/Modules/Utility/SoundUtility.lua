@@ -13,6 +13,8 @@ local MAX_SFX_INSTANCES = 3
 
 -- VARIABLES
 local currentMusic = nil
+local musicQueue = nil
+local musicQueueIndex = 0
 local musicVolume = DEFAULT_MUSIC_VOLUME
 local sfxVolume = DEFAULT_SFX_VOLUME
 local isMusicMuted = false
@@ -20,6 +22,7 @@ local isSFXMuted = false
 local musicGroup = nil
 local sfxGroup = nil
 local activeSFX = {}
+local musicEndedConnection = nil
 
 -- FUNCTIONS
 local function createSoundGroups()
@@ -64,39 +67,24 @@ local function cleanupSFX(sound)
 	end
 end
 
-function SoundController.Init()
-	createSoundGroups()
+local function disconnectMusicEndedConnection()
+	if musicEndedConnection then
+		musicEndedConnection:Disconnect()
+		musicEndedConnection = nil
+	end
 end
 
-function SoundController.PlayMusic(soundId, fadeIn, loop)
-	if isMusicMuted then return end
+local function stopCurrentMusic(fadeOut)
+	disconnectMusicEndedConnection()
 
-	fadeIn = fadeIn or false
-	loop = loop ~= false
-
-	if currentMusic then
-		SoundController.StopMusic(fadeIn)
+	if not currentMusic then
+		return
 	end
 
-	currentMusic = createSound(soundId, SoundService, musicGroup)
-	currentMusic.Looped = loop
-	currentMusic.Volume = fadeIn and 0 or musicVolume
-	currentMusic:Play()
-
-	if fadeIn then
-		fadeSound(currentMusic, musicVolume, FADE_DURATION)
-	end
-
-	return currentMusic
-end
-
-function SoundController.StopMusic(fadeOut)
-	if not currentMusic then return end
-
-	fadeOut = fadeOut or false
+	local musicToStop = currentMusic
+	currentMusic = nil
 
 	if fadeOut then
-		local musicToStop = currentMusic
 		fadeSound(musicToStop, 0, FADE_DURATION)
 
 		task.delay(FADE_DURATION, function()
@@ -106,11 +94,134 @@ function SoundController.StopMusic(fadeOut)
 			end
 		end)
 	else
-		currentMusic:Stop()
-		currentMusic:Destroy()
+		musicToStop:Stop()
+		musicToStop:Destroy()
+	end
+end
+
+local function normalizeMusicQueue(soundIds)
+	if typeof(soundIds) ~= "table" then
+		return nil
 	end
 
-	currentMusic = nil
+	local normalizedQueue = {}
+
+	for _, soundId in ipairs(soundIds) do
+		if typeof(soundId) == "string" and soundId ~= "" then
+			table.insert(normalizedQueue, soundId)
+		end
+	end
+
+	if #normalizedQueue == 0 then
+		return nil
+	end
+
+	return normalizedQueue
+end
+
+local function getNextQueueIndex()
+	if not musicQueue or #musicQueue == 0 then
+		return 0
+	end
+
+	return (musicQueueIndex % #musicQueue) + 1
+end
+
+local function getCurrentMusicVolume()
+	if isMusicMuted then
+		return 0
+	end
+
+	return musicVolume
+end
+
+local function playMusicTrack(soundId, fadeIn, looped, onEnded)
+	currentMusic = createSound(soundId, SoundService, musicGroup)
+	currentMusic.Looped = looped
+	currentMusic.Volume = fadeIn and 0 or getCurrentMusicVolume()
+	currentMusic:Play()
+
+	disconnectMusicEndedConnection()
+
+	if onEnded then
+		musicEndedConnection = currentMusic.Ended:Connect(onEnded)
+	end
+
+	if fadeIn then
+		fadeSound(currentMusic, getCurrentMusicVolume(), FADE_DURATION)
+	end
+
+	return currentMusic
+end
+
+local function playMusicQueueTrack(index, fadeIn, fadeOutCurrent)
+	if not musicQueue or #musicQueue == 0 then
+		return nil
+	end
+
+	musicQueueIndex = math.clamp(index, 1, #musicQueue)
+
+	local hasMultipleTracks = #musicQueue > 1
+	local soundId = musicQueue[musicQueueIndex]
+	local onEnded = nil
+
+	if hasMultipleTracks then
+		onEnded = function()
+			if not musicQueue or #musicQueue <= 1 then
+				return
+			end
+
+			playMusicQueueTrack(getNextQueueIndex(), false, false)
+		end
+	end
+
+	stopCurrentMusic(fadeOutCurrent)
+
+	return playMusicTrack(soundId, fadeIn, not hasMultipleTracks, onEnded)
+end
+
+function SoundController.Init()
+	createSoundGroups()
+end
+
+function SoundController.PlayMusic(soundId, fadeIn, loop)
+	if typeof(soundId) == "table" then
+		return SoundController.PlayMusicQueue(soundId, fadeIn)
+	end
+
+	if isMusicMuted then return end
+
+	fadeIn = fadeIn or false
+	loop = loop ~= false
+
+	musicQueue = nil
+	musicQueueIndex = 0
+	stopCurrentMusic(fadeIn)
+
+	return playMusicTrack(soundId, fadeIn, loop, nil)
+end
+
+function SoundController.PlayMusicQueue(soundIds, fadeIn)
+	if isMusicMuted then return end
+
+	local normalizedQueue = normalizeMusicQueue(soundIds)
+	if not normalizedQueue then
+		warn("SoundController.PlayMusicQueue requires at least one valid sound id")
+		return nil
+	end
+
+	fadeIn = fadeIn or false
+	musicQueue = normalizedQueue
+	musicQueueIndex = 1
+
+	return playMusicQueueTrack(musicQueueIndex, fadeIn, fadeIn)
+end
+
+function SoundController.StopMusic(fadeOut)
+	fadeOut = fadeOut or false
+	musicQueue = nil
+	musicQueueIndex = 0
+	stopCurrentMusic(fadeOut)
 end
 
 function SoundController.PauseMusic()

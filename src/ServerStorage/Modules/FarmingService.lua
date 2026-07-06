@@ -16,14 +16,28 @@ local initialized = false
 local nextPlantId = 0
 local activePlants: { [number]: any } = {}
 
-local function get_equipped_tool(player: Player, toolName: string): Tool?
+local function get_equipped_seed_tool(player: Player): Tool?
 	local character = player.Character
 	if not character then
 		return nil
 	end
 
 	local equippedTool = character:FindFirstChildOfClass("Tool")
-	if equippedTool and equippedTool.Name == toolName then
+	if equippedTool and FarmingUtility.IsSeedTool(equippedTool) then
+		return equippedTool
+	end
+
+	return nil
+end
+
+local function get_equipped_watering_tool(player: Player): Tool?
+	local character = player.Character
+	if not character then
+		return nil
+	end
+
+	local equippedTool = character:FindFirstChildOfClass("Tool")
+	if equippedTool and equippedTool.Name == FarmingUtility.WATERING_TOOL_NAME then
 		return equippedTool
 	end
 
@@ -47,13 +61,16 @@ end
 
 local function move_instance_to_position(instance: Instance, worldPosition: Vector3)
 	if instance:IsA("Model") then
-		instance:PivotTo(CFrame.new(worldPosition))
+		local pivot = instance:GetPivot()
+		local rotation = CFrame.fromMatrix(Vector3.zero, pivot.XVector, pivot.YVector, pivot.ZVector)
+		instance:PivotTo(CFrame.new(worldPosition) * rotation)
 		return
 	end
 
 	local basePart = FarmingUtility.GetFirstBasePart(instance)
 	if basePart then
-		basePart.CFrame = CFrame.new(worldPosition)
+		local rotation = CFrame.fromMatrix(Vector3.zero, basePart.CFrame.XVector, basePart.CFrame.YVector, basePart.CFrame.ZVector)
+		basePart.CFrame = CFrame.new(worldPosition) * rotation
 	end
 end
 
@@ -76,21 +93,9 @@ local function set_plant_attributes(instance: Instance, state)
 	instance:SetAttribute("FarmPlantId", state.Id)
 	instance:SetAttribute("FarmPlantStage", state.Stage)
 	instance:SetAttribute("FarmPlantOwnerUserId", state.OwnerUserId)
-end
-
-local function get_anchor_part(instance: Instance): BasePart?
-	if instance:IsA("Model") and instance.PrimaryPart then
-		return instance.PrimaryPart
-	end
-
-	return FarmingUtility.GetFirstBasePart(instance)
-end
-
-local function destroy_display_tool(state)
-	if state.HarvestTool then
-		state.HarvestTool:Destroy()
-		state.HarvestTool = nil
-	end
+	instance:SetAttribute("FarmCropId", state.Crop.CropId)
+	instance:SetAttribute("FarmSeedItemId", state.Crop.Seed.ItemId)
+	instance:SetAttribute("FarmFruitItemId", state.Crop.Fruit.ItemId)
 end
 
 local function reset_stage_trove(state)
@@ -101,80 +106,45 @@ local function reset_stage_trove(state)
 	state.StageTrove = Trove.new()
 end
 
-local function clear_plant(state, keepHarvestTool: boolean?)
+local function clear_plant(state)
 	if state.StageTrove then
 		state.StageTrove:Destroy()
 		state.StageTrove = nil
-	end
-
-	if not keepHarvestTool then
-		destroy_display_tool(state)
 	end
 
 	state.Model = nil
 end
 
 local function attach_harvest_prompt(state)
-	local anchorPart = state.Model and get_anchor_part(state.Model)
-	local promptParent = anchorPart
-	local harvestToolTemplate = FarmingUtility.FindHarvestToolTemplate()
-	local harvestTool = harvestToolTemplate and harvestToolTemplate:Clone() or nil
-	local handle = harvestTool and FarmingUtility.GetToolHandle(harvestTool) or nil
-
-	if not anchorPart then
-		if harvestTool then
-			harvestTool:Destroy()
-		end
+	local harvestHandle = FarmingUtility.FindHarvestHandle(state.Model)
+	if not harvestHandle then
 		return
 	end
 
-	if harvestTool and handle then
-		set_plant_attributes(harvestTool, state)
-		set_plant_attributes(handle, state)
-
-		handle.CFrame = anchorPart.CFrame
-		handle.Anchored = false
-		handle.CanCollide = false
-
-		local weldConstraint = handle:FindFirstChildOfClass("WeldConstraint")
-		if not weldConstraint then
-			weldConstraint = Instance.new("WeldConstraint")
-			weldConstraint.Parent = handle
-		end
-
-		weldConstraint.Part0 = handle
-		weldConstraint.Part1 = anchorPart
-
-		harvestTool.Parent = FarmingUtility.GetFarmFolder(true)
-		state.HarvestTool = harvestTool
-		promptParent = handle
-	end
-
 	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "HarvestPrompt"
 	prompt.ActionText = "Colher"
-	prompt.ObjectText = harvestTool and harvestTool.Name or "Fruta"
+	prompt.ObjectText = state.Crop.Fruit.DisplayName
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 10
 	prompt.RequiresLineOfSight = false
-	prompt.Parent = promptParent
+	prompt.Parent = harvestHandle
 
+	state.StageTrove:Add(prompt)
 	state.StageTrove:Add(prompt.Triggered:Connect(function(player)
 		if player.UserId ~= state.OwnerUserId then
 			return
 		end
 
-		if not activePlants[state.Id] or state.HarvestTool ~= harvestTool then
+		if activePlants[state.Id] ~= state then
 			return
 		end
 
-		prompt:Destroy()
-
-		if state.HarvestTool then
-			state.HarvestTool:Destroy()
-			state.HarvestTool = nil
+		if harvestHandle.Parent then
+			harvestHandle:Destroy()
 		end
 
-		FarmingShopService.AwardHarvest(player)
+		FarmingShopService.AwardHarvest(player, state.Crop.Fruit)
 		QuestService.IncrementStat(player, "Stats.TotalCropsHarvested", 1)
 
 		clear_plant(state)
@@ -183,19 +153,22 @@ local function attach_harvest_prompt(state)
 end
 
 local function create_stage_visual(state, stage: number)
+	local stageTemplate = FarmingUtility.GetStageTemplate(state.Crop, stage)
+	if not stageTemplate then
+		return false
+	end
+
 	local placementWorldPosition = FarmingUtility.GetWorldTopPosition(state.Soil, state.LocalPoint)
-	local stageTemplate = FarmingUtility.GetStageTemplate(stage)
 	local stageClone = stageTemplate:Clone()
 	local bottomOffset = get_instance_bottom_offset(stageTemplate)
 	local worldPosition = placementWorldPosition + state.Soil.CFrame.UpVector * bottomOffset
 
 	reset_stage_trove(state)
-	destroy_display_tool(state)
 
 	state.Stage = stage
 	state.Model = stageClone
 
-	stageClone.Name = ("FarmPlant_%d_Stage%d"):format(state.Id, stage)
+	stageClone.Name = ("%s_%d_Stage%d"):format(state.Crop.CropId, state.Id, stage)
 	set_plant_attributes(stageClone, state)
 	move_instance_to_position(stageClone, worldPosition)
 	configure_stage_visual(stageClone)
@@ -203,9 +176,11 @@ local function create_stage_visual(state, stage: number)
 
 	state.StageTrove:Add(stageClone)
 
-	if stage >= FarmingUtility.MAX_STAGE then
+	if stage >= (state.Crop.MaxStage or FarmingUtility.MAX_STAGE) then
 		attach_harvest_prompt(state)
 	end
+
+	return true
 end
 
 function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
@@ -216,10 +191,19 @@ function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
 		}
 	end
 
-	if not get_equipped_tool(player, FarmingUtility.SEED_TOOL_NAME) then
+	local seedTool = get_equipped_seed_tool(player)
+	if not seedTool then
 		return {
 			Success = false,
 			Code = "SeedNotEquipped",
+		}
+	end
+
+	local cropDefinition = FarmingUtility.GetCropFromSeedTool(seedTool)
+	if not cropDefinition then
+		return {
+			Success = false,
+			Code = "InvalidSeedTool",
 		}
 	end
 
@@ -231,7 +215,14 @@ function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
 		}
 	end
 
-	local consumedSeed, consumeResponse = FarmingShopService.ConsumeSeed(player)
+	if not FarmingUtility.GetStageTemplate(cropDefinition, 1) then
+		return {
+			Success = false,
+			Code = "StageTemplateMissing",
+		}
+	end
+
+	local consumedSeed, consumeResponse = FarmingShopService.ConsumeSeed(player, cropDefinition.Seed)
 	if not consumedSeed then
 		return consumeResponse
 	end
@@ -241,21 +232,29 @@ function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
 	local state = {
 		Id = nextPlantId,
 		OwnerUserId = player.UserId,
+		Crop = cropDefinition,
 		Soil = placement.Soil,
 		LocalPoint = placement.LocalPoint,
 		Stage = 0,
 		Model = nil,
-		HarvestTool = nil,
 		StageTrove = nil,
 	}
 
 	activePlants[state.Id] = state
-	create_stage_visual(state, 1)
+
+	if not create_stage_visual(state, 1) then
+		activePlants[state.Id] = nil
+		return {
+			Success = false,
+			Code = "StageTemplateMissing",
+		}
+	end
 
 	return {
 		Success = true,
 		Code = "Planted",
 		PlantId = state.Id,
+		CropId = cropDefinition.CropId,
 	}
 end
 
@@ -267,7 +266,7 @@ function FarmingService.WaterPlant(player: Player, targetInstance: Instance)
 		}
 	end
 
-	if not get_equipped_tool(player, FarmingUtility.WATERING_TOOL_NAME) then
+	if not get_equipped_watering_tool(player) then
 		return {
 			Success = false,
 			Code = "RegaderaNotEquipped",
@@ -291,20 +290,26 @@ function FarmingService.WaterPlant(player: Player, targetInstance: Instance)
 		}
 	end
 
-	if state.Stage >= FarmingUtility.MAX_STAGE then
+	if state.Stage >= (state.Crop.MaxStage or FarmingUtility.MAX_STAGE) then
 		return {
 			Success = false,
 			Code = "PlantAlreadyMature",
 		}
 	end
 
-	create_stage_visual(state, state.Stage + 1)
+	if not create_stage_visual(state, state.Stage + 1) then
+		return {
+			Success = false,
+			Code = "StageTemplateMissing",
+		}
+	end
 
 	return {
 		Success = true,
 		Code = "PlantWatered",
 		PlantId = state.Id,
 		Stage = state.Stage,
+		CropId = state.Crop.CropId,
 	}
 end
 
