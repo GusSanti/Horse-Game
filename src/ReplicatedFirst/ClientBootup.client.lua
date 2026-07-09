@@ -18,6 +18,7 @@ local PRELOAD_ANIMATION_IDS = {
 	HorseMountConfig.PlayerRideAnimationId,
 	HorseMountConfig.HorseIdleAnimationId,
 	HorseMountConfig.HorseWalkAnimationId,
+	HorseMountConfig.HorseRunAnimationId,
 }
 
 local function preload_animations()

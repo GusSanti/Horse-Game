@@ -7,6 +7,20 @@ local Camera = workspace.CurrentCamera
 local Open = {}
 
 ------------------//FUNCTIONS
+local function get_number_attribute(inst: Instance, attributeName: string, fallback: number): number
+	local value = inst:GetAttribute(attributeName)
+	if typeof(value) == "number" then
+		return value
+	end
+
+	local convertedValue = tonumber(value)
+	if convertedValue ~= nil then
+		return convertedValue
+	end
+
+	return fallback
+end
+
 local function get_blur_effect()
 	local blur = Lighting:FindFirstChildWhichIsA("BlurEffect")
 	if not blur then
@@ -41,10 +55,10 @@ function Open.run(inst, state, utils, sfx)
 	if not state.origSize then state.origSize = inst.Size end
 
 	local kind = inst:GetAttribute("open_anim") or "pop"
-	local t = inst:GetAttribute("open_t") or 0.4
-	local delay = inst:GetAttribute("open_delay") or 0
-	local offset = inst:GetAttribute("open_offset_px") or 150
-	local popScale = inst:GetAttribute("open_pop_scale") or 0.7
+	local t = get_number_attribute(inst, "open_t", 0.4)
+	local delay = get_number_attribute(inst, "open_delay", 0)
+	local offset = get_number_attribute(inst, "open_offset_px", 150)
+	local popScale = get_number_attribute(inst, "open_pop_scale", 0.7)
 	local blurAmount = inst:GetAttribute("blur")
 	local fovAmount = inst:GetAttribute("fov")
 
@@ -74,12 +88,12 @@ function Open.run(inst, state, utils, sfx)
 	if blurAmount and tonumber(blurAmount) > 0 then
 		local ignore = {["BlockInventoryFrame"]=true, ["WeaponInventoryFrame"]=true, ["PaintBlocksFrame"]=true}
 		if not ignore[inst.Name] then
-			tween_blur(blurAmount, t)
+			tween_blur(tonumber(blurAmount) or 0, t)
 		end
 	end
 
 	if fovAmount then
-		tween_fov(fovAmount, t)
+		tween_fov(tonumber(fovAmount) or 70, t)
 	end
 
 	if sfx then sfx.play_for(inst, "sfx_open") end

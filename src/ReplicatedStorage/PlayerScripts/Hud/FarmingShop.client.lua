@@ -19,37 +19,49 @@ local rootTrove = Trove.new()
 local uiTrove = Trove.new()
 local cardTrove = Trove.new()
 
+local MAIN_UI_NAME = "MainUI"
+local MAINFRAME_NAME = "MainframeFR"
+local FRAMES_CONTAINER_NAME = "Frames"
+local SHOP_FRAME_NAME = "SeedShop"
+local SHOP_BACKGROUND_NAMES = { "SeedShopBG" }
+local TABS_CONTAINER_NAMES = { "BuySellSeedsFR" }
+local SCROLLING_FRAME_NAMES = { "ListScrollingFrame", "ScrollingFrame", "ScrollFrame", "Scroll" }
+local SEED_TEMPLATE_NAMES = { "SeedListBG" }
+local FRUIT_TEMPLATE_NAMES = { "FruitListBG" }
+local SEED_TAB_NAMES = { "Seeds" }
+local FRUIT_TAB_NAMES = { "Fruits" }
+local CLOSE_BUTTON_NAMES = { "CloseBT", "ExitBT" }
+local RESTOCK_BUTTON_NAMES = { "RestyockBT", "RestockBT", "ReestockBT" }
+local PURCHASE_BUTTON_NAMES = { "PurchaseBT" }
+local BUTTON_TEXT_NAMES = { "BTTX" }
+local NAME_LABEL_NAMES = { "ItemNameTX" }
+local STOCK_COUNT_LABEL_NAMES = { "StockCountTX" }
+local VALUE_LABEL_NAMES = { "ValueTX" }
+local OUT_OF_STOCK_LABEL_NAMES = { "StockTX" }
+local IMAGE_CONTAINER_NAMES = { "ImageLabel", "ImageItem", "ItemImage", "Icon" }
+local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
+
+local VIEWPORT_FIELD_OF_VIEW = 35
+local VIEWPORT_RADIUS_SCALE = 0.55
+local VIEWPORT_CAMERA_Y_SCALE = 0.2
+local VIEWPORT_CAMERA_X_SCALE = 0.45
+
 type ShopUi = {
-	Main: Instance,
-	CoinsLabel: TextLabel,
+	Root: GuiObject,
 	ScrollingFrame: ScrollingFrame,
-	SeedTemplate: Frame,
-	FruitTemplate: Frame,
-	SeedsButton: TextButton,
-	FoodsButton: TextButton,
-	SeedTemplateSource: GuiObject?,
-	FruitTemplateSource: GuiObject?,
+	SeedTemplate: GuiObject,
+	FruitTemplate: GuiObject,
+	SeedsButton: GuiButton,
+	FruitsButton: GuiButton,
+	CloseButton: GuiButton?,
+	RestockButton: GuiButton?,
 }
 
 local currentUi: ShopUi? = nil
+local currentSeedTemplateSource: GuiObject? = nil
+local currentFruitTemplateSource: GuiObject? = nil
 local activeTab = "Seed"
 local requestInFlight = false
-
-local COINS_FRAME_NAMES = { "Coins", "Coin" }
-local COINS_LABEL_NAMES = { "Current", "Currents" }
-local SHOP_FRAME_NAMES = { "Shop", "Store" }
-local SCROLLING_FRAME_NAMES = { "ScrollingFrame", "ScrollFrame", "Scroll" }
-local SEED_TEMPLATE_NAMES = { "Seed", "Seeds" }
-local FRUIT_TEMPLATE_NAMES = { "Fruit", "Fruits", "Food", "Foods" }
-local SEED_TAB_NAMES = { "SeedsBT", "SeedBT", "SeedsButton" }
-local FRUIT_TAB_NAMES = { "FoodsBT", "FoodBT", "FruitsBT", "FruitBT", "FoodsButton", "FruitsButton" }
-local BUY_BUTTON_NAMES = { "BuyButton", "BuyBT", "Buy" }
-local SELL_BUTTON_NAMES = { "SellButton", "SellBT", "Sell" }
-local NAME_LABEL_NAMES = { "Name", "Title", "ItemName" }
-local STOCK_LABEL_NAMES = { "Stock", "Owned", "Amount", "Count", "Quantity", "Qtd" }
-local VALUE_LABEL_NAMES = { "Value", "Price", "SellValue" }
-local IMAGE_CONTAINER_NAMES = { "SeedImage", "FruitImage", "ItemImage", "Image", "Icon" }
-local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
 
 local function get_seed_items()
 	if type(FarmingCatalog.GetSeedItems) == "function" then
@@ -84,7 +96,8 @@ local function normalize_key(value): string?
 		return nil
 	end
 
-	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	local normalizedValue = string.lower(trimmedValue)
 	if normalizedValue == "" then
 		return nil
 	end
@@ -131,8 +144,8 @@ local function find_named_instance(root: Instance?, aliases, className: string?,
 	return nil
 end
 
-local function find_text_label(root: Instance?, aliases): TextLabel?
-	local instance = find_named_instance(root, aliases, "TextLabel")
+local function find_text_label(root: Instance?, aliases, recursive: boolean?): TextLabel?
+	local instance = find_named_instance(root, aliases, "TextLabel", recursive)
 	if instance then
 		return instance :: TextLabel
 	end
@@ -140,17 +153,8 @@ local function find_text_label(root: Instance?, aliases): TextLabel?
 	return nil
 end
 
-local function find_text_button(root: Instance?, aliases): TextButton?
-	local instance = find_named_instance(root, aliases, "TextButton")
-	if instance then
-		return instance :: TextButton
-	end
-
-	return nil
-end
-
-local function find_gui_button(root: Instance?, aliases): GuiButton?
-	local instance = find_named_instance(root, aliases, "GuiButton")
+local function find_gui_button(root: Instance?, aliases, recursive: boolean?): GuiButton?
+	local instance = find_named_instance(root, aliases, "GuiButton", recursive)
 	if instance then
 		return instance :: GuiButton
 	end
@@ -158,15 +162,10 @@ local function find_gui_button(root: Instance?, aliases): GuiButton?
 	return nil
 end
 
-local function find_frame(root: Instance?, aliases): Frame?
-	local directFrame = find_named_instance(root, aliases, "Frame", false)
-	if directFrame then
-		return directFrame :: Frame
-	end
-
-	local recursiveFrame = find_named_instance(root, aliases, "Frame")
-	if recursiveFrame then
-		return recursiveFrame :: Frame
+local function find_gui_object(root: Instance?, aliases, recursive: boolean?): GuiObject?
+	local instance = find_named_instance(root, aliases, "GuiObject", recursive)
+	if instance then
+		return instance :: GuiObject
 	end
 
 	return nil
@@ -181,47 +180,21 @@ local function find_scrolling_frame(root: Instance?): ScrollingFrame?
 	return nil
 end
 
-local function get_main_ui(main: Instance): ShopUi?
-	local coinsFrame = find_named_instance(main, COINS_FRAME_NAMES, nil)
-	local shopFrame = find_named_instance(main, SHOP_FRAME_NAMES, nil)
-	local scrollingFrame = find_scrolling_frame(shopFrame or main)
-	local seedTemplate = find_frame(scrollingFrame, SEED_TEMPLATE_NAMES)
-	local fruitTemplate = find_frame(scrollingFrame, FRUIT_TEMPLATE_NAMES)
-	local seedsButton = find_text_button(main, SEED_TAB_NAMES)
-	local foodsButton = find_text_button(main, FRUIT_TAB_NAMES)
-	local currentLabel = find_text_label(coinsFrame, COINS_LABEL_NAMES) or find_text_label(main, COINS_LABEL_NAMES)
-
-	if not currentLabel or not scrollingFrame or not seedTemplate or not fruitTemplate or not seedsButton or not foodsButton then
-		return nil
+local function set_gui_visible(instance: Instance?, isVisible: boolean)
+	if not instance then
+		return
 	end
 
-	return {
-		Main = main,
-		CoinsLabel = currentLabel,
-		ScrollingFrame = scrollingFrame,
-		SeedTemplate = seedTemplate,
-		FruitTemplate = fruitTemplate,
-		SeedsButton = seedsButton,
-		FoodsButton = foodsButton,
-	}
-end
-
-local function find_main_ui(): ShopUi?
-	for _, descendant in ipairs(playerGui:GetDescendants()) do
-		if descendant.Name == "Main" then
-			local ui = get_main_ui(descendant)
-			if ui then
-				return ui
-			end
-		end
+	if instance:IsA("GuiObject") then
+		instance.Visible = isVisible
+	elseif instance:IsA("LayerCollector") then
+		instance.Enabled = isVisible
 	end
-
-	return nil
 end
 
 local function strip_local_scripts(root: Instance)
 	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("LocalScript") then
+		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
 			descendant:Destroy()
 		end
 	end
@@ -238,31 +211,28 @@ local function make_template_source(template: GuiObject): GuiObject
 	return source
 end
 
-local function format_stock(amount: number): string
-	return ("Stock: %d"):format(amount)
+local function format_count(amount: number): string
+	return tostring(math.max(0, math.floor(tonumber(amount) or 0)))
 end
 
 local function format_value(itemDefinition): string
 	if itemDefinition.Kind == "Seed" then
-		return ("Value: %d Horseshoe"):format(itemDefinition.Price or 0)
+		return tostring(math.max(0, math.floor(tonumber(itemDefinition.Price) or 0)))
 	end
 
-	return ("Value: %d Horseshoes"):format(itemDefinition.SellPrice or 0)
+	return tostring(math.max(0, math.floor(tonumber(itemDefinition.SellPrice) or 0)))
 end
 
-local function update_horseshoes()
-	if not currentUi then
-		return
-	end
-
-	local horseshoes = DataUtility.client.get("Currencies.Horseshoes") or 0
-	currentUi.CoinsLabel.Text = ("Horseshoe: %d$"):format(horseshoes)
+local function get_horseshoes_amount(): number
+	return math.max(0, math.floor(tonumber(DataUtility.client.get("Currencies.Horseshoes")) or 0))
 end
 
 local function clear_viewport(viewportFrame: ViewportFrame)
 	for _, child in ipairs(viewportFrame:GetChildren()) do
 		child:Destroy()
 	end
+
+	viewportFrame.CurrentCamera = nil :: any
 end
 
 local function get_bounds(root: Instance): (Vector3?, Vector3?)
@@ -318,36 +288,43 @@ local function get_bounds(root: Instance): (Vector3?, Vector3?)
 end
 
 local function prepare_viewport_model(root: Instance)
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
-			descendant:Destroy()
-		end
-	end
+	strip_local_scripts(root)
 
 	if root:IsA("BasePart") then
 		root.Anchored = true
 		root.CanCollide = false
+		root.CanTouch = false
+		root.CanQuery = false
 	end
 
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = true
 			descendant.CanCollide = false
+			descendant.CanTouch = false
+			descendant.CanQuery = false
+			descendant.CastShadow = false
 		end
 	end
 end
 
 local function populate_viewport(card: Instance, itemDefinition)
-	local imageContainer = find_named_instance(card, IMAGE_CONTAINER_NAMES, nil)
-	local viewportFrame = imageContainer and find_named_instance(imageContainer, VIEWPORT_FRAME_NAMES, "ViewportFrame")
-	if not viewportFrame then
-		viewportFrame = find_named_instance(card, VIEWPORT_FRAME_NAMES, "ViewportFrame")
+	local imageContainer = find_named_instance(card, IMAGE_CONTAINER_NAMES, nil, true)
+	local viewportInstance = nil
+
+	if imageContainer then
+		viewportInstance = find_named_instance(imageContainer, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
 	end
 
-	if not viewportFrame or not viewportFrame:IsA("ViewportFrame") then
+	if not viewportInstance then
+		viewportInstance = find_named_instance(card, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
+	end
+
+	if not viewportInstance or not viewportInstance:IsA("ViewportFrame") then
 		return
 	end
 
+	local viewportFrame = viewportInstance :: ViewportFrame
 	clear_viewport(viewportFrame)
 
 	local asset = FarmingUtility.GetViewportAsset(itemDefinition) or FarmingUtility.GetItemAsset(itemDefinition)
@@ -368,16 +345,19 @@ local function populate_viewport(card: Instance, itemDefinition)
 	end
 
 	local camera = Instance.new("Camera")
-	camera.FieldOfView = 35
+	camera.FieldOfView = VIEWPORT_FIELD_OF_VIEW
 	camera.Parent = viewportFrame
 	viewportFrame.CurrentCamera = camera
 	viewportFrame.BackgroundTransparency = 1
 	viewportFrame.Ambient = Color3.fromRGB(220, 220, 220)
 	viewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
 
-	local radius = math.max(size.X, size.Y, size.Z) * 0.55
+	local radius = math.max(size.X, size.Y, size.Z) * VIEWPORT_RADIUS_SCALE
 	local distance = radius / math.tan(math.rad(camera.FieldOfView * 0.5)) + radius
-	camera.CFrame = CFrame.lookAt(center + Vector3.new(distance * 0.45, distance * 0.2, distance), center)
+	camera.CFrame = CFrame.lookAt(
+		center + Vector3.new(distance * VIEWPORT_CAMERA_X_SCALE, distance * VIEWPORT_CAMERA_Y_SCALE, distance),
+		center
+	)
 end
 
 local function call_shop(remoteName: string, itemId: string)
@@ -407,25 +387,57 @@ local function update_canvas_size()
 	end
 end
 
-local function configure_card(card: GuiObject, itemDefinition, amount: number)
+local function set_button_enabled(button: GuiButton?, isEnabled: boolean)
+	if not button then
+		return
+	end
+
+	button.Active = isEnabled
+	button.Selectable = isEnabled
+
+	if button:IsA("TextButton") then
+		button.AutoButtonColor = isEnabled
+	elseif button:IsA("ImageButton") then
+		button.AutoButtonColor = isEnabled
+	end
+end
+
+local function configure_card(card: GuiObject, itemDefinition, amount: number, horseshoes: number)
 	card.Name = itemDefinition.ItemId
 	card.Visible = true
 	card.LayoutOrder = itemDefinition.SortOrder or 0
 
-	local nameLabel = find_text_label(card, NAME_LABEL_NAMES)
-	local stockLabel = find_text_label(card, STOCK_LABEL_NAMES)
-	local valueLabel = find_text_label(card, VALUE_LABEL_NAMES)
+	local nameLabel = find_text_label(card, NAME_LABEL_NAMES, true)
+	local stockCountLabel = find_text_label(card, STOCK_COUNT_LABEL_NAMES, true)
+	local valueLabel = find_text_label(card, VALUE_LABEL_NAMES, true)
+	local outOfStockLabel = find_text_label(card, OUT_OF_STOCK_LABEL_NAMES, true)
+	local purchaseButton = find_gui_button(card, PURCHASE_BUTTON_NAMES, true)
+	local buttonText = find_text_label(purchaseButton or card, BUTTON_TEXT_NAMES, true)
 
 	if nameLabel then
 		nameLabel.Text = itemDefinition.DisplayName
 	end
 
-	if stockLabel then
-		stockLabel.Text = format_stock(amount)
+	if stockCountLabel then
+		stockCountLabel.Text = format_count(amount)
 	end
 
 	if valueLabel then
 		valueLabel.Text = format_value(itemDefinition)
+	end
+
+	if outOfStockLabel then
+		outOfStockLabel.Visible = itemDefinition.Kind == "Seed" and amount <= 0
+	end
+
+	if buttonText then
+		buttonText.Text = itemDefinition.Kind == "Seed" and "Buy" or "Sell"
+	end
+
+	if itemDefinition.Kind == "Seed" then
+		set_button_enabled(purchaseButton, horseshoes >= (itemDefinition.Price or 0))
+	else
+		set_button_enabled(purchaseButton, amount > 0)
 	end
 
 	populate_viewport(card, itemDefinition)
@@ -439,22 +451,30 @@ local function render_shop()
 	cardTrove:Clean()
 	currentUi.ScrollingFrame.CanvasPosition = Vector2.zero
 
+	if currentUi.RestockButton and currentUi.RestockButton:IsA("GuiObject") then
+		currentUi.RestockButton.Visible = activeTab == "Fruit"
+	end
+
 	local itemDefinitions = activeTab == "Seed" and get_seed_items() or get_fruit_items()
-	local template = activeTab == "Seed" and currentUi.SeedTemplateSource or currentUi.FruitTemplateSource
+	local template = activeTab == "Seed" and currentSeedTemplateSource or currentFruitTemplateSource
 	local inventoryPath = activeTab == "Seed" and "Inventory.Seeds" or "Inventory.Fruits"
 	local inventoryBucket = DataUtility.client.get(inventoryPath) or {}
+	local horseshoes = get_horseshoes_amount()
+
+	if not template then
+		return
+	end
 
 	for _, itemDefinition in ipairs(itemDefinitions) do
 		local card = template:Clone()
 		card.Parent = currentUi.ScrollingFrame
 		cardTrove:Add(card)
 
-		configure_card(card, itemDefinition, get_item_count(inventoryBucket, itemDefinition.ItemId))
+		local amount = get_item_count(inventoryBucket, itemDefinition.ItemId)
+		configure_card(card, itemDefinition, amount, horseshoes)
 
 		local remoteName = activeTab == "Seed" and "BuySeed" or "SellFruit"
-		local buttonAliases = activeTab == "Seed" and BUY_BUTTON_NAMES or SELL_BUTTON_NAMES
-		local button = find_gui_button(card, buttonAliases)
-
+		local button = find_gui_button(card, PURCHASE_BUTTON_NAMES, true)
 		if button then
 			cardTrove:Add(button.Activated:Connect(function()
 				call_shop(remoteName, itemDefinition.ItemId)
@@ -466,31 +486,120 @@ local function render_shop()
 	task.defer(update_canvas_size)
 end
 
-local function bind_ui(ui)
+local function get_shop_ui(shopRoot: GuiObject): ShopUi?
+	local tabsContainer = find_gui_object(shopRoot, TABS_CONTAINER_NAMES, true)
+	local shopBackground = find_gui_object(shopRoot, SHOP_BACKGROUND_NAMES, true) or shopRoot
+	local scrollingFrame = find_scrolling_frame(shopBackground)
+	local seedTemplate = find_gui_object(scrollingFrame, SEED_TEMPLATE_NAMES, true)
+	local fruitTemplate = find_gui_object(scrollingFrame, FRUIT_TEMPLATE_NAMES, true)
+	local seedsButton = find_gui_button(tabsContainer or shopRoot, SEED_TAB_NAMES, true)
+	local fruitsButton = find_gui_button(tabsContainer or shopRoot, FRUIT_TAB_NAMES, true)
+
+	if not scrollingFrame or not seedTemplate or not fruitTemplate or not seedsButton or not fruitsButton then
+		return nil
+	end
+
+	return {
+		Root = shopRoot,
+		ScrollingFrame = scrollingFrame,
+		SeedTemplate = seedTemplate,
+		FruitTemplate = fruitTemplate,
+		SeedsButton = seedsButton,
+		FruitsButton = fruitsButton,
+		CloseButton = find_gui_button(shopRoot, CLOSE_BUTTON_NAMES, true),
+		RestockButton = find_gui_button(shopRoot, RESTOCK_BUTTON_NAMES, true),
+	}
+end
+
+local function find_main_ui(): ShopUi?
+	local mainUi = playerGui:FindFirstChild(MAIN_UI_NAME)
+	if not mainUi then
+		mainUi = playerGui:FindFirstChild(MAIN_UI_NAME, true)
+	end
+
+	if not mainUi then
+		return nil
+	end
+
+	local mainframe = mainUi:FindFirstChild(MAINFRAME_NAME)
+	if not mainframe then
+		mainframe = mainUi:FindFirstChild(MAINFRAME_NAME, true)
+	end
+
+	if not mainframe then
+		return nil
+	end
+
+	local framesContainer = mainframe:FindFirstChild(FRAMES_CONTAINER_NAME)
+	if not framesContainer then
+		framesContainer = mainframe:FindFirstChild(FRAMES_CONTAINER_NAME, true)
+	end
+
+	if not framesContainer then
+		return nil
+	end
+
+	local shopRoot = find_gui_object(framesContainer, { SHOP_FRAME_NAME }, true)
+	if not shopRoot then
+		return nil
+	end
+
+	return get_shop_ui(shopRoot)
+end
+
+local function bind_ui(ui: ShopUi)
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
 	cardTrove:Clean()
 
 	currentUi = ui
-	currentUi.SeedTemplateSource = make_template_source(ui.SeedTemplate)
-	currentUi.FruitTemplateSource = make_template_source(ui.FruitTemplate)
-	uiTrove:Add(currentUi.SeedTemplateSource)
-	uiTrove:Add(currentUi.FruitTemplateSource)
+	local seedTemplateSource = make_template_source(ui.SeedTemplate)
+	local fruitTemplateSource = make_template_source(ui.FruitTemplate)
+
+	currentSeedTemplateSource = seedTemplateSource
+	currentFruitTemplateSource = fruitTemplateSource
+
+	uiTrove:Add(seedTemplateSource)
+	uiTrove:Add(fruitTemplateSource)
 
 	strip_local_scripts(ui.SeedsButton)
-	strip_local_scripts(ui.FoodsButton)
+	strip_local_scripts(ui.FruitsButton)
+
+	if ui.CloseButton then
+		strip_local_scripts(ui.CloseButton)
+	end
+
+	if ui.RestockButton then
+		strip_local_scripts(ui.RestockButton)
+	end
 
 	uiTrove:Add(ui.SeedsButton.Activated:Connect(function()
 		activeTab = "Seed"
 		render_shop()
 	end))
 
-	uiTrove:Add(ui.FoodsButton.Activated:Connect(function()
+	uiTrove:Add(ui.FruitsButton.Activated:Connect(function()
 		activeTab = "Fruit"
 		render_shop()
 	end))
 
-	uiTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", update_horseshoes))
+	if ui.CloseButton then
+		uiTrove:Add(ui.CloseButton.Activated:Connect(function()
+			set_gui_visible(ui.Root, false)
+		end))
+	end
+
+	if ui.RestockButton then
+		uiTrove:Add(ui.RestockButton.Activated:Connect(function()
+			activeTab = "Seed"
+			render_shop()
+		end))
+	end
+
+	uiTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", function()
+		render_shop()
+	end))
+
 	uiTrove:Add(DataUtility.client.bind("Inventory.Seeds", function()
 		if activeTab == "Seed" then
 			render_shop()
@@ -503,25 +612,26 @@ local function bind_ui(ui)
 		end
 	end))
 
-	uiTrove:Add(ui.Main.AncestryChanged:Connect(function(_, parent)
+	uiTrove:Add(ui.Root.AncestryChanged:Connect(function(_, parent)
 		if parent then
 			return
 		end
 
 		if currentUi == ui then
 			currentUi = nil
+			currentSeedTemplateSource = nil
+			currentFruitTemplateSource = nil
 			cardTrove:Clean()
 			uiTrove:Destroy()
 			uiTrove = Trove.new()
 		end
 	end))
 
-	update_horseshoes()
 	render_shop()
 end
 
 local function try_bind_ui()
-	if currentUi and currentUi.Main.Parent then
+	if currentUi and currentUi.Root.Parent then
 		return
 	end
 
@@ -535,6 +645,12 @@ DataUtility.client.ensure_remotes()
 
 rootTrove:Add(playerGui.DescendantAdded:Connect(function()
 	try_bind_ui()
+end))
+
+rootTrove:Add(playerGui.DescendantRemoving:Connect(function(instance)
+	if currentUi and (instance == currentUi.Root or instance == currentUi.ScrollingFrame) then
+		task.defer(try_bind_ui)
+	end
 end))
 
 try_bind_ui()

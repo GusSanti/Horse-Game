@@ -17,11 +17,19 @@ local Click = require(script.Click)
 local Open = require(script.Open)
 local Close = require(script.Close)
 
-local SoundController = require(script.Parent.Parent.Utility.SoundUtility)
 local HudAnim = {}
 local bound = {}
 local state = {}
 local running_open = {} -- Armazena as tasks de abertura
+local exit_connections = {}
+local open_connections = {}
+
+local EXIT_BUTTON_NAME = "ExitBT"
+local BUTTON_SUFFIX = "BT"
+local MAIN_UI_NAME = "MainUI"
+local MAINFRAME_NAME = "MainframeFR"
+local HUD_ROOT_NAME = "HUDFR"
+local FRAMES_CONTAINER_NAME = "Frames"
 
 local DEFAULTS = {
 	hover_scale = 0.08,
@@ -109,30 +117,246 @@ local function should_run_hover_for(inst: GuiObject): boolean
 end
 
 local function safe_play(inst: Instance, key: string): ()
-	if not SFX or not SFX.play_for or not SFX.get_id_for then
+	if not SFX or not SFX.play_for then
 		return
 	end
-	
-	local ok, id = pcall(function()
-		return SFX.get_id_for(inst, key)
+
+	SFX.play_for(inst, key)
+end
+
+local function get_number_attribute(inst: Instance, attributeName: string, fallback: number): number
+	local value = inst:GetAttribute(attributeName)
+	if typeof(value) == "number" then
+		return value
+	end
+
+	local convertedValue = tonumber(value)
+	if convertedValue ~= nil then
+		return convertedValue
+	end
+
+	return fallback
+end
+
+local function cleanup_exit_button(button: GuiButton): ()
+	local connection = exit_connections[button]
+	if not connection then
+		return
+	end
+
+	connection:Disconnect()
+	exit_connections[button] = nil
+end
+
+local function cleanup_open_button(button: GuiButton): ()
+	local connection = open_connections[button]
+	if not connection then
+		return
+	end
+
+	connection:Disconnect()
+	open_connections[button] = nil
+end
+
+local function find_named_ancestor(instance: Instance?, targetName: string): Instance?
+	local current = instance
+
+	while current do
+		if current.Name == targetName then
+			return current
+		end
+
+		current = current.Parent
+	end
+
+	return nil
+end
+
+local function find_main_ui(instance: Instance?): Instance?
+	local ancestor = find_named_ancestor(instance, MAIN_UI_NAME)
+	if ancestor then
+		return ancestor
+	end
+
+	local directMainUi = playerGui:FindFirstChild(MAIN_UI_NAME)
+	if directMainUi then
+		return directMainUi
+	end
+
+	return playerGui:FindFirstChild(MAIN_UI_NAME, true)
+end
+
+local function find_mainframe(instance: Instance?): Instance?
+	local mainUi = find_main_ui(instance)
+	if not mainUi then
+		return nil
+	end
+
+	local directMainframe = mainUi:FindFirstChild(MAINFRAME_NAME)
+	if directMainframe then
+		return directMainframe
+	end
+
+	return mainUi:FindFirstChild(MAINFRAME_NAME, true)
+end
+
+local function find_frames_container(instance: Instance?): Instance?
+	local mainframe = find_mainframe(instance)
+	if not mainframe then
+		return nil
+	end
+
+	local directFrames = mainframe:FindFirstChild(FRAMES_CONTAINER_NAME)
+	if directFrames then
+		return directFrames
+	end
+
+	return mainframe:FindFirstChild(FRAMES_CONTAINER_NAME, true)
+end
+
+local function is_hud_button(button: GuiButton): boolean
+	local hudRoot = find_named_ancestor(button, HUD_ROOT_NAME)
+	if hudRoot then
+		return true
+	end
+
+	local mainUi = find_main_ui(button)
+	if not mainUi then
+		return false
+	end
+
+	local directHudRoot = mainUi:FindFirstChild(HUD_ROOT_NAME)
+	if directHudRoot and button:IsDescendantOf(directHudRoot) then
+		return true
+	end
+
+	local nestedHudRoot = mainUi:FindFirstChild(HUD_ROOT_NAME, true)
+	return nestedHudRoot ~= nil and button:IsDescendantOf(nestedHudRoot)
+end
+
+local function get_target_frame_name(button: GuiButton): string?
+	local buttonName = button.Name
+	if buttonName == EXIT_BUTTON_NAME then
+		return nil
+	end
+
+	if string.len(buttonName) <= string.len(BUTTON_SUFFIX) then
+		return nil
+	end
+
+	if string.sub(buttonName, -string.len(BUTTON_SUFFIX)) ~= BUTTON_SUFFIX then
+		return nil
+	end
+
+	return string.sub(buttonName, 1, #buttonName - string.len(BUTTON_SUFFIX))
+end
+
+local function find_open_target(button: GuiButton): GuiObject?
+	local frameName = get_target_frame_name(button)
+	if not frameName then
+		return nil
+	end
+
+	local framesContainer = find_frames_container(button)
+	if not framesContainer then
+		return nil
+	end
+
+	local target = framesContainer:FindFirstChild(frameName)
+	if target and target:IsA("GuiObject") then
+		return target
+	end
+
+	return nil
+end
+
+local function show_target_frame(target: GuiObject): ()
+	local framesContainer = target.Parent
+	if not framesContainer then
+		target.Visible = true
+		return
+	end
+
+	for _, child in ipairs(framesContainer:GetChildren()) do
+		if child ~= target and child:IsA("GuiObject") then
+			child.Visible = false
+		end
+	end
+
+	target.Visible = true
+end
+
+local function find_exit_target(button: GuiButton): GuiObject?
+	local mainframe = find_mainframe(button)
+	if not mainframe then
+		return nil
+	end
+
+	local framesContainer = find_frames_container(button)
+	local current = button.Parent
+	while current and current ~= mainframe do
+		if framesContainer and current.Parent == framesContainer and current:IsA("GuiObject") then
+			return current
+		end
+
+		if current.Parent == mainframe and current:IsA("GuiObject") then
+			return current
+		end
+
+		current = current.Parent
+	end
+
+	return nil
+end
+
+local function bind_open_button(button: GuiButton): ()
+	if open_connections[button] then
+		return
+	end
+
+	if not is_hud_button(button) or not get_target_frame_name(button) then
+		return
+	end
+
+	open_connections[button] = button.Activated:Connect(function()
+		local target = find_open_target(button)
+		if not target then
+			return
+		end
+
+		show_target_frame(target)
 	end)
 
-	if not ok or not id then
+	button.AncestryChanged:Connect(function(_, parent)
+		if parent then
+			return
+		end
+
+		cleanup_open_button(button)
+	end)
+end
+
+local function bind_exit_button(button: GuiButton): ()
+	if exit_connections[button] then
 		return
 	end
 
-	if typeof(id) == "number" and id == 0 then
-		return
-	end
+	exit_connections[button] = button.Activated:Connect(function()
+		local target = find_exit_target(button)
+		if not target then
+			return
+		end
 
-	if typeof(id) == "string" and (id == "rbxassetid://0" or id == "0") then
-		return
-	end
-	
-	print()
-	
-	if SoundController.IsSFXMuted() then return end 
-	SFX.play_for(inst, key)
+		target.Visible = false
+	end)
+
+	button.AncestryChanged:Connect(function(_, parent)
+		if parent then
+			return
+		end
+
+		cleanup_exit_button(button)
+	end)
 end
 
 ------------------//MAIN FUNCTIONS
@@ -158,6 +382,14 @@ function HudAnim.apply_defaults_to_buttons(root: Instance, extra: {}?): ()
 end
 
 function HudAnim.bind(inst: GuiObject): ()
+	if inst:IsA("GuiButton") then
+		if inst.Name == EXIT_BUTTON_NAME then
+			bind_exit_button(inst)
+		else
+			bind_open_button(inst)
+		end
+	end
+
 	if bound[inst] then
 		return
 	end
@@ -280,7 +512,7 @@ function HudAnim.bind(inst: GuiObject): ()
 
 		running_open[inst] = task.spawn(function()
 			Open.run(inst, state[inst], Utils, SFX)
-			task.wait(inst:GetAttribute("open_t"))
+			task.wait(get_number_attribute(inst, "open_t", DEFAULTS.open_t))
 			running_open[inst] = nil
 		end)
 	end
@@ -303,7 +535,7 @@ function HudAnim.bind(inst: GuiObject): ()
 
 			running_open[inst] = task.spawn(function()
 				Open.run(inst, state[inst], Utils, SFX)
-				task.wait(inst:GetAttribute("open_t"))
+				task.wait(get_number_attribute(inst, "open_t", DEFAULTS.open_t))
 				running_open[inst] = nil
 			end)
 		else
@@ -322,6 +554,13 @@ function HudAnim.bind(inst: GuiObject): ()
 end
 
 function HudAnim.unbind(inst: GuiObject): ()
+	if inst:IsA("GuiButton") then
+		cleanup_open_button(inst)
+		if inst.Name == EXIT_BUTTON_NAME then
+			cleanup_exit_button(inst)
+		end
+	end
+
 	local st = state[inst]
 	if not st then
 		return

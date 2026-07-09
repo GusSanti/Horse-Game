@@ -215,6 +215,19 @@ local function build_horizontal_seat_offset(seatOffset)
 	return CFrame.new(position.X, 0, position.Z)
 end
 
+local function get_configured_rider_weld_c0()
+	local configuredOffset = HorseMountConfig.RiderWeldOffset
+	if typeof(configuredOffset) == "CFrame" then
+		return configuredOffset
+	end
+
+	if typeof(configuredOffset) == "Vector3" then
+		return CFrame.new(configuredOffset.X, configuredOffset.Y, configuredOffset.Z)
+	end
+
+	return CFrame.identity
+end
+
 local function append_mount_alignment_problem(problems, condition, message)
 	if condition then
 		problems[#problems + 1] = message
@@ -792,7 +805,7 @@ local function convert_seat_to_rider_weld(mountState)
 		seatWeld:Destroy()
 	end
 
-	local riderOffset = mountSeat.CFrame:ToObjectSpace(rootPart.CFrame)
+	local riderOffset = get_configured_rider_weld_c0()
 	mountSeat.Disabled = true
 	mountSeat.CanTouch = false
 	mountState.RiderWeld = create_offset_weld(mountSeat, rootPart, riderOffset, CFrame.identity, mountSeat)
@@ -1004,11 +1017,7 @@ local function mount_player(player, payload)
 	end
 	local initialRootCFrame = CFrame.new(initialPosition) * spawnRotation
 	local seatRootCFrame = initialRootCFrame * build_horizontal_seat_offset(seatOffset)
-	local riderRootCFrame = CFrame.new(
-		seatRootCFrame.Position.X,
-		alignmentRootCFrame.Position.Y,
-		seatRootCFrame.Position.Z
-	) * spawnRotation
+	local riderRootCFrame = seatRootCFrame * get_configured_rider_weld_c0()
 
 	debug_mount_log(player, "MountSetup", {
 		AlignmentRoot = alignmentRootCFrame,

@@ -5,7 +5,8 @@ local function normalize_key(value): string?
 		return nil
 	end
 
-	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	local normalizedValue = string.lower(trimmedValue)
 	if normalizedValue == "" then
 		return nil
 	end

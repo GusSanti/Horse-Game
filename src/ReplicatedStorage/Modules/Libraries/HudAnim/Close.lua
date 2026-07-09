@@ -8,6 +8,20 @@ local Close = {}
 local closing_deb = {}
 
 ------------------//FUNCTIONS
+local function get_number_attribute(inst: Instance, attributeName: string, fallback: number): number
+	local value = inst:GetAttribute(attributeName)
+	if typeof(value) == "number" then
+		return value
+	end
+
+	local convertedValue = tonumber(value)
+	if convertedValue ~= nil then
+		return convertedValue
+	end
+
+	return fallback
+end
+
 local function get_blur_effect()
 	return Lighting:FindFirstChild("UIBlur") or Lighting:FindFirstChildWhichIsA("BlurEffect")
 end
@@ -64,9 +78,9 @@ function Close.run(inst, state, utils, sfx)
 	end
 
 	local kind = inst:GetAttribute("open_anim") or "pop"
-	local t = inst:GetAttribute("open_t") or 0.25
+	local t = get_number_attribute(inst, "open_t", 0.25)
 	local closeTime = t * 0.8
-	local offset = inst:GetAttribute("open_offset_px") or 200
+	local offset = get_number_attribute(inst, "open_offset_px", 200)
 	local hasBlur = inst:GetAttribute("blur") ~= nil
 
 	local easeStyle = Enum.EasingStyle.Back

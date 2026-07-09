@@ -234,6 +234,15 @@ local function get_progress_title(session): string
 	return ("%s  %d/%d"):format(get_stage_label(stageName), session.stageIndex, #STAGE_ORDER)
 end
 
+local function get_task_text(session): string
+	if session.phase == "Rinse" then
+		return "Rinsing your horse..."
+	end
+
+	local stageName = get_stage_name(session)
+	return ("Cleaning %s side..."):format(string.lower(get_stage_label(stageName)))
+end
+
 local function get_focus_position(session): Vector3
 	local pivot = get_horse_pivot(session.horseVisual)
 	return pivot.Position + (pivot.UpVector * (session.extents.Y * 0.2))
@@ -286,6 +295,18 @@ local progressContext = {
 
 local function update_progress_ui(session, shouldTween: boolean?): ()
 	SoapClientProgress.updateProgressUi(session, progressContext, shouldTween)
+
+	if type(session.updateTask) == "function" then
+		local progressGoal = math.max(get_progress_goal(session), 1)
+		local progressAlpha = math.clamp(session.stageProgress / progressGoal, 0, 1)
+		local progressPercent = math.floor((progressAlpha * 100) + 0.5)
+
+		session.updateTask({
+			text = get_task_text(session),
+			progress = progressAlpha,
+			timerText = ("%d%%"):format(progressPercent),
+		})
+	end
 end
 
 local function create_progress_gui(session): boolean
@@ -679,6 +700,10 @@ local function restore_humanoid(session): ()
 		return
 	end
 
+	if session.rootPart and session.rootPart.Parent then
+		session.rootPart.Anchored = session.savedRootAnchored == true
+	end
+
 	if session.humanoid.Parent then
 		session.humanoid.WalkSpeed = session.savedWalkSpeed
 		session.humanoid.JumpPower = session.savedJumpPower
@@ -889,6 +914,10 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 	restore_character_visibility(session)
 	restore_camera(session)
 
+	if type(session.hideTask) == "function" then
+		session.hideTask()
+	end
+
 	if type(session.finishInteraction) == "function" then
 		session.finishInteraction(shouldRefreshPrompts)
 	end
@@ -923,6 +952,14 @@ complete_session = function(session): ()
 
 	if session.instructionLabel then
 		session.instructionLabel.Text = COMPLETE_TEXT
+	end
+
+	if type(session.updateTask) == "function" then
+		session.updateTask({
+			text = "Finishing horse care...",
+			progress = 1,
+			timerText = "100%",
+		})
 	end
 
 	task.delay(FINISH_DELAY, function()
@@ -1054,16 +1091,30 @@ local function lock_humanoid(session): ()
 		return
 	end
 
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	local resolvedRootPart = nil
+	local savedRootAnchored = false
+	if rootPart and rootPart:IsA("BasePart") then
+		resolvedRootPart = rootPart
+		savedRootAnchored = rootPart.Anchored
+	end
+
 	session.humanoid = humanoid
 	session.savedWalkSpeed = humanoid.WalkSpeed
 	session.savedJumpPower = humanoid.JumpPower
 	session.savedJumpHeight = humanoid.JumpHeight
 	session.savedAutoRotate = humanoid.AutoRotate
+	session.rootPart = resolvedRootPart
+	session.savedRootAnchored = savedRootAnchored
 
 	humanoid.WalkSpeed = 0
 	humanoid.JumpPower = 0
 	humanoid.JumpHeight = 0
 	humanoid.AutoRotate = false
+
+	if session.rootPart then
+		session.rootPart.Anchored = true
+	end
 end
 
 local function create_effects_folder(session): ()
@@ -1125,6 +1176,9 @@ function SoapClient.start(context): boolean
 		focusPart = focusPart,
 		invokeServerUse = context.invokeServerUse,
 		finishInteraction = context.finishInteraction,
+		showTask = context.showTask,
+		updateTask = context.updateTask,
+		hideTask = context.hideTask,
 		mouse = localPlayer:GetMouse(),
 		phase = "Soap",
 		stageIndex = 1,
@@ -1153,6 +1207,14 @@ function SoapClient.start(context): boolean
 	if not create_progress_gui(session) then
 		finish_session(session, true)
 		return false
+	end
+
+	if type(session.showTask) == "function" then
+		session.showTask({
+			text = get_task_text(session),
+			progress = 0,
+			timerText = "0%",
+		})
 	end
 
 	session.connections[#session.connections + 1] = UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)

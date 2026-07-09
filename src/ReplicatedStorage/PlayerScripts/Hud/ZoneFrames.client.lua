@@ -11,15 +11,24 @@ local Trove = require(Libraries:WaitForChild("Trove"))
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
-local UI_NAME = "UI"
-local MAIN_NAME = "Main"
+local MAIN_UI_NAME = "MainUI"
+local MAINFRAME_NAME = "MainframeFR"
+local FRAMES_CONTAINER_NAME = "Frames"
 local ZONES_FOLDER_NAME = "Zones"
 local UPDATE_INTERVAL = 0.1
 local VERTICAL_PADDING = 6
 
+local ZONE_FRAME_ALIASES = {
+	shop = "SeedShop",
+	shopzone = "SeedShop",
+	seedshop = "SeedShop",
+	seedshopzone = "SeedShop",
+	seedzone = "SeedShop",
+}
+
 type ZoneState = {
 	Name: string,
-	Display: Instance?,
+	Display: GuiObject?,
 	Parts: { BasePart },
 	IsInside: boolean,
 }
@@ -38,39 +47,18 @@ local function log_bind_reason(reason: string)
 	lastBindReason = reason
 end
 
-
-local function is_display_instance(instance: Instance): boolean
-	if instance:IsA("LayerCollector") then
-		return true
+local function normalize_key(value): string?
+	if type(value) ~= "string" then
+		return nil
 	end
 
-	return instance:IsA("Frame") or instance:IsA("CanvasGroup") or instance:IsA("ScrollingFrame")
-end
-
-local function get_display_visible(instance: Instance): boolean?
-	if instance:IsA("LayerCollector") then
-		return instance.Enabled
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	local normalizedValue = string.lower(trimmedValue)
+	if normalizedValue == "" then
+		return nil
 	end
 
-	if instance:IsA("GuiObject") then
-		return instance.Visible
-	end
-
-	return nil
-end
-
-local function set_display_visible(instance: Instance, isVisible: boolean)
-	local currentValue = get_display_visible(instance)
-	if currentValue == nil or currentValue == isVisible then
-		return
-	end
-
-	if instance:IsA("LayerCollector") then
-		instance.Enabled = isVisible
-	elseif instance:IsA("GuiObject") then
-		instance.Visible = isVisible
-	end
-
+	return normalizedValue
 end
 
 local function get_character_root(): BasePart?
@@ -97,18 +85,12 @@ local function is_point_inside_zone(point: Vector3, part: BasePart): boolean
 end
 
 local function find_ui_root(): Instance?
-	local directUi = playerGui:FindFirstChild(UI_NAME)
+	local directUi = playerGui:FindFirstChild(MAIN_UI_NAME)
 	if directUi then
 		return directUi
 	end
 
-	for _, descendant in ipairs(playerGui:GetDescendants()) do
-		if descendant.Name == UI_NAME then
-			return descendant
-		end
-	end
-
-	return nil
+	return playerGui:FindFirstChild(MAIN_UI_NAME, true)
 end
 
 local function find_main_container(uiRoot: Instance?): Instance?
@@ -116,12 +98,25 @@ local function find_main_container(uiRoot: Instance?): Instance?
 		return nil
 	end
 
-	local directMain = uiRoot:FindFirstChild(MAIN_NAME)
+	local directMain = uiRoot:FindFirstChild(MAINFRAME_NAME)
 	if directMain then
 		return directMain
 	end
 
-	return uiRoot:FindFirstChild(MAIN_NAME, true)
+	return uiRoot:FindFirstChild(MAINFRAME_NAME, true)
+end
+
+local function find_frames_container(mainContainer: Instance?): Instance?
+	if not mainContainer then
+		return nil
+	end
+
+	local directFrames = mainContainer:FindFirstChild(FRAMES_CONTAINER_NAME)
+	if directFrames then
+		return directFrames
+	end
+
+	return mainContainer:FindFirstChild(FRAMES_CONTAINER_NAME, true)
 end
 
 local function find_zones_folder(): Instance?
@@ -142,65 +137,50 @@ local function is_zone_related_instance(instance: Instance): boolean
 	return zonesFolder ~= nil and instance:IsDescendantOf(zonesFolder)
 end
 
-local function gather_display_candidates(root: Instance, zoneName: string): { Instance }
-	local exactMatches = {}
-
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if is_display_instance(descendant) and descendant.Name == zoneName then
-			exactMatches[#exactMatches + 1] = descendant
-		end
-	end
-
-	return exactMatches
+local function get_display_visible(instance: GuiObject): boolean
+	return instance.Visible
 end
 
-local function pick_best_display(candidates: { Instance }): Instance?
-	local bestCandidate = nil
-	local bestScore = -math.huge
-
-	for _, candidate in ipairs(candidates) do
-		local score = 0
-
-		if candidate:IsA("LayerCollector") then
-			score += 100
-		end
-
-		if candidate:IsA("Frame") or candidate:IsA("CanvasGroup") or candidate:IsA("ScrollingFrame") then
-			score += 50
-		end
-
-		if candidate.Name == "Main" then
-			score -= 1000
-		end
-
-		local descendantCount = #candidate:GetDescendants()
-		score += math.min(descendantCount, 100)
-
-		if score > bestScore then
-			bestScore = score
-			bestCandidate = candidate
-		end
+local function set_display_visible(instance: GuiObject?, isVisible: boolean)
+	if not instance or instance.Visible == isVisible then
+		return
 	end
 
-	return bestCandidate
+	instance.Visible = isVisible
 end
 
-local function find_zone_display(uiRoot: Instance, mainContainer: Instance?, zoneName: string): Instance?
-	local preferredScopes = {}
-
-	if mainContainer and mainContainer ~= uiRoot then
-		preferredScopes[#preferredScopes + 1] = mainContainer
+local function resolve_frame_name(zoneName: string): string?
+	local normalizedName = normalize_key(zoneName)
+	if not normalizedName then
+		return zoneName
 	end
 
-	preferredScopes[#preferredScopes + 1] = uiRoot
+	local alias = ZONE_FRAME_ALIASES[normalizedName]
+	if alias then
+		return alias
+	end
 
-	for _, scope in ipairs(preferredScopes) do
-		local candidates = gather_display_candidates(scope, zoneName)
-		local bestCandidate = pick_best_display(candidates)
+	return zoneName
+end
 
-		if bestCandidate then
-			return bestCandidate
-		end
+local function find_zone_display(framesContainer: Instance?, zoneName: string): GuiObject?
+	if not framesContainer then
+		return nil
+	end
+
+	local frameName = resolve_frame_name(zoneName)
+	if not frameName then
+		return nil
+	end
+
+	local directDisplay = framesContainer:FindFirstChild(frameName)
+	if directDisplay and directDisplay:IsA("GuiObject") then
+		return directDisplay :: GuiObject
+	end
+
+	local nestedDisplay = framesContainer:FindFirstChild(frameName, true)
+	if nestedDisplay and nestedDisplay:IsA("GuiObject") then
+		return nestedDisplay :: GuiObject
 	end
 
 	return nil
@@ -223,25 +203,22 @@ local function collect_zone_parts(container: Instance): { BasePart }
 	return parts
 end
 
-local function build_zone_states(uiRoot: Instance, mainContainer: Instance?, zonesFolder: Instance): { ZoneState }
+local function build_zone_states(framesContainer: Instance?, zonesFolder: Instance): { ZoneState }
 	local zoneStates = {}
 
 	for _, child in ipairs(zonesFolder:GetChildren()) do
 		local parts = collect_zone_parts(child)
-
 		if #parts == 0 then
 			continue
 		end
 
-		local zoneName = child.Name
-		local display = find_zone_display(uiRoot, mainContainer, zoneName)
-
+		local display = find_zone_display(framesContainer, child.Name)
 		if display then
 			set_display_visible(display, false)
 		end
 
 		zoneStates[#zoneStates + 1] = {
-			Name = zoneName,
+			Name = child.Name,
 			Display = display,
 			Parts = parts,
 			IsInside = false,
@@ -257,6 +234,20 @@ local function hide_all_displays(zoneStates: { ZoneState })
 			set_display_visible(zoneState.Display, false)
 		end
 	end
+end
+
+local function show_target_frame(framesContainer: Instance?, target: GuiObject?)
+	if not framesContainer or not target then
+		return
+	end
+
+	for _, child in ipairs(framesContainer:GetChildren()) do
+		if child:IsA("GuiObject") and child ~= target then
+			child.Visible = false
+		end
+	end
+
+	target.Visible = true
 end
 
 local function destroy_interface_binding()
@@ -282,14 +273,14 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 	boundUiRoot = uiRoot
 	boundZonesFolder = zonesFolder
 
-	local mainContainer = find_main_container(uiRoot)
+	local framesContainer = find_frames_container(find_main_container(uiRoot))
 	local zoneStates: { ZoneState } = {}
 	local accumulator = 0
 
 	local function refresh_zones()
-		mainContainer = find_main_container(uiRoot)
+		framesContainer = find_frames_container(find_main_container(uiRoot))
 		hide_all_displays(zoneStates)
-		zoneStates = build_zone_states(uiRoot, mainContainer, zonesFolder)
+		zoneStates = build_zone_states(framesContainer, zonesFolder)
 	end
 
 	local function update_zones()
@@ -304,6 +295,8 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 			return
 		end
 
+		local enteredDisplay = nil
+
 		for _, zoneState in ipairs(zoneStates) do
 			local isInside = false
 
@@ -314,13 +307,18 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 				end
 			end
 
-			if isInside ~= zoneState.IsInside then
-				zoneState.IsInside = isInside
+			local wasInside = zoneState.IsInside
+			zoneState.IsInside = isInside
 
-				if zoneState.Display then
-					set_display_visible(zoneState.Display, isInside)
-				end
+			if isInside and not wasInside and zoneState.Display and not enteredDisplay then
+				enteredDisplay = zoneState.Display
+			elseif not isInside and wasInside and zoneState.Display then
+				set_display_visible(zoneState.Display, false)
 			end
+		end
+
+		if enteredDisplay then
+			show_target_frame(framesContainer, enteredDisplay)
 		end
 	end
 
@@ -336,6 +334,7 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 		if parent then
 			return
 		end
+
 		destroy_interface_binding()
 	end))
 
@@ -343,6 +342,7 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 		if parent then
 			return
 		end
+
 		destroy_interface_binding()
 	end))
 
@@ -351,20 +351,20 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 	end))
 
 	trove:Add(uiRoot.DescendantAdded:Connect(function(instance)
-		if is_display_instance(instance) or instance.Name == MAIN_NAME then
+		if instance:IsA("GuiObject") or instance.Name == MAINFRAME_NAME or instance.Name == FRAMES_CONTAINER_NAME then
 			refresh_zones()
 			update_zones()
 		end
 	end))
 
 	trove:Add(uiRoot.DescendantRemoving:Connect(function(instance)
-		if is_display_instance(instance) or instance.Name == MAIN_NAME then
+		if instance:IsA("GuiObject") or instance.Name == MAINFRAME_NAME or instance.Name == FRAMES_CONTAINER_NAME then
 			refresh_zones()
 			update_zones()
 		end
 	end))
 
-	trove:Add(zonesFolder.ChildAdded:Connect(function(instance)
+	trove:Add(zonesFolder.ChildAdded:Connect(function()
 		refresh_zones()
 		update_zones()
 	end))
@@ -406,7 +406,7 @@ end
 local function try_bind_interface()
 	local uiRoot = find_ui_root()
 	if not uiRoot then
-		log_bind_reason("UI root ainda nao encontrada no PlayerGui")
+		log_bind_reason("MainUI ainda nao encontrada no PlayerGui")
 		return
 	end
 
@@ -425,7 +425,7 @@ for _, _ in ipairs(playerGui:GetDescendants()) do
 end
 
 rootTrove:Add(playerGui.DescendantAdded:Connect(function(instance)
-	if instance.Name == UI_NAME or instance.Name == MAIN_NAME or instance:IsA("LayerCollector") then
+	if instance.Name == MAIN_UI_NAME or instance.Name == MAINFRAME_NAME or instance.Name == FRAMES_CONTAINER_NAME then
 		try_bind_interface()
 	end
 end))

@@ -11,16 +11,28 @@ local Utility = Modules:WaitForChild("Utility")
 local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
+local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
-local UI_ROOT_NAME = "UI"
-local MAIN_NAME = "Main"
-local HOTBAR_NAME = "Hotbar"
-local TEMPLATE_NAME = "Template"
+local MAIN_UI_NAME = "MainUI"
+local MAINFRAME_NAME = "MainframeFR"
+local HUD_ROOT_NAME = "HUDFR"
+local HOTBAR_NAME = "BottomFrameFR"
+local TEMPLATE_NAME = "HotkeyBT"
+local MONEY_TAB_NAME = "MoneyTabBG"
+local MONEY_BG_NAME = "MoneyBG"
+local MONEY_CONTAINER_NAME = "Money"
 local CLICK_LAYER_NAME = "HotbarButton"
+local MONEY_LABEL_NAMES = { "MoneyTX" }
+local MONEY_SHADOW_LABEL_NAMES = { "MoneyShadowTX" }
+local AMOUNT_LABEL_NAMES = { "AmountTX", "Quant" }
+local AMOUNT_SHADOW_LABEL_NAMES = { "AmountShadowTX" }
+local NAME_LABEL_NAMES = { "NameItem", "NameTX", "ItemName", "ItemNameTX" }
+local BIND_INDICATOR_NAMES = { "Bind", "BindTX", "KeyBind", "KeyTX", "HotkeyTX" }
+local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
 
 local VIEWPORT_FIELD_OF_VIEW = 30
 local VIEWPORT_RADIUS_SCALE = 0.42
@@ -47,8 +59,11 @@ for index, categoryId in ipairs(ToolItemCatalog.CategoryOrder or {}) do
 end
 
 local uiRoot = nil
+local hudRoot = nil
 local hotbarFrame = nil
 local hotbarTemplate = nil
+local moneyLabel = nil
+local moneyShadowLabel = nil
 local slotInstances = {}
 local slotTroves = {}
 local orderedItemKeys = {}
@@ -71,12 +86,83 @@ local function normalize_key(value): string?
 		return nil
 	end
 
-	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	local normalizedValue = string.lower(trimmedValue)
 	if normalizedValue == "" then
 		return nil
 	end
 
 	return normalizedValue
+end
+
+local function get_string_attribute(instance: Instance, attributeName: string): string?
+	local value = instance:GetAttribute(attributeName)
+	if type(value) == "string" then
+		return value
+	end
+
+	return nil
+end
+
+local function matches_alias(instance: Instance, aliases): boolean
+	local normalizedName = normalize_key(instance.Name)
+	if not normalizedName then
+		return false
+	end
+
+	for _, alias in ipairs(aliases or {}) do
+		if normalize_key(alias) == normalizedName then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function find_named_instance(root: Instance?, aliases, className: string?, recursive: boolean?): Instance?
+	if not root then
+		return nil
+	end
+
+	for _, child in ipairs(root:GetChildren()) do
+		if matches_alias(child, aliases) and (not className or child:IsA(className)) then
+			return child
+		end
+	end
+
+	if recursive == false then
+		return nil
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if matches_alias(descendant, aliases) and (not className or descendant:IsA(className)) then
+			return descendant
+		end
+	end
+
+	return nil
+end
+
+local function find_text_label(root: Instance?, aliases, recursive: boolean?): TextLabel?
+	local instance = find_named_instance(root, aliases, "TextLabel", recursive)
+	if instance then
+		return instance :: TextLabel
+	end
+
+	return nil
+end
+
+local function find_gui_object(root: Instance?, aliases, recursive: boolean?): GuiObject?
+	local instance = find_named_instance(root, aliases, "GuiObject", recursive)
+	if instance then
+		return instance :: GuiObject
+	end
+
+	return nil
+end
+
+local function format_amount(value): string
+	return tostring(math.max(0, math.floor(tonumber(value) or 0)))
 end
 
 local function disable_default_backpack()
@@ -96,13 +182,13 @@ local function disable_default_backpack()
 end
 
 local function find_ui_root(): Instance?
-	local directUi = playerGui:FindFirstChild(UI_ROOT_NAME)
+	local directUi = playerGui:FindFirstChild(MAIN_UI_NAME)
 	if directUi then
 		return directUi
 	end
 
 	for _, descendant in ipairs(playerGui:GetDescendants()) do
-		if descendant.Name == UI_ROOT_NAME then
+		if descendant.Name == MAIN_UI_NAME then
 			return descendant
 		end
 	end
@@ -115,43 +201,84 @@ local function find_main_container(targetUiRoot: Instance?): Instance?
 		return nil
 	end
 
-	local directMain = targetUiRoot:FindFirstChild(MAIN_NAME)
+	local directMain = targetUiRoot:FindFirstChild(MAINFRAME_NAME)
 	if directMain then
 		return directMain
 	end
 
-	return targetUiRoot:FindFirstChild(MAIN_NAME, true)
+	return targetUiRoot:FindFirstChild(MAINFRAME_NAME, true)
 end
 
-local function find_hotbar_container(mainContainer: Instance?): Instance?
+local function find_hud_container(mainContainer: Instance?): Instance?
 	if not mainContainer then
 		return nil
 	end
 
-	local directHotbar = mainContainer:FindFirstChild(HOTBAR_NAME)
+	local directHud = mainContainer:FindFirstChild(HUD_ROOT_NAME)
+	if directHud then
+		return directHud
+	end
+
+	return mainContainer:FindFirstChild(HUD_ROOT_NAME, true)
+end
+
+local function find_hotbar_container(targetHudRoot: Instance?): Instance?
+	if not targetHudRoot then
+		return nil
+	end
+
+	local directHotbar = targetHudRoot:FindFirstChild(HOTBAR_NAME)
 	if directHotbar then
 		return directHotbar
 	end
 
-	return mainContainer:FindFirstChild(HOTBAR_NAME, true)
+	return targetHudRoot:FindFirstChild(HOTBAR_NAME, true)
 end
 
 local function find_hotbar_template(targetHotbar: Instance?): GuiObject?
-	if not targetHotbar then
-		return nil
+	return find_gui_object(targetHotbar, { TEMPLATE_NAME }, true)
+end
+
+local function find_money_labels(targetHudRoot: Instance?): (TextLabel?, TextLabel?)
+	if not targetHudRoot then
+		return nil, nil
 	end
 
-	local directTemplate = targetHotbar:FindFirstChild(TEMPLATE_NAME)
-	if directTemplate and directTemplate:IsA("GuiObject") then
-		return directTemplate
+	local moneyTab = targetHudRoot:FindFirstChild(MONEY_TAB_NAME)
+	if not moneyTab then
+		moneyTab = targetHudRoot:FindFirstChild(MONEY_TAB_NAME, true)
 	end
 
-	local foundTemplate = targetHotbar:FindFirstChild(TEMPLATE_NAME, true)
-	if foundTemplate and foundTemplate:IsA("GuiObject") then
-		return foundTemplate
+	local moneyRoot = moneyTab
+	if moneyRoot then
+		local moneyBackground = moneyRoot:FindFirstChild(MONEY_BG_NAME) or moneyRoot:FindFirstChild(MONEY_BG_NAME, true)
+		if moneyBackground then
+			moneyRoot = moneyBackground
+		end
+
+		local moneyContainer = moneyRoot:FindFirstChild(MONEY_CONTAINER_NAME) or moneyRoot:FindFirstChild(MONEY_CONTAINER_NAME, true)
+		if moneyContainer then
+			moneyRoot = moneyContainer
+		end
 	end
 
-	return nil
+	local searchRoot = moneyRoot or targetHudRoot
+	local primaryLabel = find_text_label(searchRoot, MONEY_LABEL_NAMES, true)
+	local shadowLabel = find_text_label(searchRoot, MONEY_SHADOW_LABEL_NAMES, true)
+
+	return primaryLabel, shadowLabel
+end
+
+local function update_money_display()
+	local text = format_amount(DataUtility.client.get("Currencies.Horseshoes"))
+
+	if moneyLabel and moneyLabel.Parent then
+		moneyLabel.Text = text
+	end
+
+	if moneyShadowLabel and moneyShadowLabel.Parent then
+		moneyShadowLabel.Text = text
+	end
 end
 
 local function set_gui_visible(instance: Instance?, isVisible: boolean)
@@ -193,6 +320,20 @@ local function set_stroke_selected(stroke: UIStroke, isSelected: boolean)
 	stroke.Color = isSelected and Color3.fromRGB(255, 230, 154) or Color3.fromRGB(255, 255, 255)
 	stroke.Thickness = isSelected and 2.5 or 1
 	stroke.Transparency = isSelected and 0 or 0.15
+end
+
+local function hide_bind_indicators(slot: GuiObject)
+	for _, descendant in ipairs(slot:GetDescendants()) do
+		if matches_alias(descendant, BIND_INDICATOR_NAMES) then
+			if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+				descendant.Text = ""
+			end
+
+			if descendant:IsA("GuiObject") then
+				descendant.Visible = false
+			end
+		end
+	end
 end
 
 local function strip_scripts(root: Instance)
@@ -270,13 +411,13 @@ local function get_farming_render_source(itemDefinition): Instance?
 end
 
 local function get_tool_key(tool: Tool): string
-	local farmingItemId = normalize_key(tool:GetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE))
+	local farmingItemId = normalize_key(get_string_attribute(tool, FarmingUtility.FARMING_ITEM_ATTRIBUTE))
 	if farmingItemId then
 		return farmingItemId
 	end
 
-	local explicitItemId = normalize_key(tool:GetAttribute("ToolItemId"))
-		or normalize_key(tool:GetAttribute("ItemId"))
+	local explicitItemId = normalize_key(get_string_attribute(tool, "ToolItemId"))
+		or normalize_key(get_string_attribute(tool, "ItemId"))
 	if explicitItemId then
 		return explicitItemId
 	end
@@ -620,46 +761,41 @@ local function toggle_group(itemKey: string)
 	equip_group(itemKey)
 end
 
-local function get_slot_bind_text(slotIndex: number): string
-	if slotIndex >= 1 and slotIndex <= 9 then
-		return tostring(slotIndex)
-	end
-
-	return ""
-end
-
 local function update_slot(slot: GuiObject, group, slotIndex: number)
 	slot.Name = group.Key
 	slot.LayoutOrder = slotIndex
 	set_gui_visible(slot, true)
 
-	local nameLabel = slot:FindFirstChild("NameItem", true)
+	local nameLabel = find_text_label(slot, NAME_LABEL_NAMES, true)
 	if nameLabel and nameLabel:IsA("TextLabel") then
 		nameLabel.Text = group.DisplayName
 	end
 
-	local bindLabel = slot:FindFirstChild("Bind", true)
-	if bindLabel and bindLabel:IsA("TextLabel") then
-		bindLabel.Text = get_slot_bind_text(slotIndex)
+	hide_bind_indicators(slot)
+
+	local amountLabel = find_text_label(slot, AMOUNT_LABEL_NAMES, true)
+	local amountText = tostring(#group.Tools)
+	if amountLabel then
+		amountLabel.Text = amountText
 	end
 
-	local quantityLabel = slot:FindFirstChild("Quant", true)
-	if quantityLabel and quantityLabel:IsA("TextLabel") then
-		quantityLabel.Text = ("%dx"):format(#group.Tools)
+	local amountShadowLabel = find_text_label(slot, AMOUNT_SHADOW_LABEL_NAMES, true)
+	if amountShadowLabel then
+		amountShadowLabel.Text = amountText
 	end
 
-	local imageItem = slot:FindFirstChild("ImageItem", true)
+	local imageItem = find_named_instance(slot, { "ImageItem" }, nil, true)
 	local viewportFrame = nil
 	if imageItem then
-		viewportFrame = imageItem:FindFirstChildWhichIsA("ViewportFrame", true)
+		viewportFrame = find_named_instance(imageItem, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
 	end
 
 	if not viewportFrame then
-		viewportFrame = slot:FindFirstChildWhichIsA("ViewportFrame", true)
+		viewportFrame = find_named_instance(slot, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
 	end
 
 	if viewportFrame and slot:GetAttribute("HotbarPreviewReady") ~= true then
-		render_viewport(viewportFrame, group.Key, group.RenderSource, group.DisplayName)
+		render_viewport(viewportFrame :: ViewportFrame, group.Key, group.RenderSource, group.DisplayName)
 		slot:SetAttribute("HotbarPreviewReady", true)
 	end
 
@@ -670,6 +806,7 @@ local function create_slot(group)
 	local slot = hotbarTemplate:Clone()
 	local slotTrove = Trove.new()
 
+	slot:SetAttribute("HotbarPreviewReady", nil)
 	slot.Parent = hotbarFrame
 	slotInstances[group.Key] = slot
 	slotTroves[group.Key] = slotTrove
@@ -784,16 +921,23 @@ end
 local function try_bind_hotbar()
 	local nextUiRoot = find_ui_root()
 	local nextMain = find_main_container(nextUiRoot)
-	local nextHotbar = find_hotbar_container(nextMain)
+	local nextHudRoot = find_hud_container(nextMain)
+	local nextHotbar = find_hotbar_container(nextHudRoot)
 	local nextTemplate = find_hotbar_template(nextHotbar)
-	local hotbarChanged = hotbarFrame ~= nextHotbar or hotbarTemplate ~= nextTemplate
+	local nextMoneyLabel, nextMoneyShadowLabel = find_money_labels(nextHudRoot)
+	local hotbarChanged = hudRoot ~= nextHudRoot or hotbarFrame ~= nextHotbar or hotbarTemplate ~= nextTemplate
 
-	if not nextUiRoot or not nextHotbar or not nextTemplate then
+	uiRoot = nextUiRoot
+	hudRoot = nextHudRoot
+	moneyLabel = nextMoneyLabel
+	moneyShadowLabel = nextMoneyShadowLabel
+	update_money_display()
+
+	if not nextUiRoot or not nextHudRoot or not nextHotbar or not nextTemplate then
 		if hotbarFrame then
 			clear_slots()
 		end
 
-		uiRoot = nextUiRoot
 		hotbarFrame = nextHotbar
 		hotbarTemplate = nextTemplate
 		return
@@ -803,7 +947,6 @@ local function try_bind_hotbar()
 		clear_slots()
 	end
 
-	uiRoot = nextUiRoot
 	hotbarFrame = nextHotbar
 	hotbarTemplate = nextTemplate
 
@@ -815,25 +958,37 @@ local function bind_ui_watchers()
 	uiTrove:Clean()
 
 	uiTrove:Connect(playerGui.DescendantAdded, function(instance)
-		if instance.Name == UI_ROOT_NAME
-			or instance.Name == MAIN_NAME
+		if instance.Name == MAIN_UI_NAME
+			or instance.Name == MAINFRAME_NAME
+			or instance.Name == HUD_ROOT_NAME
 			or instance.Name == HOTBAR_NAME
 			or instance.Name == TEMPLATE_NAME
+			or instance.Name == MONEY_TAB_NAME
+			or instance.Name == MONEY_BG_NAME
+			or instance.Name == MONEY_CONTAINER_NAME
+			or instance.Name == "MoneyTX"
+			or instance.Name == "MoneyShadowTX"
 		then
 			try_bind_hotbar()
 		end
 	end)
 
 	uiTrove:Connect(playerGui.DescendantRemoving, function(instance)
-		if instance == uiRoot or instance == hotbarFrame or instance == hotbarTemplate then
+		if instance == uiRoot or instance == hudRoot or instance == hotbarFrame or instance == hotbarTemplate then
 			task.defer(try_bind_hotbar)
 			return
 		end
 
-		if instance.Name == UI_ROOT_NAME
-			or instance.Name == MAIN_NAME
+		if instance.Name == MAIN_UI_NAME
+			or instance.Name == MAINFRAME_NAME
+			or instance.Name == HUD_ROOT_NAME
 			or instance.Name == HOTBAR_NAME
 			or instance.Name == TEMPLATE_NAME
+			or instance.Name == MONEY_TAB_NAME
+			or instance.Name == MONEY_BG_NAME
+			or instance.Name == MONEY_CONTAINER_NAME
+			or instance.Name == "MoneyTX"
+			or instance.Name == "MoneyShadowTX"
 		then
 			task.defer(try_bind_hotbar)
 		end
@@ -873,6 +1028,7 @@ disable_default_backpack()
 bind_backpack()
 bind_ui_watchers()
 try_bind_hotbar()
+rootTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", update_money_display))
 
 if localPlayer.Character then
 	bind_character(localPlayer.Character)

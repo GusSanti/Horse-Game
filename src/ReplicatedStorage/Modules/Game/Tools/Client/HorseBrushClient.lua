@@ -1,5 +1,6 @@
 ------------------//SERVICES
 local Players: Players = game:GetService("Players")
+local RunService: RunService = game:GetService("RunService")
 
 ------------------//CONSTANTS
 local localPlayer: Player = Players.LocalPlayer
@@ -122,12 +123,33 @@ local function restore_character(session): ()
 		session.character:PivotTo(session.savedCharacterPivot)
 	end
 
+	if session.rootPart and session.rootPart.Parent then
+		session.rootPart.Anchored = session.savedRootAnchored == true
+	end
+
 	if session.humanoid and session.humanoid.Parent then
 		session.humanoid.WalkSpeed = session.savedWalkSpeed
 		session.humanoid.JumpPower = session.savedJumpPower
 		session.humanoid.JumpHeight = session.savedJumpHeight
 		session.humanoid.AutoRotate = session.savedAutoRotate
 	end
+end
+
+local function update_task_ui(session): ()
+	if type(session.updateTask) ~= "function" then
+		return
+	end
+
+	local elapsedTime = os.clock() - session.startedAt
+	local actionDuration = math.max(session.actionDuration, 0.05)
+	local progressAlpha = math.clamp(elapsedTime / actionDuration, 0, 1)
+	local remainingTime = math.max(0, actionDuration - elapsedTime)
+
+	session.updateTask({
+		text = session.taskText,
+		progress = progressAlpha,
+		timerText = ("%.1fs"):format(remainingTime),
+	})
 end
 
 local function finish_session(session, shouldRefreshPrompts: boolean): ()
@@ -142,6 +164,10 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 	stop_track(session.playerTrack)
 	stop_track(session.horseTrack)
 	restore_character(session)
+
+	if type(session.hideTask) == "function" then
+		session.hideTask()
+	end
 
 	if session.animation then
 		session.animation:Destroy()
@@ -168,6 +194,14 @@ local function complete_session(session): ()
 
 	session.finishing = true
 
+	if type(session.updateTask) == "function" then
+		session.updateTask({
+			text = session.taskText,
+			progress = 1,
+			timerText = "0.0s",
+		})
+	end
+
 	if session.prompt and session.prompt.Parent then
 		session.prompt.Enabled = false
 	end
@@ -186,6 +220,7 @@ local function start_session(context): boolean
 
 	local character = localPlayer.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 	if not character or not humanoid then
 		return false
 	end
@@ -193,6 +228,13 @@ local function start_session(context): boolean
 	local playerAnimator = ensure_animator(humanoid)
 	if not playerAnimator then
 		return false
+	end
+
+	local resolvedRootPart = nil
+	local savedRootAnchored = false
+	if rootPart and rootPart:IsA("BasePart") then
+		resolvedRootPart = rootPart
+		savedRootAnchored = rootPart.Anchored
 	end
 
 	local animation = Instance.new("Animation")
@@ -206,15 +248,23 @@ local function start_session(context): boolean
 		prompt = context.prompt,
 		invokeServerUse = context.invokeServerUse,
 		finishInteraction = context.finishInteraction,
+		showTask = context.showTask,
+		updateTask = context.updateTask,
+		hideTask = context.hideTask,
+		taskText = context.taskText or "Brushing your horse...",
 		animation = animation,
 		connections = {},
 		finishing = false,
 		closed = false,
+		startedAt = os.clock(),
+		actionDuration = math.max(context.actionDuration or 1.5, 0.05),
+		rootPart = resolvedRootPart,
 		savedCharacterPivot = character:GetPivot(),
 		savedWalkSpeed = humanoid.WalkSpeed,
 		savedJumpPower = humanoid.JumpPower,
 		savedJumpHeight = humanoid.JumpHeight,
 		savedAutoRotate = humanoid.AutoRotate,
+		savedRootAnchored = savedRootAnchored,
 	}
 
 	session.playerTrack = load_animation_track(playerAnimator, animation)
@@ -233,8 +283,22 @@ local function start_session(context): boolean
 
 	character:PivotTo(get_instance_pivot(context.horseVisual))
 
+	if session.rootPart then
+		session.rootPart.Anchored = true
+	end
+
 	play_track(session.playerTrack)
 	play_track(session.horseTrack)
+
+	if type(session.showTask) == "function" then
+		session.showTask({
+			text = session.taskText,
+			progress = 0,
+			timerText = ("%.1fs"):format(session.actionDuration),
+		})
+	end
+
+	update_task_ui(session)
 
 	session.connections[#session.connections + 1] = localPlayer.CharacterRemoving:Connect(function()
 		cancel_session(session, false)
@@ -252,10 +316,26 @@ local function start_session(context): boolean
 		end
 	end)
 
+	session.connections[#session.connections + 1] = RunService.RenderStepped:Connect(function()
+		if activeSession ~= session or session.closed then
+			return
+		end
+
+		update_task_ui(session)
+
+		if (os.clock() - session.startedAt) >= session.actionDuration then
+			complete_session(session)
+		end
+	end)
+
 	return true
 end
 
 ------------------//MAIN FUNCTIONS
+function HorseBrushClient.start(context): boolean
+	return start_session(context)
+end
+
 function HorseBrushClient.bindPrompt(context): boolean
 	local prompt = context.prompt
 	if not prompt then

@@ -6,10 +6,21 @@ local HudAnim = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local function setupInterface(gui)
-	if gui:IsA("ScreenGui") then
-		HudAnim.apply_defaults_to_buttons(gui)
-		HudAnim.bind_all(gui)
+local function setupInterface(instance)
+	if instance:IsA("ScreenGui") then
+		HudAnim.apply_defaults_to_buttons(instance)
+		HudAnim.bind_all(instance)
+		return
+	end
+
+	if instance:IsA("GuiButton") then
+		instance:SetAttribute("UIAnim", true)
+		HudAnim.bind(instance)
+		return
+	end
+
+	if instance:IsA("GuiObject") then
+		HudAnim.bind(instance)
 	end
 end
 

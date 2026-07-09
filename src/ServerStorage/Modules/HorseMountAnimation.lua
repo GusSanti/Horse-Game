@@ -149,6 +149,10 @@ local function is_mount_moving(mountState)
 	return mountState.Sprinting == true or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
 end
 
+local function is_mount_running(mountState)
+	return mountState and mountState.Sprinting == true or false
+end
+
 local function set_horse_animation_mode(animationState, mode)
 	if not animationState or animationState.HorseMode == mode then
 		return
@@ -162,15 +166,25 @@ local function set_horse_animation_mode(animationState, mode)
 		end
 		adjust_track_weight(animationState.HorseWalkTrack, 1, blendTime)
 		adjust_track_weight(animationState.HorseIdleTrack, 0, blendTime)
+		adjust_track_weight(animationState.HorseRunTrack, 0, blendTime)
+	elseif mode == "Run" then
+		if animationState.HorseRunTrack and not animationState.HorseRunTrack.IsPlaying then
+			play_track(animationState.HorseRunTrack, blendTime, 1, 1)
+		end
+		adjust_track_weight(animationState.HorseRunTrack, 1, blendTime)
+		adjust_track_weight(animationState.HorseIdleTrack, 0, blendTime)
+		adjust_track_weight(animationState.HorseWalkTrack, 0, blendTime)
 	elseif mode == "Idle" then
 		if animationState.HorseIdleTrack and not animationState.HorseIdleTrack.IsPlaying then
 			play_track(animationState.HorseIdleTrack, blendTime, 1, 1)
 		end
 		adjust_track_weight(animationState.HorseIdleTrack, 1, blendTime)
 		adjust_track_weight(animationState.HorseWalkTrack, 0, blendTime)
+		adjust_track_weight(animationState.HorseRunTrack, 0, blendTime)
 	else
 		stop_track(animationState.HorseIdleTrack)
 		stop_track(animationState.HorseWalkTrack)
+		stop_track(animationState.HorseRunTrack)
 	end
 
 	animationState.HorseMode = mode
@@ -197,10 +211,17 @@ function HorseMountAnimation.createMountAnimationState(humanoid, horseVisual)
 		Enum.AnimationPriority.Action,
 		true
 	)
+	animationState.HorseRunTrack, animationState.HorseRunAnimation = load_animation_track(
+		horseAnimator,
+		HorseMountConfig.HorseRunAnimationId,
+		Enum.AnimationPriority.Action,
+		true
+	)
 
 	for _, animation in ipairs({
 		animationState.HorseIdleAnimation,
 		animationState.HorseWalkAnimation,
+		animationState.HorseRunAnimation,
 	}) do
 		if animation then
 			animationState.Resources[#animationState.Resources + 1] = animation
@@ -221,6 +242,7 @@ function HorseMountAnimation.playHorseIdleAnimation(animationState)
 
 	adjust_track_weight(animationState.HorseIdleTrack, 1, HorseMountConfig.HorseAnimationBlendTime or 0.24)
 	adjust_track_weight(animationState.HorseWalkTrack, 0, 0)
+	adjust_track_weight(animationState.HorseRunTrack, 0, 0)
 	animationState.HorseMode = "Idle"
 end
 
@@ -232,6 +254,7 @@ function HorseMountAnimation.destroyMountAnimationState(animationState)
 	animationState.Destroyed = true
 	stop_track(animationState.HorseIdleTrack)
 	stop_track(animationState.HorseWalkTrack)
+	stop_track(animationState.HorseRunTrack)
 	destroy_instances(animationState.Resources)
 end
 
@@ -255,7 +278,12 @@ function HorseMountAnimation.updateMountAnimationState(mountState)
 		recentlyMoving = (now - animationState.LastMovingAt) <= stopHoldTime
 	end
 
-	set_horse_animation_mode(animationState, recentlyMoving and "Walk" or "Idle")
+	local mode = "Idle"
+	if recentlyMoving then
+		mode = is_mount_running(mountState) and "Run" or "Walk"
+	end
+
+	set_horse_animation_mode(animationState, mode)
 end
 
 function HorseMountAnimation.startMountAnimations(mountState)

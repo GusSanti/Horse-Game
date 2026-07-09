@@ -525,8 +525,11 @@ local function update_local_rider_animation()
 	local inputMagnitude = math.sqrt((moveX * moveX) + (moveZ * moveZ))
 	local moving = (localPrediction.CurrentSpeed or 0) > 0.25
 		or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
+	local sprinting = mobileSprintPressed
+		or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 
-	set_local_rider_mode(moving and "Ride" or "Idle")
+	set_local_rider_mode(moving and sprinting and "Ride" or "Idle")
 end
 
 local function get_base_part_lowest_y(basePart)

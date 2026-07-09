@@ -26,12 +26,22 @@ local function normalize_key(value): string?
 		return nil
 	end
 
-	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	local normalizedValue = string.lower(trimmedValue)
 	if normalizedValue == "" then
 		return nil
 	end
 
 	return normalizedValue
+end
+
+local function get_string_attribute(instance: Instance, attributeName: string): string?
+	local value = instance:GetAttribute(attributeName)
+	if type(value) == "string" then
+		return value
+	end
+
+	return nil
 end
 
 local function ensure_path(root, path)
@@ -232,7 +242,7 @@ local function migrate_legacy_inventory(player: Player)
 end
 
 local function is_matching_tool(tool: Tool, itemDefinition): boolean
-	if normalize_key(tool:GetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE)) == itemDefinition.NormalizedItemId then
+	if normalize_key(get_string_attribute(tool, FarmingUtility.FARMING_ITEM_ATTRIBUTE)) == itemDefinition.NormalizedItemId then
 		return true
 	end
 
@@ -251,11 +261,11 @@ local function is_matching_tool(tool: Tool, itemDefinition): boolean
 		end
 	end
 
-	if normalize_key(tool:GetAttribute(LEGACY_ITEM_ATTRIBUTE)) == itemDefinition.NormalizedItemId then
+	if normalize_key(get_string_attribute(tool, LEGACY_ITEM_ATTRIBUTE)) == itemDefinition.NormalizedItemId then
 		return true
 	end
 
-	if normalize_key(tool:GetAttribute(LEGACY_TOOL_ITEM_ATTRIBUTE)) == itemDefinition.NormalizedItemId then
+	if normalize_key(get_string_attribute(tool, LEGACY_TOOL_ITEM_ATTRIBUTE)) == itemDefinition.NormalizedItemId then
 		return true
 	end
 

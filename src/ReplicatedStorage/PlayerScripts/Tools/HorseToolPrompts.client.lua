@@ -1,15 +1,21 @@
 ------------------//SERVICES
 local Players: Players = game:GetService("Players")
 local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService: RunService = game:GetService("RunService")
 
 ------------------//CONSTANTS
 local localPlayer: Player = Players.LocalPlayer
 local modules: Folder = ReplicatedStorage:WaitForChild("Modules")
+local clientModules: Folder = modules:WaitForChild("Client")
 local dictionary: Folder = modules:WaitForChild("Dictionary")
 local gameModules: Folder = modules:WaitForChild("Game")
+local gameData: Folder = modules:WaitForChild("GameData")
+local hudModules: Folder = clientModules:WaitForChild("Hud")
 local toolModules: Folder = gameModules:WaitForChild("Tools")
 local clientFolder: Folder = toolModules:WaitForChild("Client")
 
+local HorseInteractionUi = require(hudModules:WaitForChild("HorseInteractionUi"))
+local ToolItemCatalog = require(gameData:WaitForChild("ToolItemCatalog"))
 local toolDictionary = require(dictionary:WaitForChild("ToolDictionary"))
 local toolRegistry = require(toolModules:WaitForChild("Registry"))
 
@@ -33,6 +39,7 @@ local cachedHandlers: {[string]: any} = {}
 local refreshQueued: boolean = false
 local activePromptToken: number = 0
 local clientInteractionActive: boolean = false
+local activeTimedSession = nil
 local queue_refresh
 
 ------------------//FUNCTIONS
@@ -152,6 +159,7 @@ end
 
 local function finish_client_interaction(shouldRefreshPrompts: boolean): ()
 	clientInteractionActive = false
+	HorseInteractionUi.HideDialogue()
 
 	if shouldRefreshPrompts ~= false then
 		queue_refresh()
@@ -174,6 +182,265 @@ local function invoke_server_use(tool: Tool?, itemId: string, horseId: string): 
 	))
 
 	return success, reason
+end
+
+local function build_item_preview(definition, tool: Tool?, itemId: string): any
+	local itemDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
+	if itemDefinition then
+		return itemDefinition
+	end
+
+	itemDefinition = ToolItemCatalog.GetItemDefinition(itemId)
+	if itemDefinition then
+		return itemDefinition
+	end
+
+	return {
+		ItemId = itemId,
+		DisplayName = tool and tool.Name or itemId,
+		PromptActionText = (definition.prompt and definition.prompt.actionText) or "Use",
+		Description = "This item helps with horse care.",
+	}
+end
+
+local function get_interaction_duration(definition, itemDefinition): number
+	if type(definition.interactionDuration) == "number" and definition.interactionDuration > 0 then
+		return definition.interactionDuration
+	end
+
+	local itemId = definition.id
+	local toolCategory = nil
+
+	if type(itemDefinition) == "table" then
+		itemId = itemDefinition.ItemId or itemId
+		toolCategory = itemDefinition.ToolCategory
+	end
+
+	if itemId == "soap" then
+		return 0
+	end
+
+	if itemId == "horse_brush" then
+		return 1.5
+	end
+
+	if toolCategory == "Food" or toolCategory == "Water" then
+		return 1.2
+	end
+
+	if toolCategory == "Medicine" then
+		return 1.35
+	end
+
+	return math.max((definition.prompt and definition.prompt.holdDuration) or 0.2, 1)
+end
+
+local function anchor_character_root(session): ()
+	local character = localPlayer.Character
+	if not character then
+		return
+	end
+
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	if not rootPart or not rootPart:IsA("BasePart") then
+		return
+	end
+
+	session.rootPart = rootPart
+	session.savedRootAnchored = rootPart.Anchored
+	rootPart.Anchored = true
+end
+
+local function restore_character_root(session): ()
+	local rootPart = session.rootPart
+	if rootPart and rootPart.Parent then
+		rootPart.Anchored = session.savedRootAnchored == true
+	end
+end
+
+local function finish_timed_session(session, shouldRefreshPrompts: boolean): ()
+	if activeTimedSession ~= session or session.closed then
+		return
+	end
+
+	session.closed = true
+	activeTimedSession = nil
+
+	disconnect_all(session.connections)
+	restore_character_root(session)
+	HorseInteractionUi.HideTask()
+	finish_client_interaction(shouldRefreshPrompts)
+end
+
+local function cancel_timed_session(session, shouldRefreshPrompts: boolean): ()
+	if session.finishing then
+		return
+	end
+
+	finish_timed_session(session, shouldRefreshPrompts)
+end
+
+local function complete_timed_session(session): ()
+	if session.finishing or session.closed then
+		return
+	end
+
+	session.finishing = true
+
+	HorseInteractionUi.UpdateTask({
+		text = session.taskText,
+		progress = 1,
+		timerText = "0.0s",
+	})
+
+	pcall(function()
+		session.invokeServerUse()
+	end)
+
+	task.delay(0.1, function()
+		finish_timed_session(session, true)
+	end)
+end
+
+local function start_timed_interaction(context): boolean
+	if activeTimedSession then
+		return false
+	end
+
+	local actionDuration = math.max(context.actionDuration or 1, 0.05)
+	local session = {
+		tool = context.tool,
+		horseVisual = context.horseVisual,
+		invokeServerUse = context.invokeServerUse,
+		taskText = context.taskText,
+		actionDuration = actionDuration,
+		startedAt = os.clock(),
+		finishing = false,
+		closed = false,
+		connections = {},
+	}
+
+	activeTimedSession = session
+
+	anchor_character_root(session)
+
+	HorseInteractionUi.ShowTask({
+		text = session.taskText,
+		progress = 0,
+		timerText = ("%.1fs"):format(actionDuration),
+	})
+
+	session.connections[#session.connections + 1] = localPlayer.CharacterRemoving:Connect(function()
+		cancel_timed_session(session, false)
+	end)
+
+	session.connections[#session.connections + 1] = context.tool.AncestryChanged:Connect(function()
+		if session.finishing then
+			return
+		end
+
+		if not context.tool:IsDescendantOf(localPlayer.Character or game) then
+			cancel_timed_session(session, false)
+		end
+	end)
+
+	session.connections[#session.connections + 1] = context.horseVisual.AncestryChanged:Connect(function()
+		if session.finishing then
+			return
+		end
+
+		if not context.horseVisual:IsDescendantOf(workspace) then
+			cancel_timed_session(session, true)
+		end
+	end)
+
+	session.connections[#session.connections + 1] = RunService.RenderStepped:Connect(function()
+		if activeTimedSession ~= session or session.closed then
+			return
+		end
+
+		local elapsedTime = os.clock() - session.startedAt
+		local progressAlpha = math.clamp(elapsedTime / actionDuration, 0, 1)
+		local remainingTime = math.max(0, actionDuration - elapsedTime)
+
+		HorseInteractionUi.UpdateTask({
+			text = session.taskText,
+			progress = progressAlpha,
+			timerText = ("%.1fs"):format(remainingTime),
+		})
+
+		if elapsedTime >= actionDuration then
+			complete_timed_session(session)
+		end
+	end)
+
+	return true
+end
+
+local function start_tool_interaction(context): ()
+	local clientHandler = context.clientHandler
+
+	if clientHandler and type(clientHandler.start) == "function" then
+		local started = false
+		local startSuccess, startResult = pcall(function()
+			return clientHandler.start({
+				player = localPlayer,
+				tool = context.tool,
+				itemId = context.itemId,
+				horseId = context.horseId,
+				horseVisual = context.horseVisual,
+				promptParent = context.promptParent,
+				beginInteraction = begin_client_interaction,
+				invokeServerUse = context.invokeServerUse,
+				finishInteraction = finish_client_interaction,
+				actionDuration = context.actionDuration,
+				taskText = context.taskText,
+				showTask = HorseInteractionUi.ShowTask,
+				updateTask = HorseInteractionUi.UpdateTask,
+				hideTask = HorseInteractionUi.HideTask,
+			})
+		end)
+
+		if startSuccess then
+			started = startResult == true
+		end
+
+		if not started then
+			finish_client_interaction(true)
+		end
+
+		return
+	end
+
+	if not start_timed_interaction(context) then
+		finish_client_interaction(true)
+	end
+end
+
+local function begin_dialog_interaction(context): ()
+	begin_client_interaction()
+	destroy_active_prompts()
+
+	local dialogShown = HorseInteractionUi.ShowDialogue({
+		title = HorseInteractionUi.BuildDialogueTitle(context.itemDefinition),
+		details = HorseInteractionUi.BuildDialogueText(context.itemDefinition),
+		onAccept = function()
+			local currentTool = get_equipped_tool()
+			if currentTool ~= context.tool then
+				finish_client_interaction(true)
+				return
+			end
+
+			start_tool_interaction(context)
+		end,
+		onDeny = function()
+			finish_client_interaction(true)
+		end,
+	})
+
+	if not dialogShown then
+		start_tool_interaction(context)
+	end
 end
 
 function queue_refresh(): ()
@@ -209,90 +476,43 @@ function queue_refresh(): ()
 				prompt.Name = ("%sPrompt"):format(itemId)
 				prompt.ActionText = promptConfig.actionText or "Use"
 				prompt.ObjectText = promptConfig.objectText or "Horse"
-				prompt.HoldDuration = promptConfig.holdDuration or 0
+				prompt.HoldDuration = 0
 				prompt.MaxActivationDistance = promptConfig.maxActivationDistance or 10
 				prompt.RequiresLineOfSight = promptConfig.requiresLineOfSight == true
 				prompt.Style = Enum.ProximityPromptStyle.Default
 				prompt.Parent = promptParent
 
 				local clientHandler = get_client_handler(definition)
-				local promptManagedByClientHandler = false
+				local itemDefinition = build_item_preview(definition, equippedTool, itemId)
+				local actionDuration = get_interaction_duration(definition, itemDefinition)
+				local taskText = HorseInteractionUi.BuildActionLabel(itemDefinition, promptConfig.actionText)
 
-				if clientHandler and type(clientHandler.bindPrompt) == "function" then
-					local bindSuccess, bindResult = pcall(function()
-						return clientHandler.bindPrompt({
-							player = localPlayer,
-							tool = equippedTool,
-							itemId = itemId,
-							horseId = horseId,
-							horseVisual = horseVisual,
-							prompt = prompt,
-							promptParent = promptParent,
-							beginInteraction = begin_client_interaction,
-							invokeServerUse = function()
-								return invoke_server_use(equippedTool, itemId, horseId)
-							end,
-							finishInteraction = finish_client_interaction,
-							queueRefresh = queue_refresh,
-						})
-					end)
+				prompt.Triggered:Connect(function()
+					if promptToken ~= activePromptToken then
+						return
+					end
 
-					promptManagedByClientHandler = bindSuccess and bindResult == true
-				end
+					local currentTool = get_equipped_tool()
+					if currentTool ~= equippedTool then
+						return
+					end
 
-				if not promptManagedByClientHandler then
-					prompt.Triggered:Connect(function()
-						if promptToken ~= activePromptToken then
-							return
-						end
-
-						local currentTool = get_equipped_tool()
-						if currentTool ~= equippedTool then
-							return
-						end
-
-						if clientHandler and type(clientHandler.start) == "function" then
-							begin_client_interaction()
-							destroy_active_prompts()
-
-							local started = false
-							local startSuccess, startResult = pcall(function()
-								return clientHandler.start({
-									player = localPlayer,
-									tool = equippedTool,
-									itemId = itemId,
-									horseId = horseId,
-									horseVisual = horseVisual,
-									promptParent = promptParent,
-									beginInteraction = begin_client_interaction,
-									invokeServerUse = function()
-										return invoke_server_use(equippedTool, itemId, horseId)
-									end,
-									finishInteraction = finish_client_interaction,
-								})
-							end)
-
-							if startSuccess then
-								started = startResult == true
-							end
-
-							if not started then
-								finish_client_interaction(true)
-							end
-
-							return
-						end
-
-						local success = invoke_server_use(currentTool, itemId, horseId)
-						if success then
-							if definition.consumeOnUse == false then
-								queue_refresh()
-							else
-								destroy_active_prompts()
-							end
-						end
-					end)
-				end
+					begin_dialog_interaction({
+						clientHandler = clientHandler,
+						definition = definition,
+						itemDefinition = itemDefinition,
+						tool = equippedTool,
+						itemId = itemId,
+						horseId = horseId,
+						horseVisual = horseVisual,
+						promptParent = promptParent,
+						actionDuration = actionDuration,
+						taskText = taskText,
+						invokeServerUse = function()
+							return invoke_server_use(equippedTool, itemId, horseId)
+						end,
+					})
+				end)
 
 				activePrompts[#activePrompts + 1] = prompt
 			end
@@ -353,6 +573,9 @@ end)
 localPlayer.CharacterAdded:Connect(bind_character)
 localPlayer.CharacterRemoving:Connect(function()
 	disconnect_all(characterConnections)
+	clientInteractionActive = false
+	HorseInteractionUi.HideDialogue()
+	HorseInteractionUi.HideTask()
 	queue_refresh()
 end)
 

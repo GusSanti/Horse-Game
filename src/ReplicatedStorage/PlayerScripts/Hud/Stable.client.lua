@@ -20,8 +20,8 @@ local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 
 local localPlayer: Player = Players.LocalPlayer
-local playerGui: PlayerGui = localPlayer:WaitForChild("PlayerGui")
-local plotValue: ObjectValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName)
+local playerGui = localPlayer:WaitForChild("PlayerGui") :: PlayerGui
+local plotValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName) :: ObjectValue
 
 local rootTrove = Trove.new()
 local uiTrove = Trove.new()
@@ -32,18 +32,28 @@ local VISUAL_HORSE_ATTRIBUTE: string = ToolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE: string = ToolDictionary.HorseIdAttribute
 local REFRESH_INTERVAL: number = HorseStatusBillboardConfig.RefreshInterval or 0.25
 
-local STABLE_ROOT_NAMES = { "Stable" }
-local SCROLLING_FRAME_NAMES = { "ScrollingFrame", "ScrollFrame", "Scroll" }
-local TEMPLATE_NAMES = { "Template" }
-local STATS_NAMES = { "Stats" }
-local STAT_TEMPLATE_NAMES = { "StatTemplate" }
-local HORSE_NAME_NAMES = { "NameHorse", "HorseName", "Name" }
-local HORSE_IMAGE_NAMES = { "HorseImage", "Image", "HorseViewport" }
-local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
-local STAT_NAME_NAMES = { "NameStat", "StatName", "Name" }
-local STAT_INFO_NAMES = { "Info", "Value", "Text" }
-local BAR_NAMES = { "Bar" }
-local INSIDE_BAR_NAMES = { "InsideBar", "Fill", "Progress" }
+local MAIN_UI_NAME = "MainUI"
+local MAINFRAME_NAME = "MainframeFR"
+local FRAMES_CONTAINER_NAME = "Frames"
+local STABLE_FRAME_NAME = "Stable"
+local STABLE_CONTENT_NAME = "StableFR"
+local LIST_CONTAINER_NAMES = { "ListScrollingFrame" }
+local TEMPLATE_NAMES = { "HorseTemplate" }
+local STATS_NAMES = { "StatsFR" }
+local STAT_TEMPLATE_NAMES = { "StatFR" }
+local HORSE_NAME_NAMES = { "HorseNameTX" }
+local HORSE_DETAILS_NAMES = { "DetailsTX" }
+local HORSE_IMAGE_NAMES = { "HorseImage" }
+local VIEWPORT_FRAME_NAMES = { "ViewportFrame" }
+local SELECTED_FRAME_NAMES = { "SelectedFR" }
+local SELECTED_TEXT_NAMES = { "SelectedTX" }
+local STAT_NAME_NAMES = { "StatsTX" }
+local STAT_INFO_NAMES = { "StatAmountTX" }
+local BAR_NAMES = { "BarBG" }
+local INSIDE_BAR_NAMES = { "InsideBarBG" }
+local BAR_FILL_SIZE_NAMES = {
+	InsideBarBG = true,
+}
 
 local STATUS_DISPLAY_NAMES = {
 	Trust = "Trust",
@@ -58,8 +68,8 @@ local STATUS_DISPLAY_NAMES = {
 
 type StableUi = {
 	Root: Instance,
-	ScrollingFrame: ScrollingFrame,
-	Template: Frame,
+	ListContainer: GuiObject,
+	Template: GuiObject,
 	TemplateSource: GuiObject?,
 }
 
@@ -80,6 +90,9 @@ type HorseCard = {
 	HorseId: string,
 	Card: GuiObject,
 	NameLabel: TextLabel?,
+	DetailsLabel: TextLabel?,
+	SelectedFrame: GuiObject?,
+	SelectedLabel: TextLabel?,
 	ViewportFrame: ViewportFrame?,
 	StatRows: {[string]: CardStatRow},
 }
@@ -94,7 +107,8 @@ local function normalize_key(value: string?): string?
 		return nil
 	end
 
-	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	local normalizedValue = string.lower(trimmedValue)
 	if normalizedValue == "" then
 		return nil
 	end
@@ -175,6 +189,65 @@ local function find_viewport_frame(root: Instance?): ViewportFrame?
 	end
 
 	return nil
+end
+
+local function find_main_ui_root(): Instance?
+	local mainUi = playerGui:FindFirstChild(MAIN_UI_NAME)
+	if not mainUi then
+		mainUi = playerGui:FindFirstChild(MAIN_UI_NAME, true)
+	end
+
+	if not mainUi then
+		return nil
+	end
+
+	return mainUi
+end
+
+local function find_mainframe_root(): Instance?
+	local mainUi = find_main_ui_root()
+	if not mainUi then
+		return nil
+	end
+
+	local mainframe = mainUi:FindFirstChild(MAINFRAME_NAME)
+	if not mainframe then
+		mainframe = mainUi:FindFirstChild(MAINFRAME_NAME, true)
+	end
+
+	if not mainframe then
+		return nil
+	end
+
+	return mainframe
+end
+
+local function find_main_frames_container(): Instance?
+	local mainframe = find_mainframe_root()
+	if not mainframe then
+		return nil
+	end
+
+	local framesContainer = mainframe:FindFirstChild(FRAMES_CONTAINER_NAME)
+	if framesContainer then
+		return framesContainer
+	end
+
+	return mainframe:FindFirstChild(FRAMES_CONTAINER_NAME, true)
+end
+
+local function find_stable_root_instance(): Instance?
+	local framesContainer = find_main_frames_container()
+	if not framesContainer then
+		return nil
+	end
+
+	local stableRoot = framesContainer:FindFirstChild(STABLE_FRAME_NAME)
+	if stableRoot then
+		return stableRoot
+	end
+
+	return framesContainer:FindFirstChild(STABLE_FRAME_NAME, true)
 end
 
 local function strip_local_scripts(root: Instance): ()
@@ -358,6 +431,21 @@ local function get_owned_horse(horseId: string): any?
 	return ownedHorses[horseId]
 end
 
+local function get_equipped_horse_id(): string
+	local horses = DataUtility.client.get("Horses")
+	local equippedHorseId = type(horses) == "table" and horses.EquippedHorseId or nil
+
+	if type(equippedHorseId) ~= "string" then
+		return ""
+	end
+
+	return equippedHorseId
+end
+
+local function is_horse_equipped(horseId: string): boolean
+	return horseId ~= "" and get_equipped_horse_id() == horseId
+end
+
 local function get_horse_display_name(horseId: string, horse): string
 	if type(horse) == "table" then
 		local nickname = horse.Nickname
@@ -374,6 +462,38 @@ local function get_horse_display_name(horseId: string, horse): string
 		if definition and type(definition.DisplayName) == "string" and definition.DisplayName ~= "" then
 			return definition.DisplayName
 		end
+	end
+
+	return horseId
+end
+
+local function build_horse_details_text(horseId: string, horse): string
+	local definition = nil
+	if type(horse) == "table" then
+		definition = HorseCatalog.GetDefinition(horse.CatalogId)
+	end
+
+	if not definition then
+		definition = HorseCatalog.GetDefinition("Default")
+	end
+
+	local rarity = definition and definition.Rarity or nil
+	local tier = definition and definition.Tier or nil
+
+	if type(rarity) == "string" and rarity ~= "" and type(tier) == "string" and tier ~= "" then
+		return ("%s | %s"):format(rarity, tier)
+	end
+
+	if type(rarity) == "string" and rarity ~= "" then
+		return rarity
+	end
+
+	if type(tier) == "string" and tier ~= "" then
+		return tier
+	end
+
+	if type(horse) == "table" and type(horse.CatalogId) == "string" and horse.CatalogId ~= "" then
+		return horse.CatalogId
 	end
 
 	return horseId
@@ -446,7 +566,7 @@ local function clear_viewport(viewportFrame: ViewportFrame): ()
 		child:Destroy()
 	end
 
-	viewportFrame.CurrentCamera = nil
+	viewportFrame.CurrentCamera = nil :: any
 end
 
 local function prepare_viewport_model(root: Instance): ()
@@ -531,25 +651,38 @@ local function populate_viewport(viewportFrame: ViewportFrame, horseId: string, 
 
 	local focusPoint = boxCFrame.Position + Vector3.new(0, boxSize.Y * 0.08, 0)
 	local radius = math.max(boxSize.X, boxSize.Y, boxSize.Z) * 0.6
-	local distance = radius / math.tan(math.rad(camera.FieldOfView * 0.5)) + radius
-	local offset = Vector3.new(distance * 0.45, distance * 0.2, -distance)
+	local distance = (radius / math.tan(math.rad(camera.FieldOfView * 0.5)) + radius) * 0.82
+	local offset = Vector3.new(distance * 0.42, distance * 0.18, -distance)
 
 	camera.CFrame = CFrame.lookAt(focusPoint + offset, focusPoint)
 end
 
 local function update_canvas_size(): ()
-    if not currentUi then
-        return
-    end
+	local ui = currentUi
+	if not ui then
+		return
+	end
 
-    local layout = currentUi.ScrollingFrame:FindFirstChildOfClass("UIListLayout")
-    if not layout then
-        layout = currentUi.ScrollingFrame:FindFirstChildWhichIsA("UIListLayout", true)
-    end
+	if not ui.ListContainer:IsA("ScrollingFrame") then
+		return
+	end
 
-    if layout then
-        currentUi.ScrollingFrame.CanvasSize = UDim2.fromOffset(layout.AbsoluteContentSize.X, 0)
-    end
+	local scrollingFrame = ui.ListContainer :: ScrollingFrame
+	local layout = scrollingFrame:FindFirstChildOfClass("UIListLayout") :: UIListLayout?
+	if not layout then
+		layout = scrollingFrame:FindFirstChildWhichIsA("UIListLayout", true) :: UIListLayout?
+	end
+
+	if layout then
+		scrollingFrame.CanvasSize = UDim2.fromOffset(
+			layout.AbsoluteContentSize.X,
+			layout.AbsoluteContentSize.Y
+		)
+	end
+end
+
+local function format_percent(alpha: number): string
+	return ("%d%%"):format(math.max(0, round_number(math.clamp(alpha, 0, 1) * 100)))
 end
 
 local function build_placeholder_descriptors(): {{Key: string, Label: string, Info: string, Alpha: number}}
@@ -557,19 +690,19 @@ local function build_placeholder_descriptors(): {{Key: string, Label: string, In
 		{
 			Key = "Trust",
 			Label = get_status_display_name("Trust"),
-			Info = "--",
+			Info = format_percent(0),
 			Alpha = 0,
 		},
 		{
 			Key = "Level",
 			Label = get_status_display_name("Level"),
-			Info = "--",
+			Info = format_percent(0),
 			Alpha = 0,
 		},
 		{
 			Key = "Care",
 			Label = get_status_display_name("Care"),
-			Info = "--",
+			Info = format_percent(0),
 			Alpha = 0,
 		},
 	}
@@ -578,7 +711,7 @@ local function build_placeholder_descriptors(): {{Key: string, Label: string, In
 		descriptors[#descriptors + 1] = {
 			Key = statusName,
 			Label = get_status_display_name(statusName),
-			Info = "--",
+			Info = format_percent(0),
 			Alpha = 0,
 		}
 	end
@@ -597,35 +730,16 @@ local function build_status_descriptors(horse): {{Key: string, Label: string, In
 	local needs = type(horse) == "table" and horse.Needs or {}
 	local maxValues = type(needs) == "table" and needs.Max or {}
 
-	local trustInfo = "--"
 	local trustAlpha = 0
-	local levelInfo = "--"
 	local levelAlpha = 0
-	local careInfo = "--"
 
 	if displayData then
-		trustInfo = ("%s (%d/%d)"):format(
-			displayData.TrustState,
-			round_number(displayData.Friendship),
-			math.max(1, round_number(displayData.MaxFriendship))
-		)
 		trustAlpha = clamp_ratio(
 			tonumber(displayData.Friendship) or 0,
 			math.max(1, tonumber(displayData.MaxFriendship) or 100)
 		)
 
-		if (displayData.XPToNextLevel or 0) > 0 then
-			levelInfo = ("Nivel %d | XP %d/%d"):format(
-				round_number(displayData.Level),
-				round_number(displayData.XP),
-				round_number(displayData.XPToNextLevel)
-			)
-		else
-			levelInfo = ("Nivel %d | XP MAX"):format(round_number(displayData.Level))
-		end
-
 		levelAlpha = math.clamp(tonumber(displayData.ProgressAlpha) or 0, 0, 1)
-		careInfo = ("%s | Streak %d"):format(displayData.CareQuality, round_number(displayData.CareStreak))
 	end
 
 	local careTotalRatio = 0
@@ -642,21 +756,21 @@ local function build_status_descriptors(horse): {{Key: string, Label: string, In
 	descriptors[#descriptors + 1] = {
 		Key = "Trust",
 		Label = get_status_display_name("Trust"),
-		Info = trustInfo,
+		Info = format_percent(trustAlpha),
 		Alpha = trustAlpha,
 	}
 
 	descriptors[#descriptors + 1] = {
 		Key = "Level",
 		Label = get_status_display_name("Level"),
-		Info = levelInfo,
+		Info = format_percent(levelAlpha),
 		Alpha = levelAlpha,
 	}
 
 	descriptors[#descriptors + 1] = {
 		Key = "Care",
 		Label = get_status_display_name("Care"),
-		Info = careInfo,
+		Info = format_percent(careAlpha),
 		Alpha = careAlpha,
 	}
 
@@ -669,11 +783,7 @@ local function build_status_descriptors(horse): {{Key: string, Label: string, In
 		descriptors[#descriptors + 1] = {
 			Key = statusName,
 			Label = get_status_display_name(statusName),
-			Info = ("%d/%d (%d%%)"):format(
-				round_number(currentValue),
-				round_number(maxValue),
-				percent
-			),
+			Info = ("%d%%"):format(percent),
 			Alpha = ratio,
 		}
 	end
@@ -689,6 +799,18 @@ local function update_card_stats(cardEntry: HorseCard): ()
 
 	if cardEntry.NameLabel then
 		cardEntry.NameLabel.Text = get_horse_display_name(cardEntry.HorseId, horse)
+	end
+
+	if cardEntry.DetailsLabel then
+		cardEntry.DetailsLabel.Text = build_horse_details_text(cardEntry.HorseId, horse)
+	end
+
+	if cardEntry.SelectedFrame then
+		cardEntry.SelectedFrame.Visible = is_horse_equipped(cardEntry.HorseId)
+	end
+
+	if cardEntry.SelectedLabel and cardEntry.SelectedLabel.Text == "" then
+		cardEntry.SelectedLabel.Text = "Selected"
 	end
 
 	for _, descriptor in ipairs(build_status_descriptors(horse)) do
@@ -717,24 +839,37 @@ local function update_card_stats(cardEntry: HorseCard): ()
 	end
 end
 
-local function configure_card(card: GuiObject, stableHorseEntry: StableHorseEntry): HorseCard
+local function configure_card(card: GuiObject, templateSource: GuiObject, stableHorseEntry: StableHorseEntry): HorseCard
 	local horse = get_owned_horse(stableHorseEntry.HorseId)
 	local nameLabel = find_text_label(card, HORSE_NAME_NAMES)
+	local detailsLabel = find_text_label(card, HORSE_DETAILS_NAMES)
 	local horseImage = find_gui_object(card, HORSE_IMAGE_NAMES, true)
+	local selectedFrame = find_gui_object(card, SELECTED_FRAME_NAMES, true)
+	local selectedLabel = find_text_label(selectedFrame, SELECTED_TEXT_NAMES)
 	local viewportFrame = find_viewport_frame(horseImage or card)
 	local statsContainer = find_gui_object(card, STATS_NAMES, true)
-	local statTemplate = find_frame(statsContainer, STAT_TEMPLATE_NAMES, true)
+	local statTemplate = find_gui_object(statsContainer, STAT_TEMPLATE_NAMES, true)
 	local statRows: {[string]: CardStatRow} = {}
 
 	card.Name = stableHorseEntry.HorseId
 	card.Visible = true
 	card.LayoutOrder = stableHorseEntry.SlotIndex
-	restore_original_gui_metrics(currentUi.TemplateSource :: GuiObject, card, {
-		InsideBar = true,
-	})
+	restore_original_gui_metrics(templateSource, card, BAR_FILL_SIZE_NAMES)
 
 	if nameLabel then
 		nameLabel.Text = get_horse_display_name(stableHorseEntry.HorseId, horse)
+	end
+
+	if detailsLabel then
+		detailsLabel.Text = build_horse_details_text(stableHorseEntry.HorseId, horse)
+	end
+
+	if selectedFrame then
+		selectedFrame.Visible = is_horse_equipped(stableHorseEntry.HorseId)
+	end
+
+	if selectedLabel and selectedLabel.Text == "" then
+		selectedLabel.Text = "Selected"
 	end
 
 	if viewportFrame then
@@ -745,14 +880,12 @@ local function configure_card(card: GuiObject, stableHorseEntry: StableHorseEntr
 		statTemplate.Visible = false
 
 		for index, descriptor in ipairs(build_status_descriptors(horse)) do
-			local row = statTemplate:Clone()
+			local row = statTemplate:Clone() :: GuiObject
 			row.Name = descriptor.Key
 			row.Visible = true
 			row.LayoutOrder = index
 			row.Parent = statsContainer
-			restore_original_gui_metrics(statTemplate, row, {
-				InsideBar = true,
-			})
+			restore_original_gui_metrics(statTemplate, row, BAR_FILL_SIZE_NAMES)
 
 			statRows[descriptor.Key] = {
 				NameLabel = find_text_label(row, STAT_NAME_NAMES),
@@ -762,15 +895,16 @@ local function configure_card(card: GuiObject, stableHorseEntry: StableHorseEntr
 		end
 	end
 
-	restore_original_gui_metrics(currentUi.TemplateSource :: GuiObject, card, {
-		InsideBar = true,
-	})
+	restore_original_gui_metrics(templateSource, card, BAR_FILL_SIZE_NAMES)
 
 	return {
 		SlotName = stableHorseEntry.SlotName,
 		HorseId = stableHorseEntry.HorseId,
 		Card = card,
 		NameLabel = nameLabel,
+		DetailsLabel = detailsLabel,
+		SelectedFrame = selectedFrame,
+		SelectedLabel = selectedLabel,
 		ViewportFrame = viewportFrame,
 		StatRows = statRows,
 	}
@@ -783,20 +917,26 @@ local function refresh_cards(): ()
 end
 
 local function render_stable(): ()
-	if not currentUi or not currentUi.TemplateSource then
+	local ui = currentUi
+	if not ui or not ui.TemplateSource then
 		return
 	end
 
+	local templateSource = ui.TemplateSource
+
 	cardTrove:Clean()
 	table.clear(activeCards)
-	currentUi.ScrollingFrame.CanvasPosition = Vector2.zero
+	if ui.ListContainer:IsA("ScrollingFrame") then
+		local scrollingFrame = ui.ListContainer :: ScrollingFrame
+		scrollingFrame.CanvasPosition = Vector2.zero
+	end
 
 	for _, stableHorseEntry: StableHorseEntry in ipairs(get_stable_horses()) do
-		local card = currentUi.TemplateSource:Clone()
-		card.Parent = currentUi.ScrollingFrame
+		local card = templateSource:Clone()
+		card.Parent = ui.ListContainer
 		cardTrove:Add(card)
 
-		local cardEntry = configure_card(card, stableHorseEntry)
+		local cardEntry = configure_card(card, templateSource, stableHorseEntry)
 		activeCards[#activeCards + 1] = cardEntry
 	end
 
@@ -818,18 +958,19 @@ local function queue_render(): ()
 end
 
 local function get_stable_ui(root: Instance): StableUi?
-	local scrollingFrame = find_named_instance(root, SCROLLING_FRAME_NAMES, "ScrollingFrame") :: ScrollingFrame?
-	local template = scrollingFrame and find_frame(scrollingFrame, TEMPLATE_NAMES, false)
-	if not template and scrollingFrame then
-		template = find_frame(scrollingFrame, TEMPLATE_NAMES, true)
+	local contentRoot = find_named_instance(root, { STABLE_CONTENT_NAME }, nil, true) or root
+	local listContainer = find_gui_object(contentRoot, LIST_CONTAINER_NAMES, true)
+	local template = listContainer and find_gui_object(listContainer, TEMPLATE_NAMES, false)
+	if not template and listContainer then
+		template = find_gui_object(listContainer, TEMPLATE_NAMES, true)
 	end
 
-	if not scrollingFrame or not template then
+	if not listContainer or not template then
 		return nil
 	end
 
 	local statsContainer = find_gui_object(template, STATS_NAMES, true)
-	local statTemplate = statsContainer and find_frame(statsContainer, STAT_TEMPLATE_NAMES, true)
+	local statTemplate = statsContainer and find_gui_object(statsContainer, STAT_TEMPLATE_NAMES, true)
 	local horseName = find_text_label(template, HORSE_NAME_NAMES)
 	local horseImage = find_gui_object(template, HORSE_IMAGE_NAMES, true)
 	local viewportFrame = find_viewport_frame(horseImage or template)
@@ -840,43 +981,18 @@ local function get_stable_ui(root: Instance): StableUi?
 
 	return {
 		Root = root,
-		ScrollingFrame = scrollingFrame,
+		ListContainer = listContainer,
 		Template = template,
 	}
 end
 
-local function get_ui_score(ui: StableUi): number
-	local score = #ui.Root:GetDescendants()
-
-	if ui.Root:IsA("Frame") then
-		score += 50
-	end
-
-	if ui.Root:IsA("LayerCollector") then
-		score += 25
-	end
-
-	return score
-end
-
 local function find_stable_ui(): StableUi?
-	local bestUi = nil
-	local bestScore = -math.huge
-
-	for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-		if matches_alias(descendant, STABLE_ROOT_NAMES) and (descendant:IsA("GuiObject") or descendant:IsA("LayerCollector")) then
-			local ui = get_stable_ui(descendant)
-			if ui then
-				local score = get_ui_score(ui)
-				if score > bestScore then
-					bestScore = score
-					bestUi = ui
-				end
-			end
-		end
+	local stableRoot = find_stable_root_instance()
+	if not stableRoot then
+		return nil
 	end
 
-	return bestUi
+	return get_stable_ui(stableRoot)
 end
 
 local function destroy_ui_binding(): ()
@@ -888,15 +1004,17 @@ local function destroy_ui_binding(): ()
 end
 
 local function bind_ui(ui: StableUi): ()
-	if currentUi and currentUi.Root == ui.Root then
+	local existingUi = currentUi
+	if existingUi and existingUi.Root == ui.Root then
 		return
 	end
 
 	destroy_ui_binding()
 
+	local templateSource = make_template_source(ui.Template)
+	ui.TemplateSource = templateSource
 	currentUi = ui
-	currentUi.TemplateSource = make_template_source(ui.Template)
-	uiTrove:Add(currentUi.TemplateSource)
+	uiTrove:Add(templateSource)
 
 	local plotTrove = uiTrove:Extend()
 
@@ -935,7 +1053,8 @@ local function bind_ui(ui: StableUi): ()
 			return
 		end
 
-		if currentUi and currentUi.Root == ui.Root then
+		local boundUi = currentUi
+		if boundUi and boundUi.Root == ui.Root then
 			destroy_ui_binding()
 			task.defer(function()
 				local reboundUi = find_stable_ui()
@@ -951,11 +1070,15 @@ local function bind_ui(ui: StableUi): ()
 end
 
 local function is_stable_ui_related(instance: Instance): boolean
-	return matches_alias(instance, STABLE_ROOT_NAMES)
+	return instance.Name == STABLE_FRAME_NAME
+		or instance.Name == STABLE_CONTENT_NAME
 		or matches_alias(instance, TEMPLATE_NAMES)
 		or matches_alias(instance, STAT_TEMPLATE_NAMES)
 		or matches_alias(instance, VIEWPORT_FRAME_NAMES)
 		or matches_alias(instance, HORSE_NAME_NAMES)
+		or instance.Name == FRAMES_CONTAINER_NAME
+		or instance.Name == MAINFRAME_NAME
+		or instance.Name == MAIN_UI_NAME
 end
 
 local function try_bind_ui(): ()
@@ -977,7 +1100,8 @@ rootTrove:Connect(playerGui.DescendantAdded, function(instance: Instance)
 end)
 
 rootTrove:Connect(playerGui.DescendantRemoving, function(instance: Instance)
-	if currentUi and (instance == currentUi.Root or instance:IsDescendantOf(currentUi.Root)) then
+	local ui = currentUi
+	if ui and (instance == ui.Root or instance:IsDescendantOf(ui.Root)) then
 		task.defer(try_bind_ui)
 	elseif is_stable_ui_related(instance) then
 		task.defer(try_bind_ui)
@@ -990,7 +1114,8 @@ rootTrove:Add(DataUtility.client.bind("Horses.Owned", function()
 end))
 
 rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
-	if not currentUi or #activeCards == 0 then
+	local ui = currentUi
+	if not ui or #activeCards == 0 then
 		return
 	end
 
