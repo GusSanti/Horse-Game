@@ -6,30 +6,27 @@ local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local ClientModules = Modules:WaitForChild("Client")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local HudModules = ClientModules:WaitForChild("Hud")
 
 local Net = require(Libraries:WaitForChild("Net"))
 local RaceConfig = require(GameData:WaitForChild("RaceConfig"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
+local HorseRaceVisuals = require(HudModules:WaitForChild("HorseRaceVisuals"))
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local CONTROL_ACTION_NAME = "HorseRaceLockControls"
-local VISUAL_BLEND_SECONDS = 1
-local VISUAL_CORRECTION_RATE = 10
-local VISUAL_HARD_SNAP_GAP = 8
-local VISUAL_MIN_SPEED_BLEND = 0.35
-
 local requestInFlight = false
 local rowFrames = {}
 local horseButtons = {}
 local selectedHorseId = nil
 local previousCameraType = nil
 local previousCameraSubject = nil
-local build_visual_pivot
 local update_visibility
 local update_dynamic_text
 
@@ -59,10 +56,17 @@ local raceVisuals = {
 	Folder = nil,
 	ByUserId = {},
 }
+local raceVisualContext = {
+	Workspace = Workspace,
+	TweenService = TweenService,
+	RaceConfig = RaceConfig,
+	RaceVisualFactory = RaceVisualFactory,
+	localPlayer = localPlayer,
+	state = state,
+	raceVisuals = raceVisuals,
+}
 
-local function extract_rotation(cframe)
-	return CFrame.fromMatrix(Vector3.zero, cframe.XVector, cframe.YVector, cframe.ZVector)
-end
+local function extract_rotation(cframe) return CFrame.fromMatrix(Vector3.zero, cframe.XVector, cframe.YVector, cframe.ZVector) end
 
 local function create_instance(className, props)
 	local instance = Instance.new(className)
@@ -139,10 +143,7 @@ local function create_button(parent, name, props)
 	return button
 end
 
-local function format_countdown(seconds)
-	local clamped = math.max(0, math.floor(seconds + 0.999))
-	return ("%02d:%02d"):format(math.floor(clamped / 60), clamped % 60)
-end
+local function format_countdown(seconds) local clamped = math.max(0, math.floor(seconds + 0.999)); return ("%02d:%02d"):format(math.floor(clamped / 60), clamped % 60) end
 
 local STATUS_DISPLAY_NAMES = {
 	Happiness = "Happiness",
@@ -153,20 +154,13 @@ local STATUS_DISPLAY_NAMES = {
 }
 
 local function get_status_display_name(statusName, fallback)
-	if type(statusName) ~= "string" or statusName == "" then
-		return fallback or "Status"
-	end
-
-	return STATUS_DISPLAY_NAMES[statusName] or fallback or statusName
+	return (type(statusName) == "string" and statusName ~= "" and STATUS_DISPLAY_NAMES[statusName]) or fallback or statusName or "Status"
 end
 
 local function find_local_entry()
 	for _, entry in ipairs(state.Entries) do
-		if entry.UserId == localPlayer.UserId then
-			return entry
-		end
+		if entry.UserId == localPlayer.UserId then return entry end
 	end
-
 	return nil
 end
 
@@ -184,9 +178,7 @@ local function find_horse_option(horseId)
 	return nil
 end
 
-local function get_selected_horse_option()
-	return find_horse_option(selectedHorseId)
-end
+local function get_selected_horse_option() return find_horse_option(selectedHorseId) end
 
 local function set_button_enabled(button, enabled, enabledColor, disabledColor)
 	if not button then
@@ -201,395 +193,9 @@ local function set_button_enabled(button, enabled, enabledColor, disabledColor)
 	button.TextTransparency = enabled and 0 or 0.18
 end
 
-local function get_sorted_race_slots()
-	local raceFolder = Workspace:FindFirstChild("Race")
-	local positionsFolder = raceFolder and raceFolder:FindFirstChild("Positions")
-	if not positionsFolder then
-		return nil, nil
-	end
-
-	local slots = {}
-	for _, child in ipairs(positionsFolder:GetChildren()) do
-		if child:IsA("BasePart") then
-			slots[#slots + 1] = child
-		end
-	end
-
-	table.sort(slots, function(a, b)
-		local aValue = tonumber(a.Name)
-		local bValue = tonumber(b.Name)
-
-		if aValue and bValue then
-			return aValue < bValue
-		end
-
-		return a.Name < b.Name
-	end)
-
-	return raceFolder, slots
-end
-
-local function should_render_race_visuals()
-	if state.LocalJoined or state.LocalWatchingRace then
-		return true
-	end
-
-	return state.Phase == "Result" and find_local_entry() ~= nil
-end
-
-local function cancel_visual_tween(tween)
-	if tween then
-		tween:Cancel()
-	end
-end
-
-local function destroy_progress_driver(driver)
-	if driver then
-		driver:Destroy()
-	end
-end
-
-local function clear_overlay_tween_state(visual)
-	visual.BlendToken = (visual.BlendToken or 0) + 1
-	cancel_visual_tween(visual.OverlayTween)
-	cancel_visual_tween(visual.BlendTween)
-	destroy_progress_driver(visual.OverlayProgress)
-	destroy_progress_driver(visual.BlendAlpha)
-	visual.OverlayTween = nil
-	visual.BlendTween = nil
-	visual.OverlayProgress = nil
-	visual.BlendAlpha = nil
-	visual.PendingSegmentIndex = nil
-	visual.PendingVisualSpeed = nil
-end
-
-local function clear_primary_tween_state(visual)
-	cancel_visual_tween(visual.PrimaryTween)
-	destroy_progress_driver(visual.PrimaryProgress)
-	visual.PrimaryTween = nil
-	visual.PrimaryProgress = nil
-end
-
-local function create_progress_driver(model, name, value)
-	local driver = Instance.new("NumberValue")
-	driver.Name = name
-	driver.Value = value
-	driver.Parent = model
-	return driver
-end
-
-local function get_visual_display_progress(visual)
-	return visual.DisplayProgress or visual.ServerProgress or 0
-end
-
-local function apply_visual_progress(visual, progress)
-	visual.DisplayProgress = progress
-	if visual.Model and visual.Model.Parent then
-		visual.Model:PivotTo(build_visual_pivot(visual, progress))
-	end
-end
-
-local function get_visual_target_progress(visual, now)
-	local distance = visual.Distance or RaceConfig.RaceDistance
-	local serverProgress = visual.ServerProgress or visual.DisplayProgress or 0
-
-	if state.Phase ~= "Race" then
-		return math.clamp(serverProgress, 0, distance)
-	end
-
-	local elapsed = math.max(0, now - (visual.ServerUpdatedAt or now))
-	local visualSpeed = math.max(0, visual.VisualSpeed or 0)
-	return math.clamp(serverProgress + (visualSpeed * elapsed), 0, distance)
-end
-
-local function update_race_visual_motion(visual, deltaTime, now)
-	local targetProgress = get_visual_target_progress(visual, now)
-	local currentProgress = visual.DisplayProgress or targetProgress
-
-	if state.Phase ~= "Race" then
-		apply_visual_progress(visual, targetProgress)
-		return
-	end
-
-	if targetProgress - currentProgress > VISUAL_HARD_SNAP_GAP then
-		apply_visual_progress(visual, targetProgress)
-		return
-	end
-
-	local visualSpeed = math.max(0, visual.VisualSpeed or 0)
-	local predictedProgress = currentProgress + (visualSpeed * deltaTime)
-	local correctionAlpha = math.clamp(deltaTime * VISUAL_CORRECTION_RATE, 0, 1)
-	local correctedProgress = predictedProgress + ((targetProgress - predictedProgress) * correctionAlpha)
-	local minimumForwardProgress = currentProgress + (visualSpeed * deltaTime * VISUAL_MIN_SPEED_BLEND)
-	local nextProgress = math.max(
-		currentProgress,
-		correctedProgress,
-		math.min(targetProgress, minimumForwardProgress)
-	)
-
-	apply_visual_progress(visual, math.min(visual.Distance or RaceConfig.RaceDistance, nextProgress))
-end
-
-local function get_finish_tween_duration(progress, distance, speed)
-	local remainingDistance = math.max(0, distance - progress)
-	local resolvedSpeed = math.max(0.1, speed or 24)
-	return math.max(0.05, remainingDistance / resolvedSpeed)
-end
-
-local function start_primary_finish_tween(visual, progress, distance, speed)
-	clear_overlay_tween_state(visual)
-	cancel_visual_tween(visual.PrimaryTween)
-
-	if not visual.PrimaryProgress or not visual.PrimaryProgress.Parent then
-		visual.PrimaryProgress = create_progress_driver(visual.Model, "PrimaryRaceProgress", progress)
-	end
-
-	visual.PrimaryProgress.Value = progress
-	visual.PrimaryTween = TweenService:Create(
-		visual.PrimaryProgress,
-		TweenInfo.new(get_finish_tween_duration(progress, distance, speed), Enum.EasingStyle.Linear),
-		{ Value = distance }
-	)
-	visual.PrimaryTween:Play()
-	visual.VisualSpeed = speed
-end
-
-local function begin_overlay_finish_tween(visual, progress, distance, speed, segmentIndex)
-	clear_overlay_tween_state(visual)
-
-	visual.OverlayProgress = create_progress_driver(visual.Model, "OverlayRaceProgress", progress)
-	visual.BlendAlpha = create_progress_driver(visual.Model, "RaceBlendAlpha", 0)
-	visual.OverlayTween = TweenService:Create(
-		visual.OverlayProgress,
-		TweenInfo.new(get_finish_tween_duration(progress, distance, speed), Enum.EasingStyle.Linear),
-		{ Value = distance }
-	)
-	visual.BlendTween = TweenService:Create(
-		visual.BlendAlpha,
-		TweenInfo.new(VISUAL_BLEND_SECONDS, Enum.EasingStyle.Linear),
-		{ Value = 1 }
-	)
-	visual.PendingSegmentIndex = segmentIndex
-	visual.PendingVisualSpeed = speed
-
-	local blendToken = (visual.BlendToken or 0) + 1
-	visual.BlendToken = blendToken
-
-	visual.OverlayTween:Play()
-	visual.BlendTween:Play()
-
-	task.delay(VISUAL_BLEND_SECONDS, function()
-		if visual.BlendToken ~= blendToken then
-			return
-		end
-
-		if raceVisuals.ByUserId[visual.UserId] ~= visual or not visual.Model or not visual.Model.Parent then
-			return
-		end
-
-		local promotedProgress = get_visual_display_progress(visual)
-		local promotedDriver = visual.OverlayProgress
-		local promotedTween = visual.OverlayTween
-
-		cancel_visual_tween(visual.PrimaryTween)
-		destroy_progress_driver(visual.PrimaryProgress)
-		cancel_visual_tween(visual.BlendTween)
-		destroy_progress_driver(visual.BlendAlpha)
-
-		visual.PrimaryProgress = promotedDriver
-		visual.PrimaryTween = promotedTween
-		visual.OverlayProgress = nil
-		visual.OverlayTween = nil
-		visual.BlendAlpha = nil
-		visual.BlendTween = nil
-		visual.SegmentIndex = visual.PendingSegmentIndex or visual.SegmentIndex
-		visual.VisualSpeed = visual.PendingVisualSpeed or visual.VisualSpeed
-		visual.PendingSegmentIndex = nil
-		visual.PendingVisualSpeed = nil
-
-		if visual.PrimaryProgress then
-			visual.PrimaryProgress.Value = promotedProgress
-		end
-	end)
-end
-
-local function destroy_race_visual(userId)
-	local visual = raceVisuals.ByUserId[userId]
-	if not visual then
-		return
-	end
-
-	clear_overlay_tween_state(visual)
-	clear_primary_tween_state(visual)
-
-	if visual.Model then
-		visual.Model:Destroy()
-	end
-
-	raceVisuals.ByUserId[userId] = nil
-end
-
-local function clear_race_visuals()
-	local userIds = {}
-	for userId in pairs(raceVisuals.ByUserId) do
-		userIds[#userIds + 1] = userId
-	end
-
-	for _, userId in ipairs(userIds) do
-		destroy_race_visual(userId)
-	end
-
-	if raceVisuals.Folder then
-		raceVisuals.Folder:Destroy()
-		raceVisuals.Folder = nil
-	end
-end
-
-local function get_race_visual_folder(raceFolder)
-	if raceVisuals.Folder and raceVisuals.Folder.Parent == raceFolder then
-		return raceVisuals.Folder
-	end
-
-	if raceVisuals.Folder then
-		raceVisuals.Folder:Destroy()
-	end
-
-	local folder = Instance.new("Folder")
-	folder.Name = ("ClientRaceHorses_%d"):format(localPlayer.UserId)
-	folder.Parent = raceFolder
-	raceVisuals.Folder = folder
-	return folder
-end
-
-build_visual_pivot = function(visual, progress)
-	local startPosition = visual.StartPivot.Position
-	return CFrame.new(
-		startPosition.X,
-		startPosition.Y,
-		startPosition.Z - progress
-	) * visual.StartRotation
-end
-
-local function create_race_visual(entry, raceFolder, slots, folder)
-	local slot = slots[entry.SlotIndex or 0]
-	if not slot then
-		return nil
-	end
-
-	local model = RaceVisualFactory.CreateRaceModel({
-		Id = entry.HorseId,
-		HorseId = entry.HorseId,
-		CatalogId = entry.CatalogId,
-		PlaceholderModelKey = entry.PlaceholderModelKey,
-	}, raceFolder, folder)
-
-	local startPivot = RaceVisualFactory.GetAlignedSlotPivot(model, slot)
-	model:PivotTo(startPivot)
-
-	return {
-		UserId = entry.UserId,
-		Model = model,
-		SlotIndex = entry.SlotIndex,
-		HorseId = entry.HorseId,
-		CatalogId = entry.CatalogId,
-		PlaceholderModelKey = entry.PlaceholderModelKey,
-		StartPivot = startPivot,
-		StartRotation = extract_rotation(startPivot),
-		Distance = entry.Distance or RaceConfig.RaceDistance,
-		ServerProgress = entry.Progress or 0,
-		ServerUpdatedAt = os.clock(),
-		DisplayProgress = entry.Progress or 0,
-		SegmentIndex = entry.SegmentIndex or 0,
-		VisualSpeed = entry.VisualSpeed or 24,
-		PrimaryProgress = nil,
-		PrimaryTween = nil,
-		OverlayProgress = nil,
-		OverlayTween = nil,
-		BlendAlpha = nil,
-		BlendTween = nil,
-		BlendToken = 0,
-	}
-end
-
-local function retarget_race_visual(visual, entry)
-	local authoritativeProgress = entry.Progress or 0
-	local distance = entry.Distance or RaceConfig.RaceDistance
-	local visualSpeed = math.max(0.1, entry.VisualSpeed or visual.VisualSpeed or 24)
-	local segmentIndex = entry.SegmentIndex
-	if type(segmentIndex) ~= "number" then
-		segmentIndex = math.floor(authoritativeProgress / math.max(1, RaceConfig.SegmentLength))
-	end
-
-	visual.Distance = distance
-	visual.ServerProgress = authoritativeProgress
-	visual.ServerUpdatedAt = os.clock()
-	visual.SegmentIndex = segmentIndex
-	visual.VisualSpeed = visualSpeed
-
-	if state.Phase ~= "Race" then
-		clear_overlay_tween_state(visual)
-		clear_primary_tween_state(visual)
-		apply_visual_progress(visual, authoritativeProgress)
-		return
-	end
-
-	if authoritativeProgress - (visual.DisplayProgress or 0) > VISUAL_HARD_SNAP_GAP then
-		apply_visual_progress(visual, authoritativeProgress)
-	end
-end
-
-local function sync_race_visuals()
-	if not should_render_race_visuals() or #state.Entries == 0 then
-		clear_race_visuals()
-		return
-	end
-
-	local raceFolder, slots = get_sorted_race_slots()
-	if not raceFolder or not slots or #slots == 0 then
-		clear_race_visuals()
-		return
-	end
-
-	local folder = get_race_visual_folder(raceFolder)
-	local activeUserIds = {}
-
-	for _, entry in ipairs(state.Entries) do
-		local userId = entry.UserId
-		activeUserIds[userId] = true
-
-		local visual = raceVisuals.ByUserId[userId]
-		local needsRebuild = visual == nil
-			or visual.SlotIndex ~= entry.SlotIndex
-			or visual.HorseId ~= entry.HorseId
-			or visual.CatalogId ~= entry.CatalogId
-			or visual.PlaceholderModelKey ~= entry.PlaceholderModelKey
-			or not visual.Model
-			or visual.Model.Parent ~= folder
-
-		if needsRebuild then
-			destroy_race_visual(userId)
-			visual = create_race_visual(entry, raceFolder, slots, folder)
-			if visual then
-				raceVisuals.ByUserId[userId] = visual
-			end
-		end
-
-		if visual then
-			retarget_race_visual(visual, entry)
-		end
-	end
-
-	local staleUserIds = {}
-	for userId in pairs(raceVisuals.ByUserId) do
-		if not activeUserIds[userId] then
-			staleUserIds[#staleUserIds + 1] = userId
-		end
-	end
-
-	for _, userId in ipairs(staleUserIds) do
-		destroy_race_visual(userId)
-	end
-end
+local function sync_race_visuals() HorseRaceVisuals.syncRaceVisuals(raceVisualContext) end
+local function clear_race_visuals() HorseRaceVisuals.clearRaceVisuals(raceVisualContext) end
+local function update_race_visual_motion(visual, deltaTime, now) HorseRaceVisuals.updateRaceVisualMotion(raceVisualContext, visual, deltaTime, now) end
 
 local function lock_controls(shouldLock)
 	if shouldLock then

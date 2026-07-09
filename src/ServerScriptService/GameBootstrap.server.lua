@@ -54,10 +54,7 @@ FarmingService.Init()
 PersistentToolService.Init()
 QuestService.Init()
 RaceService.Init()
-<<<<<<< HEAD
 HorseMountService.Init()
-=======
->>>>>>> 195659b88c766874c571f120753043b7e7888f60
 HorseService.start_status_decay_loop()
 
 for _, player in Players:GetPlayers() do

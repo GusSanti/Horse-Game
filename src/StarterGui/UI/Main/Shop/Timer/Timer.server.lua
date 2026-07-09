@@ -1,4 +1,14 @@
-local textLabel = script.Parent
+local textLabel = nil
+
+if script.Parent:IsA("TextLabel") then
+	textLabel = script.Parent
+else
+	textLabel = script.Parent:FindFirstChildWhichIsA("TextLabel", true)
+end
+
+if not textLabel then
+	return
+end
 
 local function formatTime(seconds)
 	local minutes = math.floor(seconds / 60)
@@ -13,4 +23,3 @@ while true do
 		textLabel.Text = formatTime(timer)
 	end
 end
-

@@ -2,13 +2,16 @@
 local Players: Players = game:GetService("Players")
 local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService: RunService = game:GetService("RunService")
+local ServerStorage: ServerStorage = game:GetService("ServerStorage")
 
 ------------------//CONSTANTS
 local STORE_NAME: string = RunService:IsStudio() and "StudioData.01" or "Released_Data.01"
 
 ------------------//VARIABLES
-local ProfileStore = require(script:WaitForChild("ProfileStore"))
-local ProfileTemplate = require(script:WaitForChild("DataTemplate"))
+local serverModules = ServerStorage:WaitForChild("Modules")
+local dataStoreModules = serverModules:WaitForChild("DataStore")
+local ProfileStore = require(dataStoreModules:WaitForChild("ProfileStore"))
+local ProfileTemplate = require(dataStoreModules:WaitForChild("DataTemplate"))
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
 
 local store = ProfileStore.New(STORE_NAME, ProfileTemplate)

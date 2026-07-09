@@ -43,11 +43,19 @@ local function get_model_animator(model: Instance?): Animator?
 	end
 
 	local animationController = model:FindFirstChildOfClass("AnimationController")
+	if not animationController then
+		animationController = model:FindFirstChildWhichIsA("AnimationController", true)
+	end
+
 	if animationController then
 		return ensure_animator(animationController)
 	end
 
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		humanoid = model:FindFirstChildWhichIsA("Humanoid", true)
+	end
+
 	if humanoid then
 		return ensure_animator(humanoid)
 	end

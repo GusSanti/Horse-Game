@@ -1,41 +1,39 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local ClientModules = Modules:WaitForChild("Client")
 local Dictionary = Modules:WaitForChild("Dictionary")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local HudModules = ClientModules:WaitForChild("Hud")
 
 local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
 local Net = require(Libraries:WaitForChild("Net"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local HorseMountCamera = require(HudModules:WaitForChild("HorseMountCamera"))
+local HorseMountUi = require(HudModules:WaitForChild("HorseMountUi"))
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 local plotValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName)
 
-local GUI_NAME = "HorseMountGui"
 local BUTTON_TEXT = "Montar"
 local MOUNT_ROOT_NAME = "HorseMountRoot"
 local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
 local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
 local LOCAL_MOUNT_SMOOTHNESS = 26
-local MOBILE_CONTROL_GAP = 10
+local DISMOUNT_ACTION_NAME = "HorseMountDismount"
 
 local HORSE_FOLDER_NAME = ToolDictionary.HorseFolderName
 local VISUAL_HORSE_ATTRIBUTE = ToolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE = ToolDictionary.HorseIdAttribute
-
-local previousCameraType = nil
-local previousCameraSubject = nil
-local previousMouseBehavior = nil
-local previousMouseIconEnabled = nil
-local previousFieldOfView = nil
 
 local requestInFlight = false
 local panelOpen = false
@@ -43,6 +41,7 @@ local horseButtons = {}
 local ui = {}
 local send_mount_input
 local request_dismount
+local sync_mount_state_from_server
 local isTouchDevice = UserInputService.TouchEnabled
 local mobileSprintPressed = false
 local localPrediction = {
@@ -64,6 +63,9 @@ local mountedState = {
 	HorseId = nil,
 	HorseName = nil,
 	CameraYaw = 0,
+	TransitionMode = nil,
+	TransitionStartRootCFrame = nil,
+	TransitionTargetRootCFrame = nil,
 }
 
 local lastInputSentAt = 0
@@ -71,19 +73,221 @@ local lastSentMoveX = 0
 local lastSentMoveZ = 0
 local lastSentCameraYaw = 0
 local lastSentSprinting = false
+local riderAnimationState = {
+	Character = nil,
+	Humanoid = nil,
+	Animator = nil,
+	Tracks = {},
+	Resources = {},
+	Mode = "None",
+	TransitionToken = 0,
+	SettleToken = 0,
+}
+local cameraController = HorseMountCamera.new(localPlayer, HorseMountConfig)
 
-local function build_angle_y(cframe)
-	local lookVector = cframe.LookVector
-	return math.atan2(-lookVector.X, -lookVector.Z)
+local function bind_dismount_action()
+	ContextActionService:BindActionAtPriority(
+		DISMOUNT_ACTION_NAME,
+		function(_, inputState)
+			if inputState == Enum.UserInputState.Begin then
+				request_dismount()
+			end
+
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		3000,
+		Enum.KeyCode.LeftControl,
+		Enum.KeyCode.RightControl,
+		Enum.KeyCode.P
+	)
 end
 
-local function build_yaw_from_direction(direction)
-	return math.atan2(-direction.X, -direction.Z)
+local function unbind_dismount_action()
+	ContextActionService:UnbindAction(DISMOUNT_ACTION_NAME)
 end
 
-local function wrap_angle(angle)
-	return math.atan2(math.sin(angle), math.cos(angle))
+local function get_default_camera_subject() return localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid") or nil end
+
+local function normalize_animation_id(animationId)
+	if type(animationId) ~= "string" or animationId == "" then
+		return nil
+	end
+
+	if string.find(animationId, "rbxassetid://", 1, true) == 1 then
+		return animationId
+	end
+
+	return "rbxassetid://" .. animationId
 end
+
+local function load_local_animation_track(animator, animationId, priority, looped)
+	local normalizedAnimationId = normalize_animation_id(animationId)
+	if not animator or not normalizedAnimationId then
+		return nil, nil
+	end
+
+	local animation = Instance.new("Animation")
+	animation.AnimationId = normalizedAnimationId
+
+	local success, track = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+
+	if not success or not track then
+		animation:Destroy()
+		return nil, nil
+	end
+
+	pcall(function()
+		track.Priority = priority or Enum.AnimationPriority.Action4
+	end)
+
+	pcall(function()
+		track.Looped = looped == true
+	end)
+
+	return track, animation
+end
+
+local function play_local_track(track, fadeTime, weight, speed)
+	if not track then
+		return
+	end
+
+	pcall(function()
+		track:Play(
+			fadeTime or HorseMountConfig.AnimationFadeTime or 0.12,
+			weight or 1,
+			speed or 1
+		)
+	end)
+end
+
+local function stop_local_track(track, fadeTime)
+	if not track then
+		return
+	end
+
+	pcall(function()
+		track:Stop(fadeTime or HorseMountConfig.AnimationFadeTime or 0.12)
+	end)
+end
+
+local function adjust_local_track_speed(track, speed)
+	if not track then
+		return
+	end
+
+	pcall(function()
+		track:AdjustSpeed(speed or 1)
+	end)
+end
+
+local function get_local_rider_animation_state()
+	local humanoid = get_default_camera_subject()
+	local character = humanoid and humanoid.Parent or nil
+	if not humanoid or not character then
+		return nil
+	end
+
+	if riderAnimationState.Character == character
+		and riderAnimationState.Humanoid == humanoid
+		and riderAnimationState.Animator
+		and riderAnimationState.Animator.Parent
+	then
+		return riderAnimationState
+	end
+
+	riderAnimationState.TransitionToken += 1
+	riderAnimationState.SettleToken += 1
+
+	for _, track in pairs(riderAnimationState.Tracks) do
+		stop_local_track(track, 0)
+	end
+
+	for _, animation in ipairs(riderAnimationState.Resources) do
+		animation:Destroy()
+	end
+
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+
+	riderAnimationState.Character = character
+	riderAnimationState.Humanoid = humanoid
+	riderAnimationState.Animator = animator
+	riderAnimationState.Tracks = {}
+	riderAnimationState.Resources = {}
+	riderAnimationState.Mode = "None"
+
+	local trackSpecs = {
+		HopOn = { HorseMountConfig.PlayerHopOnAnimationId, false },
+		HopOff = { HorseMountConfig.PlayerHopOffAnimationId, false },
+		Idle = { HorseMountConfig.PlayerIdleAnimationId, true },
+		Ride = { HorseMountConfig.PlayerRideAnimationId, true },
+	}
+
+	for trackName, spec in pairs(trackSpecs) do
+		local track, animation = load_local_animation_track(
+			animator,
+			spec[1],
+			Enum.AnimationPriority.Action4,
+			spec[2]
+		)
+
+		riderAnimationState.Tracks[trackName] = track
+		if animation then
+			riderAnimationState.Resources[#riderAnimationState.Resources + 1] = animation
+		end
+	end
+
+	return riderAnimationState
+end
+
+local function stop_local_rider_tracks(fadeTime)
+	local animationState = riderAnimationState
+	if not animationState.Animator or not animationState.Character or not animationState.Character.Parent then
+		return
+	end
+
+	for _, trackName in ipairs({ "HopOn", "HopOff", "Idle", "Ride" }) do
+		stop_local_track(animationState.Tracks[trackName], fadeTime)
+	end
+
+	animationState.Mode = "None"
+end
+
+local function clear_local_rider_animation_state()
+	riderAnimationState.TransitionToken += 1
+	riderAnimationState.SettleToken += 1
+
+	for _, track in pairs(riderAnimationState.Tracks) do
+		stop_local_track(track, 0)
+	end
+
+	for _, animation in ipairs(riderAnimationState.Resources) do
+		animation:Destroy()
+	end
+
+	riderAnimationState.Character = nil
+	riderAnimationState.Humanoid = nil
+	riderAnimationState.Animator = nil
+	riderAnimationState.Tracks = {}
+	riderAnimationState.Resources = {}
+	riderAnimationState.Mode = "None"
+end
+
+
+local function build_angle_y(cframe) return math.atan2(-cframe.LookVector.X, -cframe.LookVector.Z) end
+
+local function build_yaw_from_direction(direction) return math.atan2(-direction.X, -direction.Z) end
+
+local function wrap_angle(angle) return math.atan2(math.sin(angle), math.cos(angle)) end
+
+local function is_finite_number(value) return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge end
 
 local function move_towards(current, target, maxDelta)
 	if math.abs(target - current) <= maxDelta then
@@ -99,30 +303,22 @@ end
 
 local function get_character_root_part()
 	local character = localPlayer.Character
-	if not character then
-		return nil
-	end
-
-	local rootPart = character:FindFirstChild("HumanoidRootPart")
-	if rootPart and rootPart:IsA("BasePart") then
-		return rootPart
-	end
-
-	return nil
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	return rootPart and rootPart:IsA("BasePart") and rootPart or nil
 end
 
-local function get_control_start_yaw()
-	local camera = Workspace.CurrentCamera
-	if camera then
-		return build_angle_y(camera.CFrame)
+local function clear_transition_root_targets()
+	mountedState.TransitionStartRootCFrame = nil
+	mountedState.TransitionTargetRootCFrame = nil
+end
+
+local function build_character_pivot_from_root(character, rootPart, desiredRootCFrame)
+	if not character or not rootPart then
+		return desiredRootCFrame
 	end
 
-	local rootPart = get_character_root_part()
-	if rootPart then
-		return build_angle_y(rootPart.CFrame)
-	end
-
-	return mountedState.CameraYaw
+	local relativePivotOffset = rootPart.CFrame:ToObjectSpace(character:GetPivot())
+	return desiredRootCFrame * relativePivotOffset
 end
 
 local function get_move_vector()
@@ -152,6 +348,185 @@ local function get_move_vector()
 	end
 
 	return moveX, moveZ
+end
+
+local function set_local_rider_mode(mode)
+	local animationState = get_local_rider_animation_state()
+	if not animationState then
+		return
+	end
+
+	if animationState.Mode == mode then
+		local currentTrack = animationState.Tracks[mode]
+		if currentTrack and currentTrack.IsPlaying then
+			return
+		end
+	end
+
+	local fadeTime = HorseMountConfig.RiderResumeBlendTime or 0.24
+	local tracks = animationState.Tracks
+
+	if mode == "Idle" then
+		stop_local_track(tracks.HopOn, 0.05)
+		stop_local_track(tracks.HopOff, 0.05)
+		stop_local_track(tracks.Ride, fadeTime)
+		play_local_track(tracks.Idle, fadeTime, 1, 1)
+	elseif mode == "Ride" then
+		stop_local_track(tracks.HopOn, 0.05)
+		stop_local_track(tracks.HopOff, 0.05)
+		stop_local_track(tracks.Idle, fadeTime)
+		play_local_track(tracks.Ride, fadeTime, 1, HorseMountConfig.RiderResumeStartSpeed or 0.18)
+		adjust_local_track_speed(tracks.Ride, 1)
+	else
+		stop_local_track(tracks.Idle, fadeTime)
+		stop_local_track(tracks.Ride, fadeTime)
+	end
+
+	animationState.Mode = mode
+end
+
+local function smooth_local_character_to_root_cframe(targetRootCFrame, duration)
+	if not targetRootCFrame then
+		return
+	end
+
+	local animationState = get_local_rider_animation_state()
+	if not animationState then
+		return
+	end
+
+	animationState.SettleToken += 1
+	local settleToken = animationState.SettleToken
+
+	task.spawn(function()
+		local character = animationState.Character
+		local rootPart = get_character_root_part()
+		if not character or not rootPart then
+			return
+		end
+
+		local blendDuration = math.max(duration or 0, 0)
+		local startRootCFrame = rootPart.CFrame
+
+		if blendDuration <= 0.01 then
+			character:PivotTo(build_character_pivot_from_root(character, rootPart, targetRootCFrame))
+			rootPart.AssemblyLinearVelocity = Vector3.zero
+			rootPart.AssemblyAngularVelocity = Vector3.zero
+			return
+		end
+
+		local startedAt = os.clock()
+		while settleToken == animationState.SettleToken do
+			character = animationState.Character
+			rootPart = get_character_root_part()
+			if not character or not rootPart then
+				break
+			end
+
+			local alpha = math.clamp((os.clock() - startedAt) / blendDuration, 0, 1)
+			local easedAlpha = alpha * alpha * (3 - (2 * alpha))
+			local nextRootCFrame = startRootCFrame:Lerp(targetRootCFrame, easedAlpha)
+			character:PivotTo(build_character_pivot_from_root(character, rootPart, nextRootCFrame))
+			rootPart.AssemblyLinearVelocity = Vector3.zero
+			rootPart.AssemblyAngularVelocity = Vector3.zero
+
+			if alpha >= 1 then
+				break
+			end
+
+			RunService.Heartbeat:Wait()
+		end
+	end)
+end
+
+local function play_local_mount_transition(duration, targetCFrame)
+	local animationState = get_local_rider_animation_state()
+	if not animationState then
+		return
+	end
+
+	animationState.TransitionToken += 1
+	local transitionToken = animationState.TransitionToken
+	local tracks = animationState.Tracks
+	stop_local_track(tracks.HopOff, 0.05)
+	stop_local_track(tracks.Idle, 0.05)
+	stop_local_track(tracks.Ride, 0.05)
+	play_local_track(tracks.HopOn, 0.05, 1, 1)
+	animationState.Mode = "Mounting"
+
+	if targetCFrame then
+		task.spawn(function()
+			local moveDelay = math.min(0.08, math.max(duration or 0, 0) * 0.12)
+			if moveDelay > 0 then
+				task.wait(moveDelay)
+			end
+
+			if transitionToken ~= animationState.TransitionToken then
+				return
+			end
+
+			smooth_local_character_to_root_cframe(
+				targetCFrame,
+				math.max((duration or HorseMountConfig.MountTransitionDuration or 1.8) - moveDelay, 0.12)
+			)
+		end)
+	end
+end
+
+local function play_local_dismount_transition(animationDuration, settleDuration, targetCFrame)
+	local animationState = get_local_rider_animation_state()
+	if not animationState then
+		return
+	end
+
+	animationState.TransitionToken += 1
+	local transitionToken = animationState.TransitionToken
+	local tracks = animationState.Tracks
+	stop_local_track(tracks.HopOn, 0.05)
+	stop_local_track(tracks.Idle, 0.05)
+	stop_local_track(tracks.Ride, 0.05)
+	play_local_track(tracks.HopOff, 0.05, 1, 1)
+	animationState.Mode = "Dismounting"
+
+	task.spawn(function()
+		local leadTime = math.max(HorseMountConfig.DismountFinalPoseLeadTime or 0, 0)
+		local holdTime = math.max(HorseMountConfig.DismountFinalPoseHoldTime or 0, 0)
+		local waitTime = math.max((animationDuration or 0) - leadTime, 0)
+		if waitTime > 0 then
+			task.wait(waitTime)
+		end
+
+		if transitionToken ~= animationState.TransitionToken then
+			return
+		end
+
+		if targetCFrame then
+			smooth_local_character_to_root_cframe(targetCFrame, math.max(settleDuration or 0, 0.08))
+		end
+
+		if holdTime > 0 then
+			task.wait(holdTime)
+		end
+
+		if transitionToken ~= animationState.TransitionToken then
+			return
+		end
+
+		stop_local_track(tracks.HopOff, 0.03)
+	end)
+end
+
+local function update_local_rider_animation()
+	if not mountedState.Active or mountedState.TransitionMode ~= nil then
+		return
+	end
+
+	local moveX, moveZ = get_move_vector()
+	local inputMagnitude = math.sqrt((moveX * moveX) + (moveZ * moveZ))
+	local moving = (localPrediction.CurrentSpeed or 0) > 0.25
+		or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
+
+	set_local_rider_mode(moving and "Ride" or "Idle")
 end
 
 local function get_base_part_lowest_y(basePart)
@@ -248,11 +623,7 @@ end
 local function get_owned_horse_data(horseId)
 	local horses = DataUtility.client.get("Horses")
 	local ownedHorses = type(horses) == "table" and horses.Owned or nil
-	if type(ownedHorses) ~= "table" then
-		return nil
-	end
-
-	return ownedHorses[horseId]
+	return type(ownedHorses) == "table" and ownedHorses[horseId] or nil
 end
 
 local function get_prediction_movement(horseId)
@@ -310,13 +681,11 @@ local function find_driver_constraints(mountRoot)
 end
 
 local function is_sprint_input_active()
-	if not mountedState.Active then
-		return false
-	end
-
-	return mobileSprintPressed
+	return mountedState.Active and (
+		mobileSprintPressed
 		or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+	) or false
 end
 
 local function set_mobile_sprint_pressed(pressed)
@@ -494,266 +863,43 @@ local function update_local_mount_prediction(deltaTime)
 	end
 
 	local currentPosition = mountRoot.Position
-	local groundedPosition = resolve_ground_position(
-		currentPosition,
-		{ horseVisual, localPlayer.Character },
-		localPrediction.GroundOffset
-	)
-	local verticalError = groundedPosition.Y - currentPosition.Y
-	local verticalVelocity = math.clamp(
-		verticalError * (HorseMountConfig.GroundStickResponsiveness or 16),
-		-(HorseMountConfig.GroundStickMaxVelocity or 48),
-		HorseMountConfig.GroundStickMaxVelocity or 48
-	)
+	local verticalVelocity = 0
+	if HorseMountConfig.StickMountedHorseToGround == true then
+		local groundedPosition = resolve_ground_position(
+			currentPosition,
+			{ horseVisual, localPlayer.Character },
+			localPrediction.GroundOffset
+		)
+		local verticalError = groundedPosition.Y - currentPosition.Y
+		verticalVelocity = math.clamp(
+			verticalError * (HorseMountConfig.GroundStickResponsiveness or 16),
+			-(HorseMountConfig.GroundStickMaxVelocity or 48),
+			HorseMountConfig.GroundStickMaxVelocity or 48
+		)
+	end
 
 	linearVelocity.VectorVelocity = (moveDirection * localPrediction.CurrentSpeed) + Vector3.new(0, verticalVelocity, 0)
 	alignOrientation.CFrame = orientation
 	localPrediction.Position = currentPosition
 end
 
-local function restore_camera()
-	local camera = Workspace.CurrentCamera
-	if camera then
-		camera.CameraType = previousCameraType or Enum.CameraType.Custom
-
-		if previousCameraSubject then
-			camera.CameraSubject = previousCameraSubject
-		else
-			local character = localPlayer.Character
-			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				camera.CameraSubject = humanoid
-			end
-		end
-
-		if previousFieldOfView ~= nil then
-			camera.FieldOfView = previousFieldOfView
-		end
-	end
-
-	if previousMouseBehavior ~= nil then
-		UserInputService.MouseBehavior = previousMouseBehavior
-	end
-
-	if previousMouseIconEnabled ~= nil then
-		UserInputService.MouseIconEnabled = previousMouseIconEnabled
-	end
-
-	previousCameraType = nil
-	previousCameraSubject = nil
-	previousMouseBehavior = nil
-	previousMouseIconEnabled = nil
-	previousFieldOfView = nil
-end
-
-local function prepare_camera_for_mount()
-	local camera = Workspace.CurrentCamera
-	if not camera then
-		return
-	end
-
-	previousCameraType = camera.CameraType
-	previousCameraSubject = camera.CameraSubject
-	previousMouseBehavior = UserInputService.MouseBehavior
-	previousMouseIconEnabled = UserInputService.MouseIconEnabled
-	previousFieldOfView = camera.FieldOfView
-
-	camera.CameraType = Enum.CameraType.Scriptable
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	UserInputService.MouseIconEnabled = false
-end
-
-local function update_camera_fov(deltaTime)
-	local camera = Workspace.CurrentCamera
-	if not camera or not mountedState.Active then
-		return
-	end
-
-	local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
-	local sprintSpeed = movement.SprintSpeed or 26
-	local speedAlpha = 0
-	if sprintSpeed > 0 then
-		speedAlpha = math.clamp((localPrediction.CurrentSpeed or 0) / sprintSpeed, 0, 1)
-	end
-
-	local baseFov = previousFieldOfView or HorseMountConfig.MountedBaseFov
-	local targetFov = baseFov + (HorseMountConfig.MountedFovBoost * speedAlpha)
-	if is_sprint_input_active() then
-		targetFov += HorseMountConfig.MountedSprintFovBoost
-	end
-
-	local blendAlpha = 1 - math.exp(-(HorseMountConfig.MountedFovSmoothness or 8) * deltaTime)
-	camera.FieldOfView = camera.FieldOfView + ((targetFov - camera.FieldOfView) * blendAlpha)
-end
-
-local function create_instance(className, properties)
-	local instance = Instance.new(className)
-
-	for propertyName, propertyValue in pairs(properties) do
-		instance[propertyName] = propertyValue
-	end
-
-	return instance
-end
-
-local function clear_horse_buttons()
-	for _, button in ipairs(horseButtons) do
-		if button.Parent then
-			button:Destroy()
-		end
-	end
-
-	table.clear(horseButtons)
-end
-
-local function get_owned_horses()
-	local horses = DataUtility.client.get("Horses")
-	local ownedHorses = type(horses) == "table" and horses.Owned or nil
-	if type(ownedHorses) ~= "table" then
-		return {}
-	end
-
-	local orderedIds = type(horses.OrderedIds) == "table" and horses.OrderedIds or {}
-	local orderedEntries = {}
-	local unorderedEntries = {}
-	local seenIds = {}
-
-	local function add_entry(horseId, horse, targetList)
-		if type(horseId) ~= "string" or horseId == "" or type(horse) ~= "table" or seenIds[horseId] then
-			return
-		end
-
-		seenIds[horseId] = true
-
-		local horseName = horse.Nickname
-		if type(horseName) ~= "string" or horseName == "" then
-			horseName = horse.DisplayName
-		end
-
-		if type(horseName) ~= "string" or horseName == "" then
-			horseName = horseId
-		end
-
-		targetList[#targetList + 1] = {
-			Id = horseId,
-			Name = horseName,
-		}
-	end
-
-	for _, horseId in ipairs(orderedIds) do
-		add_entry(horseId, ownedHorses[horseId], orderedEntries)
-	end
-
-	for horseId, horse in pairs(ownedHorses) do
-		add_entry(horseId, horse, unorderedEntries)
-	end
-
-	table.sort(unorderedEntries, function(a, b)
-		return string.lower(a.Name) < string.lower(b.Name)
-	end)
-
-	for _, entry in ipairs(unorderedEntries) do
-		orderedEntries[#orderedEntries + 1] = entry
-	end
-
-	return orderedEntries
-end
-
-local function update_panel_canvas()
-	local layout = ui.ListLayout
-	local listFrame = ui.ListFrame
-	if not layout or not listFrame then
-		return
-	end
-
-	listFrame.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 8)
-end
-
-local function update_ui_state()
-	if not ui.ActionButton then
-		return
-	end
-
-	local canShowButton = not mountedState.Active
-	ui.ActionButton.Visible = canShowButton
-	ui.ActionButton.Text = requestInFlight and "..." or BUTTON_TEXT
-	ui.ActionButton.AutoButtonColor = canShowButton and not requestInFlight
-	ui.ActionButton.Active = canShowButton and not requestInFlight
-	ui.ActionButton.BackgroundColor3 = requestInFlight
-		and Color3.fromRGB(67, 88, 77)
-		or Color3.fromRGB(36, 111, 79)
-
-	local shouldShowPanel = canShowButton and panelOpen and not requestInFlight
-	ui.ListPanel.Visible = shouldShowPanel
-
-	if ui.MobileControlsFrame then
-		ui.MobileControlsFrame.Visible = isTouchDevice and mountedState.Active
-	end
-
-	if ui.MobileSprintButton then
-		ui.MobileSprintButton.Visible = isTouchDevice and mountedState.Active
-	end
-
-	if ui.MobileDismountButton then
-		ui.MobileDismountButton.Visible = isTouchDevice and mountedState.Active
-	end
-end
+local function get_control_start_yaw() return cameraController:getControlStartYaw(get_character_root_part, mountedState) end
+local function prepare_camera_for_mount() cameraController:prepareCameraForMount() end
+local function start_camera_transition(mode, duration) cameraController:startCameraTransition(mode, duration) end
+local function cancel_camera_transition() cameraController:cancelCameraTransition() end
+local function restore_camera() cameraController:restoreCamera(get_character_root_part) end
+local function release_camera_after_dismount() cameraController:releaseCameraAfterDismount() end
+local function update_camera_restore(deltaTime) cameraController:updateCameraRestore(deltaTime, get_character_root_part) end
+local function update_camera_transition(deltaTime) cameraController:updateCameraTransition(deltaTime, mountedState, get_character_root_part) end
+local function update_camera_fov(deltaTime) cameraController:updateCameraFov(deltaTime, mountedState, localPrediction, get_prediction_movement, is_sprint_input_active) end
+local function get_running_sensitivity_multiplier() return cameraController:getRunningSensitivityMultiplier(mountedState, localPrediction, get_prediction_movement) end
+local function update_ui_state() HorseMountUi.updateUiState(ui, { mountedState = mountedState, requestInFlight = requestInFlight, panelOpen = panelOpen, isTouchDevice = isTouchDevice }) end
 
 local function render_horse_list()
-	clear_horse_buttons()
-
-	local horses = get_owned_horses()
-	if #horses == 0 then
-		local emptyLabel = create_instance("TextLabel", {
-			Name = "EmptyLabel",
-			BackgroundTransparency = 1,
-			Font = Enum.Font.GothamMedium,
-			Text = "Sem cavalos disponiveis",
-			TextColor3 = Color3.fromRGB(210, 218, 224),
-			TextSize = 15,
-			Size = UDim2.new(1, -6, 0, 28),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Parent = ui.ListFrame,
-		})
-
-		horseButtons[#horseButtons + 1] = emptyLabel
-		update_panel_canvas()
-		return
-	end
-
-	for _, horseEntry in ipairs(horses) do
-		local horseButton = create_instance("TextButton", {
-			Name = horseEntry.Id,
-			AutoButtonColor = true,
-			BackgroundColor3 = Color3.fromRGB(31, 37, 43),
-			BorderSizePixel = 0,
-			Font = Enum.Font.GothamMedium,
-			Text = horseEntry.Name,
-			TextColor3 = Color3.fromRGB(245, 247, 250),
-			TextSize = 15,
-			Size = UDim2.new(1, -6, 0, 38),
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Parent = ui.ListFrame,
-		})
-
-		create_instance("UICorner", {
-			CornerRadius = UDim.new(0, 10),
-			Parent = horseButton,
-		})
-
-		create_instance("UIPadding", {
-			PaddingLeft = UDim.new(0, 12),
-			PaddingRight = UDim.new(0, 12),
-			Parent = horseButton,
-		})
-
-		create_instance("UIStroke", {
-			Color = Color3.fromRGB(255, 255, 255),
-			Transparency = 0.88,
-			Parent = horseButton,
-		})
-
-		horseButton.MouseButton1Click:Connect(function()
+	HorseMountUi.renderHorseList(ui, horseButtons, {
+		plotValue = plotValue,
+		dataUtility = DataUtility,
+		onSelectHorse = function(horseEntry)
 			if requestInFlight or mountedState.Active then
 				return
 			end
@@ -762,6 +908,8 @@ local function render_horse_list()
 			update_ui_state()
 
 			local cameraYaw = get_control_start_yaw()
+			mountedState.CameraYaw = cameraYaw
+
 			local success, response = pcall(function()
 				return Net.Function.HorseMountAction:Call({
 					Action = "Mount",
@@ -774,240 +922,45 @@ local function render_horse_list()
 
 			if success and response and response.Success and response.State and response.State.Mounted == true then
 				panelOpen = false
-				mountedState.Active = true
-				mountedState.HorseId = response.State.HorseId
-				mountedState.HorseName = response.State.HorseName
-				mountedState.CameraYaw = cameraYaw
-				set_mobile_sprint_pressed(false)
-				reset_local_prediction()
-				prepare_camera_for_mount()
-				send_mount_input(true)
+				sync_mount_state_from_server(response.State)
+			else
+				mountedState.TransitionMode = nil
+				clear_transition_root_targets()
+				cancel_camera_transition()
+				restore_camera()
 			end
 
 			update_ui_state()
-		end)
-
-		horseButtons[#horseButtons + 1] = horseButton
-	end
-
-	update_panel_canvas()
+		end,
+	})
 end
 
 local function ensure_ui()
-	if ui.ScreenGui and ui.ScreenGui.Parent then
-		return
-	end
+	HorseMountUi.ensureUi(ui, {
+		playerGui = playerGui,
+		onTogglePanelRequested = function()
+			if requestInFlight or mountedState.Active then
+				return
+			end
 
-	local existingGui = playerGui:FindFirstChild(GUI_NAME)
-	if existingGui then
-		existingGui:Destroy()
-	end
+			panelOpen = not panelOpen
+			if panelOpen then
+				render_horse_list()
+			end
 
-	local screenGui = create_instance("ScreenGui", {
-		Name = GUI_NAME,
-		ResetOnSpawn = false,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		Parent = playerGui,
+			update_ui_state()
+		end,
+		onSetMobileSprintPressed = function(pressed)
+			if not mountedState.Active then
+				return
+			end
+
+			set_mobile_sprint_pressed(pressed)
+		end,
+		onDismountRequested = function()
+			request_dismount()
+		end,
 	})
-
-	local actionButton = create_instance("TextButton", {
-		Name = "ActionButton",
-		AnchorPoint = Vector2.new(1, 0),
-		AutoButtonColor = true,
-		BackgroundColor3 = Color3.fromRGB(36, 111, 79),
-		BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold,
-		Position = UDim2.new(1, -24, 0, 24),
-		Size = UDim2.fromOffset(160, 46),
-		Text = BUTTON_TEXT,
-		TextColor3 = Color3.fromRGB(246, 247, 248),
-		TextSize = 17,
-		Parent = screenGui,
-	})
-
-	create_instance("UICorner", {
-		CornerRadius = UDim.new(1, 0),
-		Parent = actionButton,
-	})
-
-	create_instance("UIStroke", {
-		Color = Color3.fromRGB(173, 232, 204),
-		Transparency = 0.2,
-		Parent = actionButton,
-	})
-
-	local listPanel = create_instance("Frame", {
-		Name = "ListPanel",
-		AnchorPoint = Vector2.new(1, 0),
-		BackgroundColor3 = Color3.fromRGB(20, 24, 28),
-		BackgroundTransparency = 0.08,
-		BorderSizePixel = 0,
-		Position = UDim2.new(1, -24, 0, 80),
-		Size = UDim2.fromOffset(310, 220),
-		Visible = false,
-		Parent = screenGui,
-	})
-
-	create_instance("UICorner", {
-		CornerRadius = UDim.new(0, 16),
-		Parent = listPanel,
-	})
-
-	create_instance("UIStroke", {
-		Color = Color3.fromRGB(255, 255, 255),
-		Transparency = 0.83,
-		Parent = listPanel,
-	})
-
-	create_instance("UIPadding", {
-		PaddingTop = UDim.new(0, 14),
-		PaddingBottom = UDim.new(0, 14),
-		PaddingLeft = UDim.new(0, 14),
-		PaddingRight = UDim.new(0, 14),
-		Parent = listPanel,
-	})
-
-	create_instance("TextLabel", {
-		Name = "TitleLabel",
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		Text = "Seus cavalos",
-		TextColor3 = Color3.fromRGB(248, 235, 198),
-		TextSize = 18,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Size = UDim2.new(1, 0, 0, 24),
-		Parent = listPanel,
-	})
-
-	local listFrame = create_instance("ScrollingFrame", {
-		Name = "ListFrame",
-		Active = true,
-		AutomaticCanvasSize = Enum.AutomaticSize.None,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		CanvasSize = UDim2.fromOffset(0, 0),
-		Position = UDim2.new(0, 0, 0, 32),
-		ScrollBarImageColor3 = Color3.fromRGB(145, 157, 170),
-		ScrollBarThickness = 5,
-		Size = UDim2.new(1, 0, 1, -32),
-		Parent = listPanel,
-	})
-
-	local listLayout = create_instance("UIListLayout", {
-		FillDirection = Enum.FillDirection.Vertical,
-		HorizontalAlignment = Enum.HorizontalAlignment.Center,
-		Padding = UDim.new(0, 8),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = listFrame,
-	})
-
-	local mobileControlsFrame = create_instance("Frame", {
-		Name = "MobileControlsFrame",
-		AnchorPoint = Vector2.new(1, 1),
-		BackgroundTransparency = 1,
-		Position = UDim2.new(1, -24, 1, -120),
-		Size = UDim2.fromOffset(160, 110),
-		Visible = false,
-		Parent = screenGui,
-	})
-
-	local mobileRunButton = create_instance("TextButton", {
-		Name = "MobileRunButton",
-		AnchorPoint = Vector2.new(1, 1),
-		AutoButtonColor = false,
-		BackgroundColor3 = Color3.fromRGB(131, 82, 25),
-		BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold,
-		Position = UDim2.new(1, 0, 0, 0),
-		Size = UDim2.fromOffset(160, 48),
-		Text = "Correr",
-		TextColor3 = Color3.fromRGB(248, 239, 223),
-		TextSize = 17,
-		Visible = false,
-		Parent = mobileControlsFrame,
-	})
-
-	create_instance("UICorner", {
-		CornerRadius = UDim.new(1, 0),
-		Parent = mobileRunButton,
-	})
-
-	create_instance("UIStroke", {
-		Color = Color3.fromRGB(255, 223, 181),
-		Transparency = 0.22,
-		Parent = mobileRunButton,
-	})
-
-	local mobileDismountButton = create_instance("TextButton", {
-		Name = "MobileDismountButton",
-		AnchorPoint = Vector2.new(1, 1),
-		AutoButtonColor = true,
-		BackgroundColor3 = Color3.fromRGB(84, 39, 39),
-		BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold,
-		Position = UDim2.new(1, 0, 0, -(48 + MOBILE_CONTROL_GAP)),
-		Size = UDim2.fromOffset(160, 48),
-		Text = "Descer",
-		TextColor3 = Color3.fromRGB(247, 236, 236),
-		TextSize = 17,
-		Visible = false,
-		Parent = mobileControlsFrame,
-	})
-
-	create_instance("UICorner", {
-		CornerRadius = UDim.new(1, 0),
-		Parent = mobileDismountButton,
-	})
-
-	create_instance("UIStroke", {
-		Color = Color3.fromRGB(255, 205, 205),
-		Transparency = 0.24,
-		Parent = mobileDismountButton,
-	})
-
-	listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update_panel_canvas)
-
-	actionButton.MouseButton1Click:Connect(function()
-		if requestInFlight or mountedState.Active then
-			return
-		end
-
-		panelOpen = not panelOpen
-		if panelOpen then
-			render_horse_list()
-		end
-
-		update_ui_state()
-	end)
-
-	mobileRunButton.InputBegan:Connect(function(input)
-		if not mountedState.Active then
-			return
-		end
-
-		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			set_mobile_sprint_pressed(true)
-		end
-	end)
-
-	mobileRunButton.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			set_mobile_sprint_pressed(false)
-		end
-	end)
-
-	mobileDismountButton.MouseButton1Click:Connect(function()
-		request_dismount()
-	end)
-
-	ui.ScreenGui = screenGui
-	ui.ActionButton = actionButton
-	ui.ListPanel = listPanel
-	ui.ListFrame = listFrame
-	ui.ListLayout = listLayout
-	ui.MobileControlsFrame = mobileControlsFrame
-	ui.MobileSprintButton = mobileRunButton
-	ui.MobileDismountButton = mobileDismountButton
 
 	update_ui_state()
 end
@@ -1048,8 +1001,9 @@ send_mount_input = function(forceSend)
 	})
 end
 
-local function sync_mount_state_from_server(statePayload)
+sync_mount_state_from_server = function(statePayload)
 	local wasMounted = mountedState.Active
+	local previousTransitionMode = mountedState.TransitionMode
 	local mounted = type(statePayload) == "table" and statePayload.Mounted == true
 
 	mountedState.Active = mounted
@@ -1058,17 +1012,46 @@ local function sync_mount_state_from_server(statePayload)
 
 	if mounted then
 		panelOpen = false
+		bind_dismount_action()
+		mountedState.TransitionMode = nil
+		clear_transition_root_targets()
+		cancel_camera_transition()
 
 		if not wasMounted then
-			mountedState.CameraYaw = get_control_start_yaw()
+			if previousTransitionMode ~= "Mounting" then
+				mountedState.CameraYaw = get_control_start_yaw()
+			end
 			set_mobile_sprint_pressed(false)
 			reset_local_prediction()
 			prepare_camera_for_mount()
 			send_mount_input(true)
 		end
+
+		set_local_rider_mode("Idle")
 	elseif wasMounted then
+		mountedState.TransitionMode = nil
+		clear_transition_root_targets()
 		set_mobile_sprint_pressed(false)
 		reset_local_prediction()
+		unbind_dismount_action()
+		stop_local_rider_tracks(0.08)
+		if previousTransitionMode == "Dismounting" then
+			task.spawn(function()
+				RunService.Heartbeat:Wait()
+				if not mountedState.Active then
+					release_camera_after_dismount()
+				end
+			end)
+		else
+			restore_camera()
+		end
+	elseif UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter
+		or (Workspace.CurrentCamera and Workspace.CurrentCamera.CameraType == Enum.CameraType.Scriptable)
+	then
+		mountedState.TransitionMode = nil
+		clear_transition_root_targets()
+		unbind_dismount_action()
+		stop_local_rider_tracks(0.08)
 		restore_camera()
 	end
 
@@ -1076,11 +1059,12 @@ local function sync_mount_state_from_server(statePayload)
 end
 
 request_dismount = function()
-	if requestInFlight or not mountedState.Active then
+	if requestInFlight or not mountedState.Active or mountedState.TransitionMode == "Dismounting" then
 		return
 	end
 
 	requestInFlight = true
+	unbind_dismount_action()
 	update_ui_state()
 
 	local success, response = pcall(function()
@@ -1092,10 +1076,14 @@ request_dismount = function()
 	requestInFlight = false
 
 	if success and response and response.Success then
-		sync_mount_state_from_server({
-			Mounted = false,
-		})
+		update_ui_state()
 	else
+		mountedState.TransitionMode = nil
+		clear_transition_root_targets()
+		cancel_camera_transition()
+		if mountedState.Active then
+			bind_dismount_action()
+		end
 		update_ui_state()
 	end
 end
@@ -1114,13 +1102,37 @@ DataUtility.client.bind("Horses.OrderedIds", function()
 	end
 end)
 
+localPlayer.CharacterRemoving:Connect(function()
+	clear_local_rider_animation_state()
+	sync_mount_state_from_server({
+		Mounted = false,
+	})
+end)
+
+localPlayer.CharacterAdded:Connect(function()
+	clear_local_rider_animation_state()
+	task.defer(function()
+		if not mountedState.Active then
+			restore_camera()
+		end
+	end)
+end)
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed or not mountedState.Active then
+	if not mountedState.Active then
 		return
 	end
 
-	if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+	if input.KeyCode == Enum.KeyCode.LeftControl
+		or input.KeyCode == Enum.KeyCode.RightControl
+		or input.KeyCode == Enum.KeyCode.P
+	then
 		request_dismount()
+		return
+	end
+
+	if gameProcessed then
+		return
 	end
 end)
 
@@ -1129,8 +1141,32 @@ Net.Event.HorseMountState:Connect(function(payload)
 		return
 	end
 
-	if payload.Kind == "Mounted" and payload.State then
+	if payload.Kind == "Mounting" then
+		if is_finite_number(payload.CameraYaw) then
+			mountedState.CameraYaw = payload.CameraYaw
+		end
+
+		mountedState.TransitionMode = "Mounting"
+		clear_transition_root_targets()
+		play_local_mount_transition(
+			payload.Duration or HorseMountConfig.MountTransitionDuration or 1.8,
+			payload.TargetCFrame
+		)
+	elseif payload.Kind == "Mounted" and payload.State then
 		sync_mount_state_from_server(payload.State)
+	elseif payload.Kind == "Dismounting" then
+		if mountedState.Active then
+			mountedState.TransitionMode = "Dismounting"
+			clear_transition_root_targets()
+			unbind_dismount_action()
+			release_camera_after_dismount()
+			play_local_dismount_transition(
+				payload.AnimationDuration or HorseMountConfig.DismountTransitionDuration or 0.95,
+				payload.SettleDuration or HorseMountConfig.DismountSettleDuration or 0.12,
+				payload.TargetCFrame
+			)
+			update_ui_state()
+		end
 	elseif payload.Kind == "Unmounted" then
 		sync_mount_state_from_server({
 			Mounted = false,
@@ -1151,12 +1187,20 @@ task.spawn(function()
 end)
 
 RunService.RenderStepped:Connect(function(deltaTime)
+	update_camera_restore(deltaTime)
+	update_camera_transition(deltaTime)
+
 	if not mountedState.Active then
 		return
 	end
 
+	if mountedState.TransitionMode == "Dismounting" then
+		return
+	end
+
+	local sensitivityMultiplier = get_running_sensitivity_multiplier()
 	mountedState.CameraYaw = wrap_angle(
-		mountedState.CameraYaw - (UserInputService:GetMouseDelta().X * HorseMountConfig.MouseSensitivity)
+		mountedState.CameraYaw - (UserInputService:GetMouseDelta().X * HorseMountConfig.MouseSensitivity * sensitivityMultiplier)
 	)
 
 	update_local_mount_prediction(deltaTime)
@@ -1179,6 +1223,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	end
 
 	update_camera_fov(deltaTime)
+	update_local_rider_animation()
 
 	send_mount_input(false)
 end)

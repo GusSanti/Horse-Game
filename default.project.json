@@ -5,42 +5,50 @@
 
     "ReplicatedFirst": {
       "$className": "ReplicatedFirst",
-      "$path": "src/ReplicatedFirst"
+      "$path": "src/ReplicatedFirst",
+      "$ignoreUnknownInstances": true
     },
 
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
-      "$path": "src/ReplicatedStorage"
+      "$path": "src/ReplicatedStorage",
+      "$ignoreUnknownInstances": true
     },
 
     "ServerScriptService": {
       "$className": "ServerScriptService",
-      "$path": "src/ServerScriptService"
+      "$path": "src/ServerScriptService",
+      "$ignoreUnknownInstances": true
     },
 
     "ServerStorage": {
       "$className": "ServerStorage",
-      "$path": "src/ServerStorage"
+      "$path": "src/ServerStorage",
+      "$ignoreUnknownInstances": true
     },
 
     "StarterGui": {
       "$className": "StarterGui",
-      "$path": "src/StarterGui"
+      "$path": "src/StarterGui",
+      "$ignoreUnknownInstances": true
     },
 
     "StarterPack": {
       "$className": "StarterPack",
-      "$path": "src/StarterPack"
+      "$path": "src/StarterPack",
+      "$ignoreUnknownInstances": true
     },
 
     "StarterPlayer": {
       "$className": "StarterPlayer",
-      "$path": "src/StarterPlayer"
+      "$path": "src/StarterPlayer",
+      "$ignoreUnknownInstances": true
     },
 
     "Workspace": {
       "$className": "Workspace",
-      "$path": "src/Workspace"
+      "$path": "src/Workspace",
+      "$ignoreUnknownInstances": true
     }
   }
 }

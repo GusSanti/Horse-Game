@@ -30,10 +30,7 @@ local PLOT_VALUE_NAME: string = ToolDictionary.PlotValueName
 local HORSE_FOLDER_NAME: string = ToolDictionary.HorseFolderName
 local VISUAL_HORSE_ATTRIBUTE: string = ToolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE: string = ToolDictionary.HorseIdAttribute
-<<<<<<< HEAD
 local MOUNTED_USER_ID_ATTRIBUTE: string = ToolDictionary.MountedUserIdAttribute
-=======
->>>>>>> 195659b88c766874c571f120753043b7e7888f60
 local IGNORE_REFRESH_ATTRIBUTE: string = ToolDictionary.IgnoreRefreshAttribute
 
 local plotValue: ObjectValue = localPlayer:WaitForChild(PLOT_VALUE_NAME)
@@ -142,13 +139,10 @@ local function should_ignore_descendant(descendant: Instance): boolean
 	return false
 end
 
-<<<<<<< HEAD
 local function is_horse_mounted(horseVisual: Instance): boolean
 	return horseVisual:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE) ~= nil
 end
 
-=======
->>>>>>> 195659b88c766874c571f120753043b7e7888f60
 local function destroy_billboard(horseVisual: Instance): ()
 	local entry = activeBillboards[horseVisual]
 	if not entry then
@@ -176,11 +170,7 @@ end
 
 local function remove_stale_billboard_gui(horseVisual: Instance): ()
 	for _, child: Instance in horseVisual:GetChildren() do
-<<<<<<< HEAD
 		if child:IsA("BillboardGui") and child.Name == BILLBOARD_NAME then
-=======
-		if child:IsA("BillboardGui") and (child.Name == BILLBOARD_NAME or child.Name == "HorseBondBillboard") then
->>>>>>> 195659b88c766874c571f120753043b7e7888f60
 			child:Destroy()
 		end
 	end
@@ -237,13 +227,10 @@ local function create_status_row(parent: Instance, statusName: string)
 end
 
 local function create_billboard(horseVisual: Instance)
-<<<<<<< HEAD
 	if is_horse_mounted(horseVisual) then
 		return nil
 	end
 
-=======
->>>>>>> 195659b88c766874c571f120753043b7e7888f60
 	local horseId = horseVisual:GetAttribute(HORSE_ID_ATTRIBUTE)
 	if type(horseId) ~= "string" or horseId == "" then
 		return nil
@@ -395,13 +382,10 @@ local function sync_billboards(): ()
 	local visualsToDestroy = {}
 
 	for _, horseVisual: Instance in visuals do
-<<<<<<< HEAD
 		if is_horse_mounted(horseVisual) then
 			continue
 		end
 
-=======
->>>>>>> 195659b88c766874c571f120753043b7e7888f60
 		activeVisuals[horseVisual] = true
 
 		if not activeBillboards[horseVisual] then
@@ -491,18 +475,7 @@ RunService.Heartbeat:Connect(function(deltaTime: number)
 	end
 
 	elapsedSinceRefresh = 0
-<<<<<<< HEAD
 	sync_billboards()
-=======
-
-	for horseVisual, entry in activeBillboards do
-		if not horseVisual.Parent then
-			destroy_billboard(horseVisual)
-		else
-			update_billboard(entry)
-		end
-	end
->>>>>>> 195659b88c766874c571f120753043b7e7888f60
 end)
 
 ------------------//INIT

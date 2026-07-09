@@ -157,7 +157,28 @@ end
 
 DataUtility.client.ensure_remotes()
 
-local screenGui = script.Parent
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer:WaitForChild("PlayerGui")
+local scriptContainer = script.Parent
+local screenGui = nil
+
+if scriptContainer:IsA("ScreenGui") then
+	screenGui = scriptContainer
+else
+	screenGui = scriptContainer:FindFirstChild("QuestPlaceholderScreenGui")
+
+	if screenGui and not screenGui:IsA("ScreenGui") then
+		screenGui:Destroy()
+		screenGui = nil
+	end
+
+	if not screenGui then
+		screenGui = Instance.new("ScreenGui")
+		screenGui.Name = "QuestPlaceholderScreenGui"
+		screenGui.Parent = playerGui
+	end
+end
+
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -382,6 +403,7 @@ local footerLabel = create("TextLabel", {
 local orderedQuestIds = buildOrderedQuestIds()
 local rowsByQuestId = {}
 local isExpanded = true
+local isVisible = false
 
 local function updateCanvasSize()
 	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + listPadding.PaddingTop.Offset + listPadding.PaddingBottom.Offset)
@@ -393,6 +415,11 @@ local function setExpanded(expanded)
 	footerLabel.Visible = expanded
 	rootFrame.Size = expanded and EXPANDED_SIZE or COLLAPSED_SIZE
 	toggleButton.Text = expanded and "Hide" or "Show"
+end
+
+local function setVisible(visible)
+	isVisible = visible == true
+	screenGui.Enabled = isVisible
 end
 
 for layoutOrder, questId in ipairs(orderedQuestIds) do
@@ -567,7 +594,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 
 	if input.KeyCode == TOGGLE_KEY then
-		setExpanded(not isExpanded)
+		setVisible(not isVisible)
 	end
 end)
 
@@ -586,4 +613,5 @@ task.spawn(function()
 	end
 end)
 
+setVisible(false)
 render()
