@@ -1,5 +1,24 @@
 local QuestCatalog = {}
 
+local DEFAULT_HORSESHOE_REWARD_AMOUNT = 300
+
+local function create_horseshoe_reward(amount)
+	local normalizedAmount = math.max(0, math.floor(tonumber(amount) or 0))
+
+	return {
+		Horseshoes = normalizedAmount,
+		Items = {},
+		Display = {
+			Type = "Currency",
+			CurrencyId = "Horseshoes",
+			ShortName = "HS",
+			Amount = normalizedAmount,
+			TextFormat = "HS $%d",
+			IconKey = "Horseshoe",
+		},
+	}
+end
+
 QuestCatalog.DailyPool = {
 	"daily_feed_horse",
 	"daily_groom_horse",
@@ -21,12 +40,7 @@ QuestCatalog.Definitions = {
 			StatPath = "Stats.TotalFeedActions",
 			Target = 3,
 		},
-		Rewards = {
-			Horseshoes = 60,
-			Items = {
-				{ ItemId = "apple_treat", Amount = 1 },
-			},
-		},
+		Rewards = create_horseshoe_reward(DEFAULT_HORSESHOE_REWARD_AMOUNT),
 	},
 	daily_groom_horse = {
 		Id = "daily_groom_horse",
@@ -39,12 +53,7 @@ QuestCatalog.Definitions = {
 			StatPath = "Stats.TotalGroomActions",
 			Target = 2,
 		},
-		Rewards = {
-			Horseshoes = 55,
-			Items = {
-				{ ItemId = "soft_brush", Amount = 1 },
-			},
-		},
+		Rewards = create_horseshoe_reward(DEFAULT_HORSESHOE_REWARD_AMOUNT),
 	},
 	daily_clean_stable = {
 		Id = "daily_clean_stable",
@@ -57,12 +66,7 @@ QuestCatalog.Definitions = {
 			StatPath = "Stats.TotalCleanActions",
 			Target = 2,
 		},
-		Rewards = {
-			Horseshoes = 55,
-			Items = {
-				{ ItemId = "grooming_kit", Amount = 1 },
-			},
-		},
+		Rewards = create_horseshoe_reward(DEFAULT_HORSESHOE_REWARD_AMOUNT),
 	},
 	daily_care_combo = {
 		Id = "daily_care_combo",
@@ -75,12 +79,7 @@ QuestCatalog.Definitions = {
 			StatPath = "Stats.TotalCareActions",
 			Target = 5,
 		},
-		Rewards = {
-			Horseshoes = 80,
-			Items = {
-				{ ItemId = "hay_bale", Amount = 1 },
-			},
-		},
+		Rewards = create_horseshoe_reward(DEFAULT_HORSESHOE_REWARD_AMOUNT),
 	},
 	daily_harvest_crop = {
 		Id = "daily_harvest_crop",
@@ -93,12 +92,7 @@ QuestCatalog.Definitions = {
 			StatPath = "Stats.TotalCropsHarvested",
 			Target = 1,
 		},
-		Rewards = {
-			Horseshoes = 70,
-			Items = {
-				{ ItemId = "carrot_seed", Amount = 2 },
-			},
-		},
+		Rewards = create_horseshoe_reward(DEFAULT_HORSESHOE_REWARD_AMOUNT),
 	},
 	daily_arena_run = {
 		Id = "daily_arena_run",
@@ -111,12 +105,7 @@ QuestCatalog.Definitions = {
 			StatPath = "Stats.TotalArenaRuns",
 			Target = 1,
 		},
-		Rewards = {
-			Horseshoes = 90,
-			Items = {
-				{ ItemId = "mint_treat", Amount = 1 },
-			},
-		},
+		Rewards = create_horseshoe_reward(DEFAULT_HORSESHOE_REWARD_AMOUNT),
 	},
 }
 
@@ -133,6 +122,46 @@ function QuestCatalog.GetDailyQuestIdForPlayer(userId, timestamp)
 	local dayToken = math.floor(timestamp / 86400)
 	local index = ((dayToken + math.abs(userId)) % #pool) + 1
 	return pool[index]
+end
+
+function QuestCatalog.GetRewardDisplayData(questDefinitionOrId)
+	local questDefinition = questDefinitionOrId
+
+	if type(questDefinitionOrId) == "string" then
+		questDefinition = QuestCatalog.GetDefinition(questDefinitionOrId)
+	end
+
+	local rewards = questDefinition and questDefinition.Rewards or {}
+	local display = rewards.Display or {}
+	local amount = math.max(0, math.floor(tonumber(display.Amount or rewards.Horseshoes or 0) or 0))
+	local shortName = display.ShortName or "Reward"
+	local displayText = display.Text
+
+	if type(displayText) ~= "string" or displayText == "" then
+		if type(display.TextFormat) == "string" and display.TextFormat ~= "" then
+			local ok, formattedText = pcall(string.format, display.TextFormat, amount)
+			if ok then
+				displayText = formattedText
+			end
+		end
+
+		if type(displayText) ~= "string" or displayText == "" then
+			if amount > 0 then
+				displayText = ("%s $%d"):format(shortName, amount)
+			else
+				displayText = shortName
+			end
+		end
+	end
+
+	return {
+		Type = display.Type or "Reward",
+		CurrencyId = display.CurrencyId,
+		ShortName = shortName,
+		Amount = amount,
+		Text = displayText,
+		IconKey = display.IconKey,
+	}
 end
 
 return QuestCatalog
