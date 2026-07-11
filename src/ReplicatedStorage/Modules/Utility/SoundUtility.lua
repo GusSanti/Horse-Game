@@ -5,6 +5,9 @@ SoundController.__index = SoundController
 local SoundService = game:GetService("SoundService")
 local RunService = game:GetService("RunService")
 
+-- DEPENDENCIES
+local DataUtility = require(script.Parent:WaitForChild("DataUtility"))
+
 -- CONSTANTS
 local DEFAULT_MUSIC_VOLUME = 0.5
 local DEFAULT_SFX_VOLUME = 0.5
@@ -25,22 +28,88 @@ local activeSFX = {}
 local musicEndedConnection = nil
 
 -- FUNCTIONS
-local function createSoundGroups()
-	musicGroup = Instance.new("SoundGroup")
-	musicGroup.Name = "MusicGroup"
-	musicGroup.Parent = SoundService
-	musicGroup.Volume = musicVolume
+local function sanitize_boolean(value, fallback)
+	if type(value) == "boolean" then
+		return value
+	end
 
-	sfxGroup = Instance.new("SoundGroup")
-	sfxGroup.Name = "SFXGroup"
-	sfxGroup.Parent = SoundService
-	sfxGroup.Volume = sfxVolume
+	if type(value) == "number" then
+		return value ~= 0
+	end
+
+	return fallback
+end
+
+local function sanitize_volume(value, fallback)
+	local numericValue = tonumber(value)
+	if numericValue == nil then
+		return fallback
+	end
+
+	return math.clamp(numericValue, 0, 1)
+end
+
+local function apply_initial_client_settings()
+	if not RunService:IsClient() then
+		return
+	end
+
+	DataUtility.client.ensure_remotes()
+
+	local settings = DataUtility.client.get("Settings") or {}
+	musicVolume = sanitize_volume(settings.MusicVolume, DEFAULT_MUSIC_VOLUME)
+	sfxVolume = sanitize_volume(settings.SFXVolume, DEFAULT_SFX_VOLUME)
+	isMusicMuted = not sanitize_boolean(settings.Music, true)
+	isSFXMuted = not sanitize_boolean(settings.SFX, true)
+end
+
+local function get_effective_music_volume()
+	if isMusicMuted then
+		return 0
+	end
+
+	return musicVolume
+end
+
+local function get_effective_sfx_volume()
+	if isSFXMuted then
+		return 0
+	end
+
+	return sfxVolume
+end
+
+local function ensure_sound_group(groupName)
+	local existingGroup = SoundService:FindFirstChild(groupName)
+
+	if existingGroup then
+		if existingGroup:IsA("SoundGroup") then
+			return existingGroup
+		end
+
+		existingGroup:Destroy()
+	end
+
+	local soundGroup = Instance.new("SoundGroup")
+	soundGroup.Name = groupName
+	soundGroup.Parent = SoundService
+
+	return soundGroup
+end
+
+local function createSoundGroups()
+	musicGroup = ensure_sound_group("MusicGroup")
+	sfxGroup = ensure_sound_group("SFXGroup")
+
+	musicGroup.Volume = get_effective_music_volume()
+	sfxGroup.Volume = get_effective_sfx_volume()
 end
 
 local function createSound(soundId, parent, soundGroup)
 	local sound = Instance.new("Sound")
 	sound.SoundId = soundId
 	sound.SoundGroup = soundGroup
+	sound.Volume = 1
 	sound.Parent = parent
 	return sound
 end
@@ -127,18 +196,10 @@ local function getNextQueueIndex()
 	return (musicQueueIndex % #musicQueue) + 1
 end
 
-local function getCurrentMusicVolume()
-	if isMusicMuted then
-		return 0
-	end
-
-	return musicVolume
-end
-
 local function playMusicTrack(soundId, fadeIn, looped, onEnded)
 	currentMusic = createSound(soundId, SoundService, musicGroup)
 	currentMusic.Looped = looped
-	currentMusic.Volume = fadeIn and 0 or getCurrentMusicVolume()
+	currentMusic.Volume = fadeIn and 0 or 1
 	currentMusic:Play()
 
 	disconnectMusicEndedConnection()
@@ -148,7 +209,7 @@ local function playMusicTrack(soundId, fadeIn, looped, onEnded)
 	end
 
 	if fadeIn then
-		fadeSound(currentMusic, getCurrentMusicVolume(), FADE_DURATION)
+		fadeSound(currentMusic, 1, FADE_DURATION)
 	end
 
 	return currentMusic
@@ -189,8 +250,6 @@ function SoundController.PlayMusic(soundId, fadeIn, loop)
 		return SoundController.PlayMusicQueue(soundId, fadeIn)
 	end
 
-	if isMusicMuted then return end
-
 	fadeIn = fadeIn or false
 	loop = loop ~= false
 
@@ -202,8 +261,6 @@ function SoundController.PlayMusic(soundId, fadeIn, loop)
 end
 
 function SoundController.PlayMusicQueue(soundIds, fadeIn)
-	if isMusicMuted then return end
-
 	local normalizedQueue = normalizeMusicQueue(soundIds)
 	if not normalizedQueue then
 		warn("SoundController.PlayMusicQueue requires at least one valid sound id")
@@ -254,7 +311,7 @@ function SoundController.PlaySFX(soundId, parent, volume, pitch)
 	end
 
 	local sound = createSound(soundId, parent, sfxGroup)
-	sound.Volume = volume * sfxVolume
+	sound.Volume = volume
 	sound.PlaybackSpeed = pitch
 	sound:Play()
 
@@ -280,16 +337,12 @@ end
 
 function SoundController.SetMusicVolume(volume)
 	musicVolume = math.clamp(volume, 0, 1)
-	musicGroup.Volume = musicVolume
-
-	if currentMusic and not isMusicMuted then
-		currentMusic.Volume = musicVolume
-	end
+	musicGroup.Volume = get_effective_music_volume()
 end
 
 function SoundController.SetSFXVolume(volume)
 	sfxVolume = math.clamp(volume, 0, 1)
-	sfxGroup.Volume = sfxVolume
+	sfxGroup.Volume = get_effective_sfx_volume()
 end
 
 function SoundController.GetMusicVolume()
@@ -302,21 +355,12 @@ end
 
 function SoundController.MuteMusic(mute)
 	isMusicMuted = mute
-
-	if mute then
-		if currentMusic then
-			currentMusic.Volume = 0
-		end
-	else
-		if currentMusic then
-			currentMusic.Volume = musicVolume
-		end
-	end
+	musicGroup.Volume = get_effective_music_volume()
 end
 
 function SoundController.MuteSFX(mute)
-	print(mute)
 	isSFXMuted = mute
+	sfxGroup.Volume = get_effective_sfx_volume()
 
 	if mute then
 		SoundController.StopAllSFX()
@@ -335,7 +379,16 @@ function SoundController.GetCurrentMusic()
 	return currentMusic
 end
 
+function SoundController.GetMusicSoundGroup()
+	return musicGroup
+end
+
+function SoundController.GetSFXSoundGroup()
+	return sfxGroup
+end
+
 -- INIT
+apply_initial_client_settings()
 SoundController.Init()
 
 return SoundController

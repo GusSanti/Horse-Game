@@ -9,14 +9,16 @@ type Properties = {
 }
 
 -- Services
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 
 -- Imports
 local SoundData = require(script.Parent.SoundData)
+local SoundController = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("SoundUtility"))
 
 local function PlaySound(Scope : any, SoundId : string, Properties : {[string]: any}?)
-	local Sound = SoundService:FindFirstChild(SoundId.Value)
+	local Sound = SoundService:FindFirstChild(SoundId.Value)	
 
 	if not Sound then
 		Sound = Scope:New(Scope:New("Sound", {
@@ -26,6 +28,8 @@ local function PlaySound(Scope : any, SoundId : string, Properties : {[string]: 
 			Parent = SoundService,
 		}), Properties or {})
 	end
+
+	Sound.SoundGroup = SoundController.GetSFXSoundGroup()
 
 	Sound:Play()
 end

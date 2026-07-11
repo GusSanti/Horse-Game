@@ -16,6 +16,9 @@ local ProfileTemplate = {
 
 	Settings = {
 		Music = true,
+		SFX = true,
+		MusicVolume = 0.5,
+		SFXVolume = 0.5,
 		NoShadows = false,
 	},
 

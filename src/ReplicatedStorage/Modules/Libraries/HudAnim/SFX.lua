@@ -29,6 +29,7 @@ local function get(id)
 	s.SoundId = id
 	s.Name = "HudSFX"
 	s.Parent = SoundService
+	s.SoundGroup = SoundController.GetSFXSoundGroup()
 	cache[id] = s
 	return s
 end
@@ -45,6 +46,7 @@ function SFX.play_for(inst, key)
 	if id == "" or id == "rbxassetid://0" then return end
 	local s = get(id)
 	if not s then return end
+	s.SoundGroup = SoundController.GetSFXSoundGroup()
 	s.Volume = inst:GetAttribute("sfx_volume") or defaults.sfx_volume
 	s.PlaybackSpeed = inst:GetAttribute("sfx_speed") or defaults.sfx_speed
 	SoundService:PlayLocalSound(s)

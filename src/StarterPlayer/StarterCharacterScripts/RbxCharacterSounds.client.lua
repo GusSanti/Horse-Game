@@ -10,13 +10,16 @@ RbxCharacterSounds - DO NOT MODIFY THIS SCRIPT UNLESS YOU KNOW WHAT YOU'RE DOING
 ]]
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
+local SoundController = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("SoundUtility"))
 
 local function ensureDefaultMaterialSound(parent, materialName)
 	local sound = parent:FindFirstChild(materialName)
 	if sound and sound:IsA("Sound") then
+		sound.SoundGroup = SoundController.GetSFXSoundGroup()
 		return sound
 	end
 
@@ -27,6 +30,7 @@ local function ensureDefaultMaterialSound(parent, materialName)
 	sound = Instance.new("Sound")
 	sound.Name = materialName
 	sound.SoundId = "rbxasset://sounds/action_footsteps_plastic.mp3"
+	sound.SoundGroup = SoundController.GetSFXSoundGroup()
 	sound.Volume = 0.65
 	sound.PlaybackSpeed = 1
 	sound.Parent = parent
@@ -175,6 +179,7 @@ local function initializeSoundSystem(player, humanoid, rootPart)
 		sound.Archivable = false
 		sound.EmitterSize = 5
 		sound.MaxDistance = 150
+		sound.SoundGroup = SoundController.GetSFXSoundGroup()
 		sound.Volume = 0.65
 
 		for propName, propValue in pairs(props) do
