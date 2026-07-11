@@ -10,7 +10,7 @@ local MAINFRAME_NAME = "MainframeFR"
 local CONFIRMATION_FRAME_NAMES = { "ConfirmationFR" }
 local DIALOGUE_FRAME_NAMES = { "DialogueFR" }
 local TASKS_FRAME_NAMES = { "TasksFR" }
-local FEEDING_FRAME_NAMES = { "FeedingFR" }
+local FEEDING_FRAME_NAMES = { "FeedingFR", "LoadingFR" }
 
 local DIALOGUE_TITLE_NAMES = { "DialogueNameTX" }
 local DIALOGUE_TITLE_SHADOW_NAMES = { "DialogueNameShadowTX" }
@@ -146,8 +146,15 @@ local function find_progress_gradient(root: Instance?): UIGradient?
 		return nil
 	end
 
+	local directGradient = root:FindFirstChildWhichIsA("UIGradient")
+	if directGradient then
+		directGradient.Rotation = 0
+		return directGradient
+	end
+
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("UIGradient") then
+			descendant.Rotation = 0
 			return descendant
 		end
 	end
@@ -164,7 +171,8 @@ local function find_bar_fill(root: Instance?): GuiObject?
 
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("GuiObject") and matches_alias(descendant, BAR_NAMES) then
-			if descendant:FindFirstChildWhichIsA("UIGradient", true) then
+			local parent = descendant.Parent
+			if parent and matches_alias(parent, BAR_NAMES) and descendant:FindFirstChildWhichIsA("UIGradient", true) then
 				return descendant
 			end
 
@@ -185,6 +193,7 @@ local function get_refs()
 	local dialogue = find_gui_object(mainframe, DIALOGUE_FRAME_NAMES, true)
 	local tasks = find_gui_object(mainframe, TASKS_FRAME_NAMES, true)
 	local feeding = find_gui_object(tasks or mainframe, FEEDING_FRAME_NAMES, true)
+	local progressBarFill = find_bar_fill(feeding)
 
 	cachedRefs = {
 		Dialogue = dialogue,
@@ -199,8 +208,8 @@ local function get_refs()
 		FeedingTextShadow = find_text_label(feeding, FEEDING_TEXT_SHADOW_NAMES),
 		TimerText = find_text_label(feeding, TIMER_TEXT_NAMES),
 		TimerTextShadow = find_text_label(feeding, TIMER_TEXT_SHADOW_NAMES),
-		ProgressGradient = find_progress_gradient(feeding),
-		ProgressBarFill = find_bar_fill(feeding),
+		ProgressGradient = find_progress_gradient(progressBarFill) or find_progress_gradient(feeding),
+		ProgressBarFill = progressBarFill,
 	}
 
 	return cachedRefs
@@ -224,6 +233,14 @@ local function set_visible(guiObject: GuiObject?, isVisible: boolean): ()
 	end
 end
 
+local function is_descendant_of(instance: Instance?, ancestor: Instance?): boolean
+	if not instance or not ancestor then
+		return false
+	end
+
+	return instance ~= ancestor and instance:IsDescendantOf(ancestor)
+end
+
 local function set_text_pair(primary: TextLabel?, shadow: TextLabel?, text: string): ()
 	if primary then
 		primary.Text = text
@@ -231,6 +248,22 @@ local function set_text_pair(primary: TextLabel?, shadow: TextLabel?, text: stri
 
 	if shadow then
 		shadow.Text = text
+	end
+end
+
+local function set_button_text(button: GuiButton?, text: string?): ()
+	if not button or type(text) ~= "string" or text == "" then
+		return
+	end
+
+	if button:IsA("TextButton") then
+		button.Text = text
+	end
+
+	for _, descendant in ipairs(button:GetDescendants()) do
+		if descendant:IsA("TextLabel") then
+			descendant.Text = text
+		end
 	end
 end
 
@@ -489,9 +522,7 @@ function HorseInteractionUi.ShowDialogue(config): boolean
 	end
 
 	if refs.AcceptButton then
-		if refs.AcceptButton:IsA("TextButton") and type(config.acceptText) == "string" and config.acceptText ~= "" then
-			refs.AcceptButton.Text = config.acceptText
-		end
+		set_button_text(refs.AcceptButton, config.acceptText)
 
 		buttonConnections[#buttonConnections + 1] = refs.AcceptButton.MouseButton1Click:Connect(function()
 			HorseInteractionUi.HideDialogue()
@@ -502,9 +533,7 @@ function HorseInteractionUi.ShowDialogue(config): boolean
 	end
 
 	if refs.DenyButton then
-		if refs.DenyButton:IsA("TextButton") and type(config.denyText) == "string" and config.denyText ~= "" then
-			refs.DenyButton.Text = config.denyText
-		end
+		set_button_text(refs.DenyButton, config.denyText)
 
 		buttonConnections[#buttonConnections + 1] = refs.DenyButton.MouseButton1Click:Connect(function()
 			HorseInteractionUi.HideDialogue()
@@ -534,8 +563,10 @@ function HorseInteractionUi.ShowTask(config): boolean
 		return false
 	end
 
+	local taskLivesInsideDialogue = is_descendant_of(refs.Tasks, refs.Dialogue) or is_descendant_of(refs.Feeding, refs.Dialogue)
+
 	hide_confirmation_root()
-	set_visible(refs.Dialogue, false)
+	set_visible(refs.Dialogue, taskLivesInsideDialogue)
 	set_visible(refs.Tasks, true)
 	set_visible(refs.Feeding, true)
 
@@ -564,9 +595,14 @@ function HorseInteractionUi.HideTask(): ()
 		return
 	end
 
+	local taskLivesInsideDialogue = is_descendant_of(refs.Tasks, refs.Dialogue) or is_descendant_of(refs.Feeding, refs.Dialogue)
+
 	hide_confirmation_root()
 	set_visible(refs.Feeding, false)
 	set_visible(refs.Tasks, false)
+	if taskLivesInsideDialogue then
+		set_visible(refs.Dialogue, false)
+	end
 	apply_progress(0)
 end
 

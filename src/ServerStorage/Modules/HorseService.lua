@@ -15,6 +15,7 @@ local PRIMARY_HORSE_SLOT_NAME = "Slot1"
 local VISUAL_HORSE_ATTRIBUTE = "IsStableVisualHorse"
 local HORSE_ID_ATTRIBUTE = "HorseId"
 local HORSE_CATALOG_ID_ATTRIBUTE = "HorseCatalogId"
+local HORSE_VISUAL_MODEL_NAME_ATTRIBUTE = "HorseVisualModelName"
 local STATUS_UPDATE_INTERVAL_SECONDS = 60
 
 ------------------//VARIABLES
@@ -445,6 +446,55 @@ local function clear_visual_horse_from_slot(slotFolder: Instance): ()
 	end
 end
 
+local function get_visual_horses_in_slot(slotFolder: Instance): {Instance}
+	local visualHorses = {}
+
+	for _, child: Instance in slotFolder:GetChildren() do
+		if child:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true then
+			visualHorses[#visualHorses + 1] = child
+		end
+	end
+
+	return visualHorses
+end
+
+local function apply_visual_horse_metadata(visualHorse: Instance, horse): ()
+	visualHorse.Name = horse.Id
+	visualHorse:SetAttribute(VISUAL_HORSE_ATTRIBUTE, true)
+	visualHorse:SetAttribute(HORSE_ID_ATTRIBUTE, horse.Id)
+	visualHorse:SetAttribute(HORSE_CATALOG_ID_ATTRIBUTE, horse.CatalogId)
+	visualHorse:SetAttribute(HORSE_VISUAL_MODEL_NAME_ATTRIBUTE, get_horse_visual_model_name(horse))
+end
+
+local function has_matching_visual_horse_identity(visualHorse: Instance, horse): boolean
+	if visualHorse:GetAttribute(VISUAL_HORSE_ATTRIBUTE) ~= true then
+		return false
+	end
+
+	if visualHorse:GetAttribute(HORSE_ID_ATTRIBUTE) ~= horse.Id then
+		return false
+	end
+
+	if visualHorse:GetAttribute(HORSE_CATALOG_ID_ATTRIBUTE) ~= horse.CatalogId then
+		return false
+	end
+
+	return true
+end
+
+local function is_visual_horse_current(visualHorse: Instance, horse): boolean
+	if not has_matching_visual_horse_identity(visualHorse, horse) then
+		return false
+	end
+
+	local currentModelName = visualHorse:GetAttribute(HORSE_VISUAL_MODEL_NAME_ATTRIBUTE)
+	if type(currentModelName) ~= "string" or currentModelName == "" then
+		return true
+	end
+
+	return visualHorse:GetAttribute(HORSE_VISUAL_MODEL_NAME_ATTRIBUTE) == get_horse_visual_model_name(horse)
+end
+
 local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instance?, string)
 	clear_visual_horse_from_slot(slotFolder)
 
@@ -459,10 +509,7 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 	end
 
 	local visualHorse = horseModel:Clone()
-	visualHorse.Name = horse.Id
-	visualHorse:SetAttribute(VISUAL_HORSE_ATTRIBUTE, true)
-	visualHorse:SetAttribute(HORSE_ID_ATTRIBUTE, horse.Id)
-	visualHorse:SetAttribute(HORSE_CATALOG_ID_ATTRIBUTE, horse.CatalogId)
+	apply_visual_horse_metadata(visualHorse, horse)
 	visualHorse.Parent = slotFolder
 
 	if visualHorse:IsA("Model") or visualHorse:IsA("BasePart") then
@@ -482,6 +529,21 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 
 	visualHorse:Destroy()
 	return nil, "InvalidHorseModelType"
+end
+
+local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
+	if not horse then
+		clear_visual_horse_from_slot(slotFolder)
+		return
+	end
+
+	local visualHorses = get_visual_horses_in_slot(slotFolder)
+	if #visualHorses == 1 and is_visual_horse_current(visualHorses[1], horse) then
+		apply_visual_horse_metadata(visualHorses[1], horse)
+		return
+	end
+
+	create_visual_horse_in_slot(slotFolder, horse)
 end
 
 local function build_horse_summary(horse, equippedHorseId, now: number?)
@@ -1028,25 +1090,16 @@ function HorseService.sync_plot_horses(player: Player, plot: Instance): (boolean
 		return false, "HorseFolderMissing"
 	end
 
-	HorseService.clear_plot_horses(plot)
-
 	local ownedStalls = get_owned_stalls(stable)
 	local horseSlots = stable.HorseSlots or {}
 	local ownedHorses = horses.Owned or {}
 
 	for slotIndex, slotName: string in StableDictionary.HorseSlotOrder do
-		if slotIndex > ownedStalls then
-			break
-		end
-
 		local slotFolder = horseFolder:FindFirstChild(slotName)
-		local horseId = horseSlots[slotName]
-
-		if slotFolder and horseId ~= "" then
-			local horse = ownedHorses[horseId]
-			if horse then
-				create_visual_horse_in_slot(slotFolder, horse)
-			end
+		if slotFolder then
+			local horseId = slotIndex <= ownedStalls and horseSlots[slotName] or ""
+			local horse = horseId ~= "" and ownedHorses[horseId] or nil
+			sync_visual_horse_in_slot(slotFolder, horse)
 		end
 	end
 

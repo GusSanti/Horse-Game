@@ -7,6 +7,12 @@ local GameData = Modules:WaitForChild("GameData")
 local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
 
 local HorseMountGeometry = {}
+local MOUNT_ROOT_NAME = "HorseMountRoot"
+local MOUNT_SEAT_NAME = "HorseMountSeat"
+
+local function should_include_in_ground_offset(basePart)
+	return basePart.Name ~= MOUNT_ROOT_NAME and basePart.Name ~= MOUNT_SEAT_NAME
+end
 
 local function get_base_part_lowest_y(basePart)
 	local cframe = basePart.CFrame
@@ -29,6 +35,10 @@ end
 
 local function get_instance_lowest_y(instance)
 	if instance:IsA("BasePart") then
+		if not should_include_in_ground_offset(instance) then
+			return nil
+		end
+
 		return get_base_part_lowest_y(instance)
 	end
 
@@ -36,7 +46,7 @@ local function get_instance_lowest_y(instance)
 	local foundBasePart = false
 
 	for _, descendant in ipairs(instance:GetDescendants()) do
-		if descendant:IsA("BasePart") then
+		if descendant:IsA("BasePart") and should_include_in_ground_offset(descendant) then
 			foundBasePart = true
 			lowestY = math.min(lowestY, get_base_part_lowest_y(descendant))
 		end

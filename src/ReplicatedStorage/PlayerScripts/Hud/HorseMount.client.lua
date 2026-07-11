@@ -26,6 +26,7 @@ local plotValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName)
 
 local BUTTON_TEXT = "Montar"
 local MOUNT_ROOT_NAME = "HorseMountRoot"
+local MOUNT_SEAT_NAME = "HorseMountSeat"
 local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
 local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
 local LOCAL_MOUNT_SMOOTHNESS = 26
@@ -551,8 +552,16 @@ local function get_base_part_lowest_y(basePart)
 	return lowestY
 end
 
+local function should_include_in_ground_offset(basePart)
+	return basePart.Name ~= MOUNT_ROOT_NAME and basePart.Name ~= MOUNT_SEAT_NAME
+end
+
 local function get_instance_lowest_y(instance)
 	if instance:IsA("BasePart") then
+		if not should_include_in_ground_offset(instance) then
+			return nil
+		end
+
 		return get_base_part_lowest_y(instance)
 	end
 
@@ -560,7 +569,7 @@ local function get_instance_lowest_y(instance)
 	local foundBasePart = false
 
 	for _, descendant in ipairs(instance:GetDescendants()) do
-		if descendant:IsA("BasePart") then
+		if descendant:IsA("BasePart") and should_include_in_ground_offset(descendant) then
 			foundBasePart = true
 			lowestY = math.min(lowestY, get_base_part_lowest_y(descendant))
 		end
@@ -580,6 +589,15 @@ local function get_ground_offset(instance)
 	end
 
 	return instance:GetPivot().Position.Y - lowestY
+end
+
+local function get_target_ground_offset(baseGroundOffset, sprinting)
+	local groundOffset = baseGroundOffset or 0
+	if sprinting ~= true then
+		groundOffset += HorseMountConfig.IdleWalkGroundOffsetDelta or 0
+	end
+
+	return groundOffset
 end
 
 local function resolve_ground_position(position, ignoreList, groundOffset)
@@ -868,10 +886,11 @@ local function update_local_mount_prediction(deltaTime)
 	local currentPosition = mountRoot.Position
 	local verticalVelocity = 0
 	if HorseMountConfig.StickMountedHorseToGround == true then
+		local targetGroundOffset = get_target_ground_offset(localPrediction.GroundOffset, sprinting)
 		local groundedPosition = resolve_ground_position(
 			currentPosition,
 			{ horseVisual, localPlayer.Character },
-			localPrediction.GroundOffset
+			targetGroundOffset
 		)
 		local verticalError = groundedPosition.Y - currentPosition.Y
 		verticalVelocity = math.clamp(

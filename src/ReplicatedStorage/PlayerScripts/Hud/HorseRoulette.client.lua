@@ -2,16 +2,20 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local ClientModules = Modules:WaitForChild("Client")
 local GameData = Modules:WaitForChild("GameData")
+local HudModules = ClientModules:WaitForChild("Hud")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local Trove = require(Libraries:WaitForChild("Trove"))
+local HorseInteractionUi = require(HudModules:WaitForChild("HorseInteractionUi"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
@@ -27,12 +31,13 @@ local SPIN_BUTTON_NAMES = { "SpinBT" }
 local CLOSE_BUTTON_NAMES = { "CloseBT" }
 local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
 
-local RESULT_GUI_NAME = "HorseStarterRevealRewardGui"
+local RESULT_GUI_NAME = "HorseRouletteRewardGui"
 local POINTER_ANGLE_DEGREES = -90
 local SLOT_COUNT = 8
 local WHEEL_SPIN_DURATION = 5.2
 local WHEEL_SPIN_FULL_TURNS = 6
 local RESULT_DISPLAY_SECONDS = 3
+local STUDIO_ACCESS_OVERRIDE = RunService:IsStudio()
 
 local SLOT_CAMERA_CONFIG = {
 	FieldOfView = 30,
@@ -59,20 +64,29 @@ local rootTrove = Trove.new()
 local uiTrove = Trove.new()
 
 local currentUi = nil
-local activePendingReveal = nil
-local currentRevealHorseId = nil
-local preparedRevealHorseId = nil
-local preparedUiRoot = nil
-local isSpinInProgress = false
-
+local pendingStarterReveal = false
+local isRouletteOpen = false
+local isRouletteRolling = false
+local isDialogueVisible = false
+local slotPopulateGeneration = 0
 local rewardGui = nil
-local rewardOverlay = nil
 local rewardViewport = nil
 local rewardNameLabel = nil
 
-local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName)
-local horseRemotes = gameplayRemotes:WaitForChild(NetworkConfig.Horse.FolderName)
-local acknowledgeRevealRemote = horseRemotes:WaitForChild(NetworkConfig.Horse.AcknowledgeReveal)
+local rouletteState = {
+	Price = HorseCatalog.RoulettePrice or 500,
+	Balance = 0,
+	FreeWhenZero = false,
+	Horses = horseOptions,
+	CanRoll = true,
+}
+
+local update_spin_button
+local play_spin
+
+local _adminRemotesFolder = nil
+local _adminRemotesFolderResolved = false
+local _cachedRemotes = {}
 
 local function normalize_key(value)
 	if type(value) ~= "string" then
@@ -166,6 +180,62 @@ local function create(className, properties)
 	return instance
 end
 
+local function invoke_remote(remote, ...)
+	if not remote then
+		return false, "RemoteNotFound"
+	end
+
+	local success, response = pcall(function(...)
+		return remote:InvokeServer(...)
+	end, ...)
+
+	return success, response
+end
+
+local function get_admin_remotes_folder()
+	if _adminRemotesFolderResolved then
+		return _adminRemotesFolder
+	end
+
+	local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName, 15)
+	if gameplayRemotes then
+		_adminRemotesFolder = gameplayRemotes:WaitForChild(NetworkConfig.Admin.FolderName, 15)
+	end
+
+	_adminRemotesFolderResolved = true
+	return _adminRemotesFolder
+end
+
+local function get_admin_remote(remoteName)
+	if _cachedRemotes[remoteName] then
+		return _cachedRemotes[remoteName]
+	end
+
+	local folder = get_admin_remotes_folder()
+	if not folder then
+		return nil
+	end
+
+	local remote = folder:WaitForChild(remoteName, 10)
+	if remote then
+		_cachedRemotes[remoteName] = remote
+	end
+
+	return remote
+end
+
+local function get_roulette_state_remote()
+	return get_admin_remote(NetworkConfig.Admin.GetHorseRouletteState)
+end
+
+local function get_roulette_roll_remote()
+	return get_admin_remote(NetworkConfig.Admin.RollHorseRoulette)
+end
+
+local function has_access()
+	return STUDIO_ACCESS_OVERRIDE or localPlayer:GetAttribute("CanOpenAdminPanel") == true
+end
+
 local function set_button_enabled(button, isEnabled)
 	if not button then
 		return
@@ -177,6 +247,112 @@ local function set_button_enabled(button, isEnabled)
 	if button:IsA("TextButton") or button:IsA("ImageButton") then
 		button.AutoButtonColor = isEnabled
 	end
+end
+
+local function ensure_notice_label(ui)
+	if not ui or not ui.Root then
+		return nil
+	end
+
+	local noticeLabel = ui.Root:FindFirstChild("HorseRouletteNotice")
+	if noticeLabel and noticeLabel:IsA("TextLabel") then
+		return noticeLabel
+	end
+
+	noticeLabel = create("TextLabel", {
+		Name = "HorseRouletteNotice",
+		AnchorPoint = Vector2.new(0.5, 1),
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0.5, 0, 1, -18),
+		Size = UDim2.fromOffset(360, 28),
+		Font = Enum.Font.GothamBold,
+		Text = "",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextSize = 16,
+		TextTransparency = 1,
+		ZIndex = ui.Root.ZIndex + 10,
+		Parent = ui.Root,
+	})
+
+	return noticeLabel
+end
+
+local function show_notice(ui, text, isError)
+	local noticeLabel = ensure_notice_label(ui)
+	if not noticeLabel then
+		return
+	end
+
+	ui.NoticeToken = (ui.NoticeToken or 0) + 1
+	local noticeToken = ui.NoticeToken
+
+	noticeLabel.Text = text
+	noticeLabel.TextColor3 = isError and Color3.fromRGB(255, 176, 176) or Color3.fromRGB(197, 245, 182)
+	noticeLabel.TextTransparency = 0
+
+	task.spawn(function()
+		task.wait(2)
+		if not currentUi or currentUi ~= ui or ui.NoticeToken ~= noticeToken then
+			return
+		end
+
+		local fadeTween = TweenService:Create(
+			noticeLabel,
+			TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+			{ TextTransparency = 1 }
+		)
+		fadeTween:Play()
+	end)
+end
+
+local function clear_notice(ui)
+	local noticeLabel = ensure_notice_label(ui)
+	if not noticeLabel then
+		return
+	end
+
+	ui.NoticeToken = (ui.NoticeToken or 0) + 1
+	noticeLabel.Text = ""
+	noticeLabel.TextTransparency = 1
+end
+
+local function format_horseshoes(amount)
+	return tostring(math.max(0, math.floor(tonumber(amount) or 0)))
+end
+
+local function hide_dialogue()
+	isDialogueVisible = false
+	HorseInteractionUi.HideDialogue()
+end
+
+local function show_dialogue(config)
+	local shown = HorseInteractionUi.ShowDialogue({
+		title = config.title,
+		details = config.details,
+		acceptText = config.acceptText,
+		denyText = config.denyText,
+		onAccept = function()
+			isDialogueVisible = false
+			if type(config.onAccept) == "function" then
+				config.onAccept()
+			end
+			if update_spin_button then
+				task.defer(update_spin_button)
+			end
+		end,
+		onDeny = function()
+			isDialogueVisible = false
+			if type(config.onDeny) == "function" then
+				config.onDeny()
+			end
+			if update_spin_button then
+				task.defer(update_spin_button)
+			end
+		end,
+	})
+
+	isDialogueVisible = shown == true
+	return isDialogueVisible
 end
 
 local function apply_fredoka_font(label)
@@ -202,12 +378,12 @@ local function build_reward_gui()
 		Name = RESULT_GUI_NAME,
 		ResetOnSpawn = false,
 		IgnoreGuiInset = true,
-		DisplayOrder = 140,
+		DisplayOrder = 141,
 		Enabled = false,
 		Parent = playerGui,
 	})
 
-	rewardOverlay = create("Frame", {
+	local overlay = create("Frame", {
 		BackgroundColor3 = Color3.new(0, 0, 0),
 		BackgroundTransparency = 0.5,
 		BorderSizePixel = 0,
@@ -220,7 +396,7 @@ local function build_reward_gui()
 		BackgroundTransparency = 1,
 		Position = UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromOffset(420, 380),
-		Parent = rewardOverlay,
+		Parent = overlay,
 	})
 
 	rewardViewport = create("ViewportFrame", {
@@ -505,16 +681,18 @@ local function build_preview_snapshot(catalogId, cameraConfig, cameraKey)
 	return cachedSnapshot
 end
 
-local function prewarm_preview_snapshots()
+local function prewarm_preview_snapshots(availableHorses)
 	task.spawn(function()
-		for index, horseOption in ipairs(horseOptions) do
+		local previewHorses = type(availableHorses) == "table" and availableHorses or horseOptions
+
+		for index, horseOption in ipairs(previewHorses) do
 			local catalogId = horseOption and horseOption.CatalogId
 			if type(catalogId) == "string" and catalogId ~= "" then
 				build_preview_snapshot(catalogId, SLOT_CAMERA_CONFIG, "wheel")
 				build_preview_snapshot(catalogId, RESULT_CAMERA_CONFIG, "reward")
 			end
 
-			if index < #horseOptions then
+			if index < #previewHorses then
 				RunService.Heartbeat:Wait()
 			end
 		end
@@ -539,7 +717,6 @@ local function populate_horse_viewport(viewportFrame, horseOption, cameraConfig,
 
 	local worldModel = Instance.new("WorldModel")
 	worldModel.Parent = viewportFrame
-
 	snapshot.ModelTemplate:Clone().Parent = worldModel
 
 	local camera = Instance.new("Camera")
@@ -554,11 +731,26 @@ local function populate_horse_viewport(viewportFrame, horseOption, cameraConfig,
 	viewportFrame.LightDirection = snapshot.LightDirection
 end
 
-local function find_horse_option(catalogId)
+local function find_horse_option(catalogId, fallbackHorse)
+	for _, horseOption in ipairs(rouletteState.Horses or {}) do
+		if horseOption.CatalogId == catalogId then
+			return horseOption
+		end
+	end
+
 	for _, horseOption in ipairs(horseOptions) do
 		if horseOption.CatalogId == catalogId then
 			return horseOption
 		end
+	end
+
+	if type(fallbackHorse) == "table" and type(fallbackHorse.CatalogId) == "string" then
+		return {
+			CatalogId = fallbackHorse.CatalogId,
+			DisplayName = fallbackHorse.DisplayName or fallbackHorse.CatalogId,
+			Rarity = fallbackHorse.Rarity,
+			ModelKey = fallbackHorse.ModelKey,
+		}
 	end
 
 	local definition = HorseCatalog.GetDefinition(catalogId)
@@ -647,6 +839,10 @@ local function collect_wheel_slots(wheelBg)
 		return leftAngle < rightAngle
 	end)
 
+	while #slots > SLOT_COUNT do
+		table.remove(slots)
+	end
+
 	return slots
 end
 
@@ -677,8 +873,6 @@ local function get_raffle_ui()
 		SpinButton = spinButton,
 		CloseButton = closeButton,
 		Slots = collect_wheel_slots(wheelBg),
-		WinningSlotIndex = nil,
-		SlotAssignments = nil,
 	}
 end
 
@@ -694,19 +888,11 @@ local function close_other_frames(framesContainer, targetFrame)
 	end
 end
 
-local function acknowledge_reveal(horseId)
-	if type(horseId) ~= "string" or horseId == "" then
-		return
-	end
-
-	acknowledgeRevealRemote:FireServer(horseId)
-end
-
 local function reset_wheel_rotation(ui)
-	local baseRotation = ui.WheelBg:GetAttribute("StarterRevealBaseRotation")
+	local baseRotation = ui.WheelBg:GetAttribute("HorseRouletteBaseRotation")
 	if type(baseRotation) ~= "number" then
 		baseRotation = ui.WheelBg.Rotation
-		ui.WheelBg:SetAttribute("StarterRevealBaseRotation", baseRotation)
+		ui.WheelBg:SetAttribute("HorseRouletteBaseRotation", baseRotation)
 	end
 
 	ui.WheelBg.Rotation = baseRotation
@@ -719,14 +905,49 @@ local function shuffle_array(items)
 	end
 end
 
-local function build_slot_assignments(finalHorseOption, slotCount)
+local function build_idle_slot_assignments(availableHorses, slotCount)
+	local source = {}
+
+	for _, horseOption in ipairs(availableHorses or {}) do
+		source[#source + 1] = horseOption
+	end
+
+	if #source == 0 then
+		for _, horseOption in ipairs(horseOptions) do
+			source[#source + 1] = horseOption
+		end
+	end
+
+	if #source == 0 then
+		return {}
+	end
+
+	shuffle_array(source)
+
+	local assignments = table.create(slotCount)
+	for slotIndex = 1, slotCount do
+		assignments[slotIndex] = source[((slotIndex - 1) % #source) + 1]
+	end
+
+	return assignments
+end
+
+local function build_result_slot_assignments(finalHorseOption, slotCount)
 	local assignments = table.create(slotCount)
 	local winningSlotIndex = slotCount > 1 and math.random(2, slotCount) or 1
 	local fillers = {}
 
-	for _, horseOption in ipairs(horseOptions) do
+	for _, horseOption in ipairs(rouletteState.Horses or {}) do
 		if horseOption.CatalogId ~= finalHorseOption.CatalogId then
 			fillers[#fillers + 1] = horseOption
+		end
+	end
+
+	if #fillers == 0 then
+		for _, horseOption in ipairs(horseOptions) do
+			if horseOption.CatalogId ~= finalHorseOption.CatalogId then
+				fillers[#fillers + 1] = horseOption
+			end
 		end
 	end
 
@@ -752,21 +973,108 @@ local function build_slot_assignments(finalHorseOption, slotCount)
 	return assignments, winningSlotIndex
 end
 
-local function cleanup_reveal_state()
-	isSpinInProgress = false
-	activePendingReveal = nil
-	currentRevealHorseId = nil
-	preparedRevealHorseId = nil
-	preparedUiRoot = nil
+local function cancel_slot_population()
+	slotPopulateGeneration += 1
+end
+
+local function populate_slots(ui, slotAssignments, populateViewportsAsync)
+	if not ui or #slotAssignments == 0 then
+		return
+	end
+
+	cancel_slot_population()
+	local generation = slotPopulateGeneration
+
+	for slotIndex, slot in ipairs(ui.Slots) do
+		local horseOption = slotAssignments[((slotIndex - 1) % #slotAssignments) + 1]
+		slot.Label.Text = horseOption.DisplayName or horseOption.CatalogId
+
+		if populateViewportsAsync then
+			clear_viewport(slot.ViewportFrame)
+		else
+			populate_horse_viewport(slot.ViewportFrame, horseOption, SLOT_CAMERA_CONFIG, "wheel")
+		end
+	end
+
+	if not populateViewportsAsync then
+		return
+	end
+
+	task.spawn(function()
+		for slotIndex, slot in ipairs(ui.Slots) do
+			if slotPopulateGeneration ~= generation or currentUi ~= ui or not isRouletteOpen then
+				return
+			end
+
+			local horseOption = slotAssignments[((slotIndex - 1) % #slotAssignments) + 1]
+			populate_horse_viewport(slot.ViewportFrame, horseOption, SLOT_CAMERA_CONFIG, "wheel")
+
+			if slotIndex < #ui.Slots then
+				RunService.Heartbeat:Wait()
+			end
+		end
+	end)
+end
+
+update_spin_button = function()
+	if not currentUi or pendingStarterReveal then
+		return
+	end
+
+	local hasHorsePool = #rouletteState.Horses > 0
+	local enabled = has_access()
+		and isRouletteOpen
+		and (not isRouletteRolling)
+		and (not isDialogueVisible)
+		and hasHorsePool
+
+	set_button_enabled(currentUi.SpinButton, enabled)
+end
+
+local function close_roulette(forceClose)
+	isRouletteOpen = false
+	isRouletteRolling = false
+	cancel_slot_population()
+	hide_dialogue()
 	hide_reward_gui()
 
-	if currentUi then
-		set_button_enabled(currentUi.SpinButton, true)
-		if currentUi.Root then
-			currentUi.Root.Visible = false
-		end
-		reset_wheel_rotation(currentUi)
+	if not currentUi then
+		return
 	end
+
+	clear_notice(currentUi)
+	set_button_enabled(currentUi.SpinButton, true)
+	reset_wheel_rotation(currentUi)
+
+	if currentUi.Root and (forceClose or not pendingStarterReveal) then
+		currentUi.Root.Visible = false
+	end
+end
+
+local function fetch_roulette_state()
+	if not has_access() then
+		if currentUi then
+			show_notice(currentUi, "You do not have access to open the roulette.", true)
+		end
+		return false
+	end
+
+	local success, response = invoke_remote(get_roulette_state_remote())
+	if not success or not response or response.Success ~= true then
+		if currentUi then
+			show_notice(currentUi, "Could not load the roulette.", true)
+		end
+		return false
+	end
+
+	rouletteState.Price = tonumber(response.Price) or rouletteState.Price
+	rouletteState.Balance = math.max(0, tonumber(response.Balance) or 0)
+	rouletteState.FreeWhenZero = response.FreeWhenZero == true
+	rouletteState.Horses = type(response.Horses) == "table" and response.Horses or horseOptions
+	rouletteState.CanRoll = response.CanRoll == true
+	prewarm_preview_snapshots(rouletteState.Horses)
+
+	return true
 end
 
 local function show_reward_result(horseOption)
@@ -776,84 +1084,153 @@ local function show_reward_result(horseOption)
 	show_reward_gui()
 end
 
-local function prepare_raffle_ui_for_reveal(pendingReveal)
-	if not currentUi or not pendingReveal then
-		return false
+local function show_insufficient_funds_dialog()
+	local priceText = format_horseshoes(rouletteState.Price)
+	local balanceText = format_horseshoes(rouletteState.Balance)
+	local dialogShown = show_dialogue({
+		title = "Not enough Horseshoes",
+		details = string.format(
+			"You need %s Horseshoes to spin the roulette.\nCurrent balance: %s.",
+			priceText,
+			balanceText
+		),
+		acceptText = "OK",
+		denyText = "Close",
+	})
+
+	if not dialogShown and currentUi then
+		show_notice(
+			currentUi,
+			string.format("You need %s Horseshoes to spin the roulette.", priceText),
+			true
+		)
 	end
 
-	if preparedRevealHorseId == pendingReveal.HorseId and preparedUiRoot == currentUi.Root then
-		return true
+	update_spin_button()
+end
+
+local function request_spin()
+	if pendingStarterReveal or not isRouletteOpen or isRouletteRolling or isDialogueVisible or not currentUi then
+		return
 	end
 
-	local finalHorseOption = find_horse_option(pendingReveal.CatalogId)
-	if not finalHorseOption then
-		return false
+	local balance = math.max(0, tonumber(rouletteState.Balance) or 0)
+	local price = math.max(0, tonumber(rouletteState.Price) or 0)
+	if balance < price then
+		show_insufficient_funds_dialog()
+		return
+	end
+
+	local dialogShown = show_dialogue({
+		title = "Confirm roulette",
+		details = string.format(
+			"Do you want to spend %s Horseshoes to spin the roulette?",
+			format_horseshoes(price)
+		),
+		acceptText = "Confirm",
+		denyText = "Cancel",
+		onAccept = function()
+			task.spawn(play_spin)
+		end,
+	})
+
+	if not dialogShown then
+		task.spawn(play_spin)
+		return
+	end
+
+	update_spin_button()
+end
+
+local function open_roulette()
+	if pendingStarterReveal or isRouletteRolling or not has_access() then
+		return
+	end
+
+	if not currentUi then
+		return
+	end
+
+	if not fetch_roulette_state() then
+		return
 	end
 
 	hide_reward_gui()
+	hide_dialogue()
 	close_other_frames(currentUi.FramesContainer, currentUi.Root)
 	currentUi.Root.Visible = true
-	set_button_enabled(currentUi.SpinButton, true)
+	isRouletteOpen = true
+	clear_notice(currentUi)
 	reset_wheel_rotation(currentUi)
 
 	RunService.Heartbeat:Wait()
 
 	currentUi.Slots = collect_wheel_slots(currentUi.WheelBg)
 	if #currentUi.Slots == 0 then
-		return false
+		close_roulette(true)
+		return
 	end
 
-	local slotAssignments, winningSlotIndex = build_slot_assignments(
+	local slotAssignments = build_idle_slot_assignments(
+		rouletteState.Horses,
+		math.min(#currentUi.Slots, SLOT_COUNT)
+	)
+	populate_slots(currentUi, slotAssignments, true)
+	update_spin_button()
+end
+
+play_spin = function()
+	if pendingStarterReveal or not isRouletteOpen or isRouletteRolling or not currentUi then
+		return
+	end
+
+	isRouletteRolling = true
+	update_spin_button()
+
+	local success, response = invoke_remote(get_roulette_roll_remote())
+	if not success or not response or response.Success ~= true then
+		rouletteState.Balance = math.max(0, tonumber(response and response.RemainingHorseshoes) or rouletteState.Balance)
+		isRouletteRolling = false
+
+		if response and response.MessageCode == "InsufficientFunds" then
+			show_insufficient_funds_dialog()
+		elseif response and response.Code == "AccessDenied" then
+			show_notice(currentUi, "You do not have access to use the roulette.", true)
+		else
+			show_notice(currentUi, "Could not spin the roulette.", true)
+		end
+
+		update_spin_button()
+		return
+	end
+
+	rouletteState.Balance = math.max(0, tonumber(response.RemainingHorseshoes) or rouletteState.Balance)
+	clear_notice(currentUi)
+
+	local finalHorse = response.RolledHorse
+	local finalHorseOption = finalHorse and find_horse_option(finalHorse.CatalogId, finalHorse) or nil
+	if not finalHorseOption then
+		close_roulette(true)
+		return
+	end
+
+	currentUi.Slots = collect_wheel_slots(currentUi.WheelBg)
+	if #currentUi.Slots == 0 then
+		close_roulette(true)
+		return
+	end
+
+	local slotAssignments, winningSlotIndex = build_result_slot_assignments(
 		finalHorseOption,
 		math.min(#currentUi.Slots, SLOT_COUNT)
 	)
+	populate_slots(currentUi, slotAssignments, false)
 
-	currentUi.WinningSlotIndex = winningSlotIndex
-	currentUi.SlotAssignments = slotAssignments
-
-	for slotIndex, slot in ipairs(currentUi.Slots) do
-		local horseOption = slotAssignments[((slotIndex - 1) % #slotAssignments) + 1]
-		slot.HorseOption = horseOption
-		slot.Label.Text = horseOption.DisplayName or horseOption.CatalogId
-		populate_horse_viewport(slot.ViewportFrame, horseOption, SLOT_CAMERA_CONFIG, "wheel")
-	end
-
-	preparedRevealHorseId = pendingReveal.HorseId
-	preparedUiRoot = currentUi.Root
-	return true
-end
-
-local function finish_reveal(pendingReveal, finalHorseOption)
-	if currentUi and currentUi.Root then
-		currentUi.Root.Visible = false
-	end
-
-	show_reward_result(finalHorseOption)
-	task.wait(RESULT_DISPLAY_SECONDS)
-	hide_reward_gui()
-	acknowledge_reveal(pendingReveal.HorseId)
-	cleanup_reveal_state()
-end
-
-local function play_spin()
-	if isSpinInProgress or not activePendingReveal or not currentUi then
+	local winningSlot = currentUi.Slots[winningSlotIndex]
+	if not winningSlot then
+		close_roulette(true)
 		return
 	end
-
-	if not prepare_raffle_ui_for_reveal(activePendingReveal) then
-		return
-	end
-
-	local finalHorseOption = find_horse_option(activePendingReveal.CatalogId)
-	local winningSlot = currentUi.Slots[currentUi.WinningSlotIndex or 1]
-	if not finalHorseOption or not winningSlot then
-		acknowledge_reveal(activePendingReveal.HorseId)
-		cleanup_reveal_state()
-		return
-	end
-
-	isSpinInProgress = true
-	set_button_enabled(currentUi.SpinButton, false)
 
 	local currentRotation = currentUi.WheelBg.Rotation
 	local slotAngle = get_slot_screen_angle(winningSlot.Label, currentUi.WheelBg)
@@ -869,12 +1246,25 @@ local function play_spin()
 	spinTween:Play()
 	spinTween.Completed:Wait()
 
-	if not activePendingReveal or activePendingReveal.HorseId ~= currentRevealHorseId then
-		cleanup_reveal_state()
+	if pendingStarterReveal or not isRouletteOpen then
+		close_roulette(true)
 		return
 	end
 
-	finish_reveal(activePendingReveal, finalHorseOption)
+	if currentUi and currentUi.Root then
+		currentUi.Root.Visible = false
+	end
+
+	isRouletteOpen = false
+	show_reward_result(finalHorseOption)
+	task.wait(RESULT_DISPLAY_SECONDS)
+	hide_reward_gui()
+
+	isRouletteRolling = false
+	if currentUi then
+		reset_wheel_rotation(currentUi)
+		update_spin_button()
+	end
 end
 
 local function bind_ui(ui)
@@ -885,8 +1275,6 @@ local function bind_ui(ui)
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
 	currentUi = ui
-	preparedUiRoot = nil
-	preparedRevealHorseId = nil
 
 	uiTrove:Connect(ui.Root.AncestryChanged, function(_, parent)
 		if parent then
@@ -895,8 +1283,6 @@ local function bind_ui(ui)
 
 		if currentUi and currentUi.Root == ui.Root then
 			currentUi = nil
-			preparedUiRoot = nil
-			preparedRevealHorseId = nil
 			task.defer(function()
 				local reboundUi = get_raffle_ui()
 				if reboundUi then
@@ -907,28 +1293,28 @@ local function bind_ui(ui)
 	end)
 
 	uiTrove:Connect(ui.SpinButton.Activated, function()
-		if not activePendingReveal or isSpinInProgress then
+		if pendingStarterReveal or not isRouletteOpen or isRouletteRolling then
 			return
 		end
 
-		task.spawn(play_spin)
+		task.spawn(request_spin)
 	end)
 
 	if ui.CloseButton then
 		uiTrove:Connect(ui.CloseButton.Activated, function()
-			if activePendingReveal then
+			if pendingStarterReveal or isRouletteRolling then
 				return
 			end
 
-			ui.Root.Visible = false
+			close_roulette(true)
 		end)
 	end
 
-	if activePendingReveal then
-		task.defer(function()
-			prepare_raffle_ui_for_reveal(activePendingReveal)
-		end)
+	if isRouletteOpen and not pendingStarterReveal then
+		task.defer(open_roulette)
 	end
+
+	clear_notice(ui)
 end
 
 local function try_bind_ui()
@@ -940,7 +1326,7 @@ local function try_bind_ui()
 	bind_ui(ui)
 end
 
-local function is_reveal_ui_related(instance)
+local function is_roulette_ui_related(instance)
 	return matches_alias(instance, MAIN_UI_NAMES)
 		or matches_alias(instance, MAINFRAME_NAMES)
 		or matches_alias(instance, FRAMES_CONTAINER_NAMES)
@@ -952,35 +1338,35 @@ local function is_reveal_ui_related(instance)
 		or matches_alias(instance, VIEWPORT_FRAME_NAMES)
 end
 
-local function queue_reveal(pendingReveal)
-	if type(pendingReveal) ~= "table" then
+local function toggle_roulette()
+	if pendingStarterReveal or not has_access() then
 		return
 	end
 
-	if currentRevealHorseId == pendingReveal.HorseId and activePendingReveal then
+	if isRouletteRolling then
 		return
 	end
 
-	activePendingReveal = pendingReveal
-	currentRevealHorseId = pendingReveal.HorseId
-	preparedRevealHorseId = nil
-	preparedUiRoot = nil
-	isSpinInProgress = false
-
-	if currentUi then
-		task.defer(function()
-			prepare_raffle_ui_for_reveal(pendingReveal)
-		end)
+	try_bind_ui()
+	if not currentUi then
+		return
 	end
+
+	if isRouletteOpen and currentUi.Root and currentUi.Root.Visible then
+		close_roulette(true)
+		return
+	end
+
+	task.spawn(open_roulette)
 end
 
 DataUtility.client.ensure_remotes()
 build_reward_gui()
 hide_reward_gui()
-prewarm_preview_snapshots()
+prewarm_preview_snapshots(horseOptions)
 
 rootTrove:Connect(playerGui.DescendantAdded, function(instance)
-	if is_reveal_ui_related(instance) or instance:IsA("LayerCollector") then
+	if is_roulette_ui_related(instance) or instance:IsA("LayerCollector") then
 		try_bind_ui()
 	end
 end)
@@ -988,31 +1374,54 @@ end)
 rootTrove:Connect(playerGui.DescendantRemoving, function(instance)
 	if currentUi and (instance == currentUi.Root or instance:IsDescendantOf(currentUi.Root)) then
 		currentUi = nil
-		preparedUiRoot = nil
-		preparedRevealHorseId = nil
 		task.defer(try_bind_ui)
-	elseif is_reveal_ui_related(instance) then
+	elseif is_roulette_ui_related(instance) then
 		task.defer(try_bind_ui)
 	end
 end)
 
-DataUtility.client.bind("Progression.PendingHorseReveal", function(pendingReveal)
-	if type(pendingReveal) == "table" then
-		queue_reveal(pendingReveal)
-	else
-		cleanup_reveal_state()
+rootTrove:Add(DataUtility.client.bind("Progression.PendingHorseReveal", function(pendingReveal)
+	pendingStarterReveal = type(pendingReveal) == "table"
+	if pendingStarterReveal then
+		close_roulette(true)
+	end
+end))
+
+rootTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", function(horseshoes)
+	rouletteState.Balance = math.max(0, tonumber(horseshoes) or 0)
+	if isRouletteOpen and not pendingStarterReveal then
+		update_spin_button()
+	end
+end))
+
+localPlayer:GetAttributeChangedSignal("CanOpenAdminPanel"):Connect(function()
+	if not has_access() then
+		close_roulette(true)
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+
+	if UserInputService:GetFocusedTextBox() then
+		return
+	end
+
+	if input.KeyCode == Enum.KeyCode.H then
+		toggle_roulette()
 	end
 end)
 
 try_bind_ui()
 
 local initialPendingReveal = DataUtility.client.get("Progression.PendingHorseReveal")
-if type(initialPendingReveal) == "table" then
-	queue_reveal(initialPendingReveal)
-end
+pendingStarterReveal = type(initialPendingReveal) == "table"
 
 rootTrove:Add(function()
 	clear_preview_cache()
 	uiTrove:Destroy()
+	hide_dialogue()
 	hide_reward_gui()
 end)

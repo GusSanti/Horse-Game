@@ -215,8 +215,7 @@ local function build_horizontal_seat_offset(seatOffset)
 	return CFrame.new(position.X, 0, position.Z)
 end
 
-local function get_configured_rider_weld_c0()
-	local configuredOffset = HorseMountConfig.RiderWeldOffset
+local function convert_offset_to_cframe(configuredOffset)
 	if typeof(configuredOffset) == "CFrame" then
 		return configuredOffset
 	end
@@ -226,6 +225,45 @@ local function get_configured_rider_weld_c0()
 	end
 
 	return CFrame.identity
+end
+
+local function get_configured_rider_weld_c0()
+	return convert_offset_to_cframe(HorseMountConfig.RiderWeldOffset),
+		convert_offset_to_cframe(HorseMountConfig.SprintRiderWeldOffsetDelta)
+end
+
+local function get_target_rider_weld_c0(mountState)
+	local baseOffset, sprintOffset = get_configured_rider_weld_c0()
+	if mountState and mountState.Sprinting == true then
+		return baseOffset * sprintOffset
+	end
+
+	return baseOffset
+end
+
+local function get_target_ground_offset(baseGroundOffset, mountState)
+	local groundOffset = baseGroundOffset or 0
+	if not mountState or mountState.Sprinting ~= true then
+		groundOffset += HorseMountConfig.IdleWalkGroundOffsetDelta or 0
+	end
+
+	return groundOffset
+end
+
+local function update_rider_weld_offset(mountState, deltaTime)
+	local riderWeld = mountState and mountState.RiderWeld
+	if not riderWeld or not riderWeld.Parent then
+		return
+	end
+
+	local targetC0 = get_target_rider_weld_c0(mountState)
+	local responsiveness = HorseMountConfig.RiderWeldResponsiveness or 14
+	local blendAlpha = 1
+	if type(deltaTime) == "number" and deltaTime > 0 and responsiveness > 0 then
+		blendAlpha = 1 - math.exp(-responsiveness * deltaTime)
+	end
+
+	riderWeld.C0 = riderWeld.C0:Lerp(targetC0, math.clamp(blendAlpha, 0, 1))
 end
 
 local function append_mount_alignment_problem(problems, condition, message)
@@ -805,7 +843,7 @@ local function convert_seat_to_rider_weld(mountState)
 		seatWeld:Destroy()
 	end
 
-	local riderOffset = get_configured_rider_weld_c0()
+	local riderOffset = get_target_rider_weld_c0(mountState)
 	mountSeat.Disabled = true
 	mountSeat.CanTouch = false
 	mountState.RiderWeld = create_offset_weld(mountSeat, rootPart, riderOffset, CFrame.identity, mountSeat)
@@ -911,13 +949,14 @@ local function validate_mount_state(mountState)
 	return true
 end
 
-local function update_mount(mountState, _deltaTime)
+local function update_mount(mountState, deltaTime)
 	if not mountState.RiderWeld or not mountState.RiderWeld.Parent then
 		convert_seat_to_rider_weld(mountState)
 	end
 
 	assign_network_owner_to_mount(mountState)
 	update_anti_gravity_force(mountState)
+	update_rider_weld_offset(mountState, deltaTime)
 	apply_mounted_humanoid_pose(mountState)
 	update_mount_animation_state(mountState)
 end
@@ -1001,7 +1040,7 @@ local function mount_player(player, payload)
 	local seatAlignmentOffset = get_horizontal_seat_alignment_offset(seatOffset, spawnRotation)
 	local initialPosition = Vector3.new(
 		alignmentRootCFrame.Position.X - seatAlignmentOffset.X,
-		playerLowestY + groundOffset,
+		playerLowestY + get_target_ground_offset(groundOffset, nil),
 		alignmentRootCFrame.Position.Z - seatAlignmentOffset.Z
 	)
 	if HorseMountConfig.StickMountedHorseToGround == true then
@@ -1012,12 +1051,12 @@ local function mount_player(player, payload)
 				alignmentRootCFrame.Position.Z - seatAlignmentOffset.Z
 			),
 			{ horseVisual, character },
-			groundOffset
+			get_target_ground_offset(groundOffset, nil)
 		)
 	end
 	local initialRootCFrame = CFrame.new(initialPosition) * spawnRotation
 	local seatRootCFrame = initialRootCFrame * build_horizontal_seat_offset(seatOffset)
-	local riderRootCFrame = seatRootCFrame * get_configured_rider_weld_c0()
+	local riderRootCFrame = seatRootCFrame * get_target_rider_weld_c0(nil)
 
 	debug_mount_log(player, "MountSetup", {
 		AlignmentRoot = alignmentRootCFrame,

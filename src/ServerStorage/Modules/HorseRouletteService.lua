@@ -46,9 +46,9 @@ local function build_state_payload(player)
 		Success = true,
 		Price = price,
 		Balance = balance,
-		FreeWhenZero = true,
+		FreeWhenZero = false,
 		Horses = HorseCatalog.GetRouletteHorseOptions(),
-		CanRoll = balance == 0 or balance >= price,
+		CanRoll = balance >= price,
 	}
 end
 
@@ -60,7 +60,7 @@ function HorseRouletteService.Roll(player)
 	local price = HorseCatalog.RoulettePrice or 500
 	local balance = get_balance(player)
 
-	if balance > 0 and balance < price then
+	if balance < price then
 		return {
 			Success = false,
 			Code = "InsufficientFunds",

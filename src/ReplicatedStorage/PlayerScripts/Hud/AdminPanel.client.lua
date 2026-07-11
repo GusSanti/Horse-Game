@@ -834,7 +834,7 @@ local function update_tab_button_visual(button, selected)
 end
 
 set_active_tab = function(tabName)
-	selectedTabName = tabName
+	selectedTabName = ITEM_TAB_NAME
 
 	local onItems = selectedTabName == ITEM_TAB_NAME
 
@@ -890,8 +890,8 @@ local function refresh_access_state()
 	if hintLabel then
 		if hasAccess then
 			hintLabel.Text = STUDIO_ACCESS_OVERRIDE
-				and "Acesso liberado no Studio. Pressione M para abrir e testar."
-				or "Pressione M para abrir, depois troque entre as abas de items e cavalos."
+				and "Acesso liberado no Studio. Pressione M para os items e H para a roleta."
+				or "Pressione M para os items e H para a roleta de cavalos."
 		else
 			local minimumRank = localPlayer:GetAttribute("AdminMinimumRank") or 250
 			local groupId = localPlayer:GetAttribute("AdminGroupId") or 1071228359

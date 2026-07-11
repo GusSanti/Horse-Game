@@ -424,6 +424,10 @@ local function begin_dialog_interaction(context): ()
 	local dialogShown = HorseInteractionUi.ShowDialogue({
 		title = HorseInteractionUi.BuildDialogueTitle(context.itemDefinition),
 		details = HorseInteractionUi.BuildDialogueText(context.itemDefinition),
+		acceptText = context.itemDefinition.PromptActionText
+			or (context.definition.prompt and context.definition.prompt.actionText)
+			or "Use",
+		denyText = "Cancel",
 		onAccept = function()
 			local currentTool = get_equipped_tool()
 			if currentTool ~= context.tool then

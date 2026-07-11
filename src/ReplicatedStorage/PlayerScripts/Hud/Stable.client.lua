@@ -31,6 +31,7 @@ local HORSE_FOLDER_NAME: string = ToolDictionary.HorseFolderName
 local VISUAL_HORSE_ATTRIBUTE: string = ToolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE: string = ToolDictionary.HorseIdAttribute
 local REFRESH_INTERVAL: number = HorseStatusBillboardConfig.RefreshInterval or 0.25
+local RENDER_BATCH_SIZE = 1
 
 local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAME = "MainframeFR"
@@ -101,6 +102,8 @@ local currentUi: StableUi? = nil
 local activeCards: {HorseCard} = {}
 local refreshAccumulator = 0
 local renderQueued = false
+local renderGeneration = 0
+local stableRenderDirty = false
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -250,6 +253,24 @@ local function find_stable_root_instance(): Instance?
 	return framesContainer:FindFirstChild(STABLE_FRAME_NAME, true)
 end
 
+local function is_ui_visible(instance: Instance?): boolean
+	local current = instance
+
+	while current do
+		if current:IsA("GuiObject") and current.Visible ~= true then
+			return false
+		end
+
+		if current:IsA("LayerCollector") and current.Enabled ~= true then
+			return false
+		end
+
+		current = current.Parent
+	end
+
+	return true
+end
+
 local function strip_local_scripts(root: Instance): ()
 	for _, descendant: Instance in ipairs(root:GetDescendants()) do
 		if descendant:IsA("LocalScript") then
@@ -346,40 +367,6 @@ local function round_number(value: number?): number
 	return math.floor(value + 0.5)
 end
 
-local function format_debug_number(value): string
-	if type(value) ~= "number" then
-		return "nil"
-	end
-
-	return ("%.2f"):format(value)
-end
-
-local function debug_log_cleanliness_snapshot(source: string): ()
-	local horses = DataUtility.client.get("Horses")
-	local ownedHorses = type(horses) == "table" and horses.Owned or nil
-
-	if type(ownedHorses) ~= "table" then
-		print(("[StableDebug][%s] Horses.Owned unavailable"):format(source))
-		return
-	end
-
-	for horseId, horse in pairs(ownedHorses) do
-		local needs = type(horse) == "table" and horse.Needs or nil
-		local values = type(needs) == "table" and needs.Values or nil
-		local maxValues = type(needs) == "table" and needs.Max or nil
-		local statuses = HorseStatusService.GetStatuses(horse)
-
-		print(("[StableDebug][%s] horseId=%s rawCleanliness=%s computedCleanliness=%s maxCleanliness=%s lastUpdatedAt=%s"):format(
-			source,
-			tostring(horseId),
-			format_debug_number(type(values) == "table" and values.Cleanliness or nil),
-			format_debug_number(type(statuses) == "table" and statuses.Cleanliness or nil),
-			format_debug_number(type(maxValues) == "table" and maxValues.Cleanliness or nil),
-			tostring(type(needs) == "table" and needs.LastUpdatedAt or nil)
-		))
-	end
-end
-
 local function get_stable_horses(): {StableHorseEntry}
 	local stable = DataUtility.client.get("Stable")
 	local horses = DataUtility.client.get("Horses")
@@ -418,6 +405,25 @@ local function get_stable_horses(): {StableHorseEntry}
 	end
 
 	return horseEntries
+end
+
+local function cards_match_stable_entries(stableHorseEntries: {StableHorseEntry}): boolean
+	if #activeCards ~= #stableHorseEntries then
+		return false
+	end
+
+	for index, stableHorseEntry: StableHorseEntry in ipairs(stableHorseEntries) do
+		local activeCard = activeCards[index]
+		if not activeCard then
+			return false
+		end
+
+		if activeCard.HorseId ~= stableHorseEntry.HorseId or activeCard.SlotName ~= stableHorseEntry.SlotName then
+			return false
+		end
+	end
+
+	return true
 end
 
 local function get_owned_horse(horseId: string): any?
@@ -922,6 +928,17 @@ local function render_stable(): ()
 		return
 	end
 
+	if not is_ui_visible(ui.Root) then
+		stableRenderDirty = true
+		return
+	end
+
+	stableRenderDirty = false
+	renderGeneration += 1
+
+	local generation = renderGeneration
+	local stableHorseEntries = get_stable_horses()
+
 	local templateSource = ui.TemplateSource
 
 	cardTrove:Clean()
@@ -931,30 +948,95 @@ local function render_stable(): ()
 		scrollingFrame.CanvasPosition = Vector2.zero
 	end
 
-	for _, stableHorseEntry: StableHorseEntry in ipairs(get_stable_horses()) do
-		local card = templateSource:Clone()
-		card.Parent = ui.ListContainer
-		cardTrove:Add(card)
+	local nextEntryIndex = 1
 
-		local cardEntry = configure_card(card, templateSource, stableHorseEntry)
-		activeCards[#activeCards + 1] = cardEntry
+	local function render_batch(): ()
+		if generation ~= renderGeneration then
+			return
+		end
+
+		local currentBoundUi = currentUi
+		if not currentBoundUi or currentBoundUi.Root ~= ui.Root or not currentBoundUi.TemplateSource then
+			return
+		end
+
+		if not is_ui_visible(ui.Root) then
+			stableRenderDirty = true
+			return
+		end
+
+		local batchEnd = math.min(#stableHorseEntries, nextEntryIndex + RENDER_BATCH_SIZE - 1)
+		for entryIndex = nextEntryIndex, batchEnd do
+			local stableHorseEntry = stableHorseEntries[entryIndex]
+			local card = templateSource:Clone()
+			card.Parent = ui.ListContainer
+			cardTrove:Add(card)
+
+			local cardEntry = configure_card(card, templateSource, stableHorseEntry)
+			activeCards[#activeCards + 1] = cardEntry
+		end
+
+		nextEntryIndex = batchEnd + 1
+		refresh_cards()
+		update_canvas_size()
+
+		if nextEntryIndex <= #stableHorseEntries then
+			task.defer(render_batch)
+			return
+		end
+
+		task.defer(function()
+			if generation ~= renderGeneration then
+				return
+			end
+
+			update_canvas_size()
+		end)
 	end
 
-	refresh_cards()
-	update_canvas_size()
-	task.defer(update_canvas_size)
+	render_batch()
 end
 
 local function queue_render(): ()
-	if renderQueued then
+	local ui = currentUi
+	if not ui or not ui.TemplateSource then
+		return
+	end
+
+	stableRenderDirty = true
+	if not is_ui_visible(ui.Root) or renderQueued then
 		return
 	end
 
 	renderQueued = true
 	task.defer(function()
 		renderQueued = false
-		render_stable()
+		if stableRenderDirty then
+			render_stable()
+		end
 	end)
+end
+
+local function refresh_or_render_stable(): ()
+	local ui = currentUi
+	if not ui or not ui.TemplateSource then
+		return
+	end
+
+	stableRenderDirty = true
+	if not is_ui_visible(ui.Root) then
+		return
+	end
+
+	local stableHorseEntries = get_stable_horses()
+	if cards_match_stable_entries(stableHorseEntries) then
+		stableRenderDirty = false
+		refresh_cards()
+		update_canvas_size()
+		return
+	end
+
+	queue_render()
 end
 
 local function get_stable_ui(root: Instance): StableUi?
@@ -996,6 +1078,9 @@ local function find_stable_ui(): StableUi?
 end
 
 local function destroy_ui_binding(): ()
+	renderGeneration += 1
+	renderQueued = false
+	stableRenderDirty = false
 	cardTrove:Clean()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
@@ -1039,9 +1124,9 @@ local function bind_ui(ui: StableUi): ()
 		end)
 	end
 
-	uiTrove:Add(DataUtility.client.bind("Stable", queue_render))
-	uiTrove:Add(DataUtility.client.bind("Horses", queue_render))
-	uiTrove:Add(DataUtility.client.bind("Horses.Owned", queue_render))
+	uiTrove:Add(DataUtility.client.bind("Stable", refresh_or_render_stable))
+	uiTrove:Add(DataUtility.client.bind("Horses", refresh_or_render_stable))
+	uiTrove:Add(DataUtility.client.bind("Horses.Owned", refresh_or_render_stable))
 
 	uiTrove:Connect(plotValue:GetPropertyChangedSignal("Value"), function()
 		rebind_plot()
@@ -1108,13 +1193,14 @@ rootTrove:Connect(playerGui.DescendantRemoving, function(instance: Instance)
 	end
 end)
 
-rootTrove:Add(DataUtility.client.bind("Horses.Owned", function()
-	debug_log_cleanliness_snapshot("Horses.Owned")
-	queue_render()
-end))
+rootTrove:Add(DataUtility.client.bind("Horses.Owned", refresh_or_render_stable))
 
 rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 	local ui = currentUi
+	if ui and stableRenderDirty and is_ui_visible(ui.Root) and not renderQueued then
+		refresh_or_render_stable()
+	end
+
 	if not ui or #activeCards == 0 then
 		return
 	end

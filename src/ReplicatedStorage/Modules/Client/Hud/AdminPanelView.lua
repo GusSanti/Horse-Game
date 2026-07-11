@@ -188,6 +188,11 @@ function AdminPanelView.build(context)
 		Parent = tabBar,
 	})
 
+	horseTabButton.Visible = false
+	horseTabButton.Active = false
+	horseTabButton.Selectable = false
+	horseTabButton.AutoButtonColor = false
+
 	create("UICorner", {
 		CornerRadius = UDim.new(0, 12),
 		Parent = horseTabButton,
