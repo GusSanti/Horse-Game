@@ -10,6 +10,7 @@ local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 
@@ -171,6 +172,18 @@ end
 local function get_item_count(player: Player, itemDefinition): number
 	local bucket = DataUtility.server.get(player, itemDefinition.InventoryPath)
 	return get_bucket_item_count(bucket, itemDefinition.ItemId)
+end
+
+local function is_item_selected_for_hotbar(player: Player, itemDefinition): boolean
+	local initialized = DataUtility.server.get(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
+	if not initialized then
+		return true
+	end
+
+	return InventoryLoadout.IsItemEquipped(
+		DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH),
+		itemDefinition and itemDefinition.ItemId
+	)
 end
 
 local function get_total_count(player: Player, itemDefinitions): number
@@ -386,7 +399,8 @@ local function sync_item_tools(player: Player, itemDefinition)
 
 	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 5)
 	local character = player.Character
-	local desiredCount = get_item_count(player, itemDefinition)
+	local ownedCount = get_item_count(player, itemDefinition)
+	local desiredCount = if ownedCount > 0 and is_item_selected_for_hotbar(player, itemDefinition) then 1 else 0
 	local backpackTools = collect_matching_tools(backpack, itemDefinition)
 	local characterTools = collect_matching_tools(character, itemDefinition)
 	local liveCount = #backpackTools + #characterTools
@@ -476,6 +490,19 @@ local function track_player(player: Player)
 
 	for _, inventoryPath in ipairs(inventoryPaths) do
 		local connection = DataUtility.server.bind(player, inventoryPath, function()
+			task.defer(sync_player_tools, player)
+		end)
+
+		if connection then
+			trove:Add(connection)
+		end
+	end
+
+	for _, loadoutPath in ipairs({
+		InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
+		InventoryLoadout.HOTBAR_INITIALIZED_PATH,
+	}) do
+		local connection = DataUtility.server.bind(player, loadoutPath, function()
 			task.defer(sync_player_tools, player)
 		end)
 

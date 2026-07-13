@@ -40,7 +40,7 @@ local GRID_CAMERA_CONFIG = {
 	FocusYOffsetScale = 0.18,
 	FocusZOffsetScale = -0.28,
 	RadiusScale = 0.5,
-	DistanceMultiplier = 0.7,
+	DistanceMultiplier = 1,
 	CameraOffsetScale = Vector3.new(0.18, 0.08, -0.54),
 }
 
@@ -49,7 +49,7 @@ local DETAILS_CAMERA_CONFIG = {
 	FocusYOffsetScale = 0.2,
 	FocusZOffsetScale = -0.32,
 	RadiusScale = 0.48,
-	DistanceMultiplier = 0.66,
+	DistanceMultiplier = 0.91,
 	CameraOffsetScale = Vector3.new(0.14, 0.07, -0.48),
 }
 

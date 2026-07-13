@@ -1,4 +1,3 @@
-------------------//SERVICES
 local Players: Players = game:GetService("Players")
 local GuiService: GuiService = game:GetService("GuiService")
 local UserInputService: UserInputService = game:GetService("UserInputService")
@@ -459,10 +458,20 @@ function HudAnim.bind(inst: GuiObject): ()
 
 	if inst:IsA("GuiButton") then
 		inst.MouseButton1Down:Connect(function()
-			Click.on_down(inst, state[inst], Utils, SFX)
+			local st = state[inst]
+			if not st then
+				return
+			end
+
+			Click.on_down(inst, st, Utils, SFX)
 		end)
 		inst.MouseButton1Up:Connect(function()
-			Click.on_up(inst, state[inst], Utils, SFX)
+			local st = state[inst]
+			if not st then
+				return
+			end
+
+			Click.on_up(inst, st, Utils, SFX)
 		end)
 	end
 

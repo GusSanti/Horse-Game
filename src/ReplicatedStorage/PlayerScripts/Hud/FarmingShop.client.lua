@@ -212,15 +212,15 @@ local function make_template_source(template: GuiObject): GuiObject
 end
 
 local function format_count(amount: number): string
-	return tostring(math.max(0, math.floor(tonumber(amount) or 0)))
+	return string.format("%02d", math.max(0, math.floor(tonumber(amount) or 0)))
 end
 
 local function format_value(itemDefinition): string
 	if itemDefinition.Kind == "Seed" then
-		return tostring(math.max(0, math.floor(tonumber(itemDefinition.Price) or 0)))
+		return ("$%d"):format(math.max(0, math.floor(tonumber(itemDefinition.Price) or 0)))
 	end
 
-	return tostring(math.max(0, math.floor(tonumber(itemDefinition.SellPrice) or 0)))
+	return ("$%d"):format(math.max(0, math.floor(tonumber(itemDefinition.SellPrice) or 0)))
 end
 
 local function get_horseshoes_amount(): number

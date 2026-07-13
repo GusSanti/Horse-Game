@@ -68,6 +68,14 @@ local Scope = Seam.Scope(Seam)
 local Player = PlayersService.LocalPlayer
 local Gui = nil
 
+local function get_text_bounds(text: string, font: Enum.Font, size: number): Vector2
+	local safeText = type(text) == "string" and text or ""
+	local safeFont = typeof(font) == "EnumItem" and font or Enum.Font.GothamMedium
+	local safeSize = math.max(1, math.floor(tonumber(size) or 14))
+
+	return TextService:GetTextSize(safeText, safeSize, safeFont, Vector2.new(math.huge, math.huge))
+end
+
 -- Config
 ExpressivePrompts.Config = {
 	-- Since v1.0.0
@@ -117,31 +125,19 @@ local function CreatePrompt(Prompt : ProximityPrompt, InputType : Enum.Proximity
 
 	-- Create reactive values
 	local ActionTextSize = PromptScope:Computed(function(Use)
-		local Params = PromptScope:New("GetTextBoundsParams", {
-			Text = Prompt.ActionText,
-			Font = Font.fromEnum(Use(ExpressivePrompts.Config.ActionTextFont)),
-			Size = Use(ExpressivePrompts.Config.ActionTextSize),
-			Width = math.huge,
-			RichText = true,
-		})
-
-		local TextBounds = TextService:GetTextBoundsAsync(Params)
-
-		return TextBounds
+		return get_text_bounds(
+			Prompt.ActionText,
+			Use(ExpressivePrompts.Config.ActionTextFont),
+			Use(ExpressivePrompts.Config.ActionTextSize)
+		)
 	end)
 
 	local ObjectTextSize = PromptScope:Computed(function(Use)
-		local Params = PromptScope:New("GetTextBoundsParams", {
-			Text = Prompt.ObjectText,
-			Font = Font.fromEnum(Use(ExpressivePrompts.Config.ObjectTextFont)),
-			Size = Use(ExpressivePrompts.Config.ObjectTextSize),
-			Width = math.huge,
-			RichText = true,
-		})
-
-		local TextBounds = TextService:GetTextBoundsAsync(Params)
-
-		return TextBounds
+		return get_text_bounds(
+			Prompt.ObjectText,
+			Use(ExpressivePrompts.Config.ObjectTextFont),
+			Use(ExpressivePrompts.Config.ObjectTextSize)
+		)
 	end)
 
 	local MaxTextWidth = PromptScope:Computed(function(Use)

@@ -7,6 +7,7 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 
@@ -82,6 +83,18 @@ local function get_item_count(player: Player, itemDefinition): number
 	end
 
 	return bucket[itemDefinition.ItemId] or 0
+end
+
+local function is_item_selected_for_hotbar(player: Player, itemDefinition): boolean
+	local initialized = DataUtility.server.get(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
+	if not initialized then
+		return true
+	end
+
+	return InventoryLoadout.IsItemEquipped(
+		DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH),
+		itemDefinition and itemDefinition.ItemId
+	)
 end
 
 local function is_managed_item(itemDefinition): boolean
@@ -250,7 +263,11 @@ local function sync_item_tools(player: Player, itemDefinition)
 		return
 	end
 
-	local desiredCount = get_item_count(player, itemDefinition)
+	local ownedCount = get_item_count(player, itemDefinition)
+	local shouldSyncManagedTool = ownedCount > 0
+		and is_item_selected_for_hotbar(player, itemDefinition)
+		and not InventoryLoadout.IsDefaultItemId(itemDefinition and itemDefinition.ItemId)
+	local desiredCount = if shouldSyncManagedTool then 1 else 0
 	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 5)
 	local character = player.Character
 	local starterGear = player:FindFirstChild("StarterGear") or player:WaitForChild("StarterGear", 5)
@@ -335,6 +352,19 @@ local function track_player(player: Player)
 
 	for _, inventoryPath in ipairs(inventoryPaths) do
 		local connection = DataUtility.server.bind(player, inventoryPath, function()
+			task.defer(sync_player_tools, player)
+		end)
+
+		if connection then
+			trove:Add(connection)
+		end
+	end
+
+	for _, loadoutPath in ipairs({
+		InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
+		InventoryLoadout.HOTBAR_INITIALIZED_PATH,
+	}) do
+		local connection = DataUtility.server.bind(player, loadoutPath, function()
 			task.defer(sync_player_tools, player)
 		end)
 

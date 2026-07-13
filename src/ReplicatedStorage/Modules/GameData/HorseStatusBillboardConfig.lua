@@ -1,6 +1,6 @@
 local HorseStatusBillboardConfig = {
 	-- Toggle this placeholder UI without touching the horse status system.
-	Enabled = true,
+	Enabled = false,
 	RefreshInterval = 0.25,
 	MaxDistance = 80,
 	StudsOffset = 8.2,

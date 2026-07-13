@@ -8,6 +8,7 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
@@ -33,8 +34,12 @@ local NAME_LABEL_NAMES = { "SettingNameTX" }
 local NAME_SHADOW_LABEL_NAMES = { "SettingNameShadowTX" }
 local DETAILS_LABEL_NAMES = { "DetailsTX" }
 local GENERATED_ATTRIBUTE_NAME = "GeneratedSettingControl"
+local GENERATED_FILL_NAME = "GeneratedSliderFill"
 local UPDATE_REMOTE_NAME = "UpdatePlayerSetting"
 local TOGGLE_TWEEN_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TRACK_PADDING_PX = 4
+local SLIDER_FILL_COLOR = Color3.fromRGB(112, 71, 42)
+local SLIDER_FILL_TRANSPARENCY = 0
 
 local DEFAULT_SETTINGS = {
 	Music = true,
@@ -174,25 +179,25 @@ local settingDefinitions = {
 		Id = "MuteMusic",
 		Kind = "Toggle",
 		Template = "Button",
-		Name = "Mutar musica",
-		Details = "Desliga toda a musica do jogo.",
+		Name = "Music",
+		Details = "Turns all in-game music on or off.",
 		ReadValue = function()
-			return not currentSettings.Music
+			return currentSettings.Music
 		end,
 		Preview = function(value)
-			currentSettings.Music = not value
-			SoundController.MuteMusic(value)
+			currentSettings.Music = value
+			SoundController.MuteMusic(not value)
 		end,
 		Serialize = function(value)
-			return "Music", not value
+			return "Music", value
 		end,
 	},
 	{
 		Id = "MusicVolume",
 		Kind = "Slider",
 		Template = "Bar",
-		Name = "Volume da musica",
-		Details = "Controla o volume da musica de fundo.",
+		Name = "Music Volume",
+		Details = "Controls the background music volume.",
 		ReadValue = function()
 			return currentSettings.MusicVolume
 		end,
@@ -209,25 +214,25 @@ local settingDefinitions = {
 		Id = "MuteSFX",
 		Kind = "Toggle",
 		Template = "Button",
-		Name = "Mutar efeitos sonoros",
-		Details = "Desliga os efeitos sonoros e os sons da interface.",
+		Name = "Sound Effects",
+		Details = "Turns sound effects and interface sounds on or off.",
 		ReadValue = function()
-			return not currentSettings.SFX
+			return currentSettings.SFX
 		end,
 		Preview = function(value)
-			currentSettings.SFX = not value
-			SoundController.MuteSFX(value)
+			currentSettings.SFX = value
+			SoundController.MuteSFX(not value)
 		end,
 		Serialize = function(value)
-			return "SFX", not value
+			return "SFX", value
 		end,
 	},
 	{
 		Id = "SFXVolume",
 		Kind = "Slider",
 		Template = "Bar",
-		Name = "Volume dos efeitos",
-		Details = "Controla o volume dos efeitos sonoros do jogo.",
+		Name = "SFX Volume",
+		Details = "Controls the game's sound effects volume.",
 		ReadValue = function()
 			return currentSettings.SFXVolume
 		end,
@@ -244,8 +249,8 @@ local settingDefinitions = {
 		Id = "Shadows",
 		Kind = "Toggle",
 		Template = "Button",
-		Name = "Sombras",
-		Details = "Ativa ou desativa as sombras do mundo.",
+		Name = "Shadows",
+		Details = "Turns world shadows on or off.",
 		ReadValue = function()
 			return not currentSettings.NoShadows
 		end,
@@ -274,36 +279,111 @@ local function update_canvas_size()
 	currentUi.List.CanvasSize = UDim2.new(0, 0, 0, currentUi.ListLayout.AbsoluteContentSize.Y)
 end
 
-local function get_toggle_track_bounds(record)
-	local barWidth = record.Bar.AbsoluteSize.X
-	local toggleWidth = record.Toggle.AbsoluteSize.X
-	local anchorX = record.Toggle.AnchorPoint.X
-	local minX = toggleWidth * anchorX
-	local maxX = barWidth - (toggleWidth * (1 - anchorX))
-
-	if maxX < minX then
-		local centerX = barWidth * 0.5
-		return centerX, centerX
+local function disable_control_animations(root)
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("GuiObject") then
+			descendant:SetAttribute("UIAnim", false)
+			descendant:SetAttribute("UIAnimPreset", nil)
+			descendant:SetAttribute("UIOpen", false)
+		end
 	end
 
-	return minX, maxX
+	root:SetAttribute("UIAnim", false)
+	root:SetAttribute("UIAnimPreset", nil)
+	root:SetAttribute("UIOpen", false)
+	HudAnim.unbind_all(root)
+end
+
+local function ensure_slider_fill(record)
+	if record.Descriptor.Kind ~= "Slider" then
+		return nil
+	end
+
+	local existingFill = record.Bar:FindFirstChild(GENERATED_FILL_NAME)
+	if existingFill and existingFill:IsA("Frame") then
+		return existingFill
+	end
+
+	local fill = Instance.new("Frame")
+	fill.Name = GENERATED_FILL_NAME
+	fill.BackgroundColor3 = SLIDER_FILL_COLOR
+	fill.BackgroundTransparency = SLIDER_FILL_TRANSPARENCY
+	fill.BorderSizePixel = 0
+	fill.AnchorPoint = Vector2.new(0, 0.5)
+	fill.Position = UDim2.new(0, TRACK_PADDING_PX, 0.5, 0)
+	fill.Size = UDim2.new(0, 0, 1, -(TRACK_PADDING_PX * 2))
+	fill.ZIndex = math.max(record.Bar.ZIndex + 1, record.Toggle.ZIndex - 1)
+	fill.Parent = record.Bar
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = fill
+
+	return fill
+end
+
+local function get_track_metrics(record)
+	local barWidth = math.max(1, record.Bar.AbsoluteSize.X)
+	local barHeight = math.max(1, record.Bar.AbsoluteSize.Y)
+	local toggleWidth = math.max(1, record.Toggle.AbsoluteSize.X)
+	local toggleHeight = math.max(1, record.Toggle.AbsoluteSize.Y)
+	local trackPadding = math.max(TRACK_PADDING_PX, math.floor(barHeight * 0.08 + 0.5))
+	local thumbHalfWidth = toggleWidth * 0.5
+	local minCenterX = trackPadding + thumbHalfWidth
+	local maxCenterX = math.max(minCenterX, barWidth - trackPadding - thumbHalfWidth)
+	local centerY = math.floor((barHeight * 0.5) + 0.5)
+	local fillHeight = math.max(4, math.min(barHeight - (trackPadding * 2), math.floor(toggleHeight * 0.42 + 0.5)))
+
+	return {
+		TrackPadding = trackPadding,
+		ThumbHalfWidth = thumbHalfWidth,
+		MinCenterX = minCenterX,
+		MaxCenterX = maxCenterX,
+		CenterY = centerY,
+		FillHeight = fillHeight,
+	}
+end
+
+local function set_slider_fill(record, centerX)
+	if not record.Fill then
+		return
+	end
+
+	local metrics = get_track_metrics(record)
+	local fillStartX = metrics.TrackPadding
+	local fillEndX = math.max(fillStartX, centerX - metrics.ThumbHalfWidth)
+	local fillWidth = math.max(0, fillEndX - fillStartX)
+
+	record.Fill.Position = UDim2.new(0, fillStartX, 0.5, 0)
+	record.Fill.Size = UDim2.new(0, math.floor(fillWidth + 0.5), 0, metrics.FillHeight)
+	record.Fill.Visible = fillWidth > 0.5
 end
 
 local function set_control_alpha(record, alpha, animated)
 	alpha = math.clamp(alpha, 0, 1)
 	record.LastAlpha = alpha
 
-	local minX, maxX = get_toggle_track_bounds(record)
-	local xOffset = minX + ((maxX - minX) * alpha)
-	local targetPosition = UDim2.new(0, math.floor(xOffset + 0.5), record.ToggleYScale, record.ToggleYOffset)
+	record.Toggle.AnchorPoint = Vector2.new(0.5, 0.5)
+
+	local metrics = get_track_metrics(record)
+	local centerX = metrics.MinCenterX + ((metrics.MaxCenterX - metrics.MinCenterX) * alpha)
+	local targetPosition = UDim2.fromOffset(math.floor(centerX + 0.5), metrics.CenterY)
+
+	if record.ToggleTween then
+		record.ToggleTween:Cancel()
+		record.ToggleTween = nil
+	end
 
 	if animated then
-		TweenService:Create(record.Toggle, TOGGLE_TWEEN_INFO, {
+		record.ToggleTween = TweenService:Create(record.Toggle, TOGGLE_TWEEN_INFO, {
 			Position = targetPosition,
-		}):Play()
+		})
+		record.ToggleTween:Play()
 	else
 		record.Toggle.Position = targetPosition
 	end
+
+	set_slider_fill(record, centerX)
 end
 
 local function refresh_control(record, animated)
@@ -348,12 +428,12 @@ end
 local function update_slider_value(record, screenX)
 	local barAbsolutePosition = record.Bar.AbsolutePosition.X
 	local localX = screenX - barAbsolutePosition
-	local minX, maxX = get_toggle_track_bounds(record)
-	local clampedX = math.clamp(localX, minX, maxX)
+	local metrics = get_track_metrics(record)
+	local clampedX = math.clamp(localX, metrics.MinCenterX, metrics.MaxCenterX)
 
 	local alpha = 0
-	if maxX > minX then
-		alpha = (clampedX - minX) / (maxX - minX)
+	if metrics.MaxCenterX > metrics.MinCenterX then
+		alpha = (clampedX - metrics.MinCenterX) / (metrics.MaxCenterX - metrics.MinCenterX)
 	end
 
 	alpha = round_volume(alpha)
@@ -447,10 +527,10 @@ local function build_control_record(root, descriptor)
 		Root = root,
 		Bar = bar,
 		Toggle = toggle,
-		ToggleYScale = toggle.Position.Y.Scale,
-		ToggleYOffset = toggle.Position.Y.Offset,
+		Fill = nil,
 		Descriptor = descriptor,
 		LastAlpha = 0,
+		ToggleTween = nil,
 	}
 end
 
@@ -538,6 +618,7 @@ local function bind_ui(ui)
 		control.Visible = true
 		control:SetAttribute(GENERATED_ATTRIBUTE_NAME, true)
 		control.Parent = ui.List
+		disable_control_animations(control)
 
 		set_label_text(control, NAME_LABEL_NAMES, descriptor.Name)
 		set_label_text(control, NAME_SHADOW_LABEL_NAMES, descriptor.Name)
@@ -545,6 +626,7 @@ local function bind_ui(ui)
 
 		local record = build_control_record(control, descriptor)
 		if record then
+			record.Fill = ensure_slider_fill(record)
 			ui.Controls[#ui.Controls + 1] = record
 
 			record.Bar.Active = true
@@ -591,6 +673,15 @@ local function bind_ui(ui)
 				bind_slider_input(record.Bar, record)
 				bind_slider_input(record.Toggle, record)
 			end
+
+			task.defer(function()
+				if currentUi ~= ui or not control.Parent then
+					return
+				end
+
+				disable_control_animations(control)
+				refresh_control(record, false)
+			end)
 		end
 	end
 

@@ -73,6 +73,9 @@ local ProfileTemplate = {
 	SavedTools = {
 		ItemCounts = {},
 		GenericCounts = {},
+		HotbarItemIds = {},
+		HotbarGenericToolNames = {},
+		HotbarLoadoutInitialized = false,
 	},
 
 	Stable = {

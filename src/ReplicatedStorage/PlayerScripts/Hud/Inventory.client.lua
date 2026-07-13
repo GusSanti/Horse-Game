@@ -78,9 +78,14 @@ local DETAILS_VIEWPORT_CONFIG = {
 -- VARIABLES
 local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
+local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
+
+local UPDATE_LOADOUT_REMOTE_NAME = "UpdateInventoryLoadout"
+local DEFAULT_GENERIC_TOOL_DEFINITIONS = InventoryLoadout.GetDefaultGenericToolDefinitions()
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
@@ -102,6 +107,7 @@ local activeEntriesByItemId = {}
 local activeCardsByItemId = {}
 local currentLiveGroups = {}
 local lastRenderedCategoryId = nil
+local currentGridTemplateMetrics = nil
 
 local queue_render
 local try_bind_ui
@@ -126,6 +132,23 @@ local function normalize_inventory_path(path)
         return trimmedPath
     end
     return ("Inventory.%s"):format(trimmedPath)
+end
+
+local function normalize_generic_tool_name(toolName)
+    return InventoryLoadout.NormalizeGenericToolName(toolName)
+end
+
+local function build_generic_entry_key(toolName)
+    local normalizedToolName = normalize_generic_tool_name(toolName)
+    if not normalizedToolName then
+        return nil
+    end
+
+    return ("generic:%s"):format(string.lower(normalizedToolName))
+end
+
+local function get_entry_key_from_item_id(itemId)
+    return normalize_key(itemId)
 end
 
 local function matches_alias(instance, aliases)
@@ -200,6 +223,133 @@ local function set_button_text(button, labelAliases, shadowAliases, text)
     local shadowLabel = find_text_label(button, shadowAliases, true)
     if label then label.Text = text end
     if shadowLabel then shadowLabel.Text = text end
+end
+
+local function resolve_udim_axis(udim, absoluteAxisSize)
+    return math.max(0, udim.Offset + absoluteAxisSize * udim.Scale)
+end
+
+local function find_grid_layout(container)
+    if not container then return nil end
+    return container:FindFirstChildOfClass("UIGridLayout")
+        or container:FindFirstChildWhichIsA("UIGridLayout", true)
+end
+
+local function find_ui_padding(container)
+    if not container then return nil end
+    return container:FindFirstChildOfClass("UIPadding")
+        or container:FindFirstChildWhichIsA("UIPadding", true)
+end
+
+local function get_padding_offsets(padding, absoluteSize)
+    if not padding then
+        return 0, 0, 0, 0
+    end
+
+    return resolve_udim_axis(padding.PaddingLeft, absoluteSize.X),
+        resolve_udim_axis(padding.PaddingRight, absoluteSize.X),
+        resolve_udim_axis(padding.PaddingTop, absoluteSize.Y),
+        resolve_udim_axis(padding.PaddingBottom, absoluteSize.Y)
+end
+
+local function capture_template_metrics(template, container, layout)
+    if not template or not container then return nil end
+
+    local referenceWidth = resolve_udim_axis(template.Size.X, container.AbsoluteSize.X)
+    local referenceHeight = resolve_udim_axis(template.Size.Y, container.AbsoluteSize.Y)
+
+    if referenceWidth <= 0 or referenceHeight <= 0 then
+        local fallbackCellSize = layout and layout.CellSize or UDim2.fromOffset(96, 96)
+        referenceWidth = math.max(referenceWidth, resolve_udim_axis(fallbackCellSize.X, container.AbsoluteSize.X))
+        referenceHeight = math.max(referenceHeight, resolve_udim_axis(fallbackCellSize.Y, container.AbsoluteSize.Y))
+    end
+
+    local aspectConstraint = template:FindFirstChildWhichIsA("UIAspectRatioConstraint", true)
+    local aspectRatio = aspectConstraint and aspectConstraint.AspectRatio or 0
+    if aspectRatio <= 0 then
+        aspectRatio = referenceWidth / math.max(referenceHeight, 1)
+    end
+
+    return {
+        ReferenceWidth = math.max(1, math.floor(referenceWidth + 0.5)),
+        ReferenceHeight = math.max(1, math.floor(referenceHeight + 0.5)),
+        AspectRatio = math.max(0.1, aspectRatio),
+    }
+end
+
+local function update_canvas_size()
+    if not currentUi or not currentUi.GridContainer or not currentUi.GridContainer:IsA("ScrollingFrame") then
+        return
+    end
+
+    local scrollingFrame = currentUi.GridContainer
+    local layout = find_grid_layout(scrollingFrame)
+    if not layout then return end
+
+    local padding = find_ui_padding(scrollingFrame)
+    local _, _, topPadding, bottomPadding = get_padding_offsets(padding, scrollingFrame.AbsoluteSize)
+
+    scrollingFrame.CanvasSize = UDim2.fromOffset(
+        0,
+        math.max(0, math.ceil(layout.AbsoluteContentSize.Y + topPadding + bottomPadding))
+    )
+end
+
+local function update_grid_layout()
+    if not currentUi or not currentUi.GridContainer or not currentUi.GridContainer:IsA("ScrollingFrame") then
+        return
+    end
+
+    local scrollingFrame = currentUi.GridContainer
+    local layout = find_grid_layout(scrollingFrame)
+    if not layout then
+        update_canvas_size()
+        return
+    end
+
+    local capturedMetrics = capture_template_metrics(currentTemplateSource, scrollingFrame, layout)
+    if capturedMetrics then
+        currentGridTemplateMetrics = capturedMetrics
+    end
+
+    local templateMetrics = currentGridTemplateMetrics
+    if not templateMetrics then
+        update_canvas_size()
+        return
+    end
+
+    local padding = find_ui_padding(scrollingFrame)
+    local leftPadding, rightPadding = get_padding_offsets(padding, scrollingFrame.AbsoluteSize)
+    local availableWidth = scrollingFrame.AbsoluteSize.X - leftPadding - rightPadding
+
+    if scrollingFrame.ScrollBarThickness > 0 then
+        availableWidth = availableWidth - scrollingFrame.ScrollBarThickness
+    end
+
+    availableWidth = math.max(1, availableWidth)
+
+    local horizontalSpacing = resolve_udim_axis(layout.CellPadding.X, availableWidth)
+    local columns = math.max(
+        1,
+        math.floor((availableWidth + horizontalSpacing) / (templateMetrics.ReferenceWidth + horizontalSpacing))
+    )
+
+    if layout.FillDirectionMaxCells > 0 then
+        columns = math.min(columns, layout.FillDirectionMaxCells)
+    end
+
+    local cellWidth = math.max(
+        1,
+        math.floor((availableWidth - horizontalSpacing * math.max(0, columns - 1)) / columns)
+    )
+    local cellHeight = math.max(1, math.floor(cellWidth / templateMetrics.AspectRatio))
+    local desiredCellSize = UDim2.fromOffset(cellWidth, cellHeight)
+
+    if layout.CellSize ~= desiredCellSize then
+        layout.CellSize = desiredCellSize
+    end
+
+    update_canvas_size()
 end
 
 local function create_click_target(card)
@@ -312,6 +462,45 @@ local function get_farming_render_source(itemDefinition)
     return FarmingUtility.GetViewportAsset(itemDefinition) or FarmingUtility.GetItemAsset(itemDefinition)
 end
 
+local function find_named_asset(root, searchNames)
+    if not root then return nil end
+
+    for _, name in ipairs(searchNames or {}) do
+        if type(name) == "string" and name ~= "" then
+            local found = root:FindFirstChild(name, true)
+            if found then
+                return found
+            end
+        end
+    end
+
+    return nil
+end
+
+local function get_generic_render_source(toolName)
+    local itemsFolder = get_assets_items_root()
+    if itemsFolder then
+        local asset = find_named_asset(itemsFolder, { toolName })
+        if asset then
+            return asset
+        end
+    end
+
+    local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+    local character = localPlayer.Character
+
+    for _, container in ipairs({ backpack, character }) do
+        if container then
+            local tool = container:FindFirstChild(toolName)
+            if tool then
+                return tool
+            end
+        end
+    end
+
+    return nil
+end
+
 local function collect_render_parts(root)
     local baseParts = {}
     if root:IsA("BasePart") then
@@ -411,7 +600,8 @@ end
 local function render_viewport(viewportFrame, entry, cameraConfig, cameraKey)
     clear_viewport(viewportFrame)
 
-    local snapshot = get_preview_snapshot(entry.ItemId, entry.RenderSource, entry.DisplayName, cameraConfig, cameraKey)
+    local previewKey = entry.EntryKey or entry.ItemId or entry.DisplayName
+    local snapshot = get_preview_snapshot(previewKey, entry.RenderSource, entry.DisplayName, cameraConfig, cameraKey)
     local worldModel = Instance.new("WorldModel")
     worldModel.Parent = viewportFrame
     snapshot.ModelTemplate:Clone().Parent = worldModel
@@ -460,57 +650,107 @@ local function get_item_description(toolDefinition, farmingDefinition)
     return get_default_farming_description(farmingDefinition)
 end
 
-local function create_entry(itemDefinition, farmingDefinition, count)
+local function create_item_entry(itemDefinition, farmingDefinition, count)
+    local itemId = itemDefinition and itemDefinition.ItemId or farmingDefinition and farmingDefinition.ItemId or nil
+    local entryKey = get_entry_key_from_item_id(itemId)
+    local isDefaultItem = InventoryLoadout.IsDefaultItemId(itemId)
+    local displayCount = isDefaultItem and math.max(count, 1) or count
+
     return {
-        ItemId = itemDefinition and itemDefinition.ItemId or farmingDefinition.ItemId,
-        DisplayName = itemDefinition and itemDefinition.DisplayName or farmingDefinition.DisplayName or "",
+        EntryKey = entryKey,
+        ItemId = itemId,
+        DisplayName = itemDefinition and itemDefinition.DisplayName or farmingDefinition and farmingDefinition.DisplayName or "",
         Description = get_item_description(itemDefinition, farmingDefinition),
-        Count = count,
+        Count = displayCount,
         SortOrder = (itemDefinition and itemDefinition.SortOrder)
             or (farmingDefinition and farmingDefinition.SortOrder)
             or math.huge,
         RenderSource = get_farming_render_source(farmingDefinition) or get_catalog_render_source(itemDefinition),
+        LoadoutKind = "item",
+        LoadoutValue = itemId,
+        CanHotbarEquip = displayCount > 0 or isDefaultItem,
+        IsDefaultItem = isDefaultItem,
     }
 end
 
-local function push_tool_category_entries(entries, seenItemIds, toolCategory)
+local function create_generic_entry(definition)
+    local entryKey = build_generic_entry_key(definition and definition.ToolName)
+    if not entryKey then
+        return nil
+    end
+
+    return {
+        EntryKey = entryKey,
+        ItemId = definition.ToolName,
+        DisplayName = definition.DisplayName or definition.ToolName or "",
+        Description = definition.Description or "",
+        Count = 1,
+        SortOrder = definition.SortOrder or math.huge,
+        RenderSource = get_generic_render_source(definition.ToolName),
+        LoadoutKind = "generic",
+        LoadoutValue = definition.ToolName,
+        CanHotbarEquip = true,
+        IsDefaultItem = true,
+    }
+end
+
+local function push_tool_category_entries(entries, seenEntryKeys, toolCategory)
     for _, itemDefinition in ipairs(ToolItemCatalog.GetItemsByToolCategory(toolCategory) or {}) do
         local itemId = itemDefinition.ItemId
-        if seenItemIds[itemId] then continue end
+        local entryKey = get_entry_key_from_item_id(itemId)
+        if not entryKey or seenEntryKeys[entryKey] then continue end
 
         local count = get_item_count(itemDefinition)
-        if count <= 0 then continue end
+        local isDefaultItem = InventoryLoadout.IsDefaultItemId(itemId)
+        if count <= 0 and not isDefaultItem then continue end
 
-        seenItemIds[itemId] = true
-        entries[#entries + 1] = create_entry(itemDefinition, FarmingCatalog.GetItem(itemId), count)
+        seenEntryKeys[entryKey] = true
+        entries[#entries + 1] = create_item_entry(itemDefinition, FarmingCatalog.GetItem(itemId), count)
     end
 end
 
-local function push_missing_farming_entries(entries, seenItemIds, farmingItems, inventoryPath)
+local function push_missing_farming_entries(entries, seenEntryKeys, farmingItems, inventoryPath)
     local bucket = DataUtility.client.get(inventoryPath)
     for _, farmingDefinition in ipairs(farmingItems or {}) do
-        if seenItemIds[farmingDefinition.ItemId] then continue end
+        local entryKey = get_entry_key_from_item_id(farmingDefinition.ItemId)
+        if not entryKey or seenEntryKeys[entryKey] then continue end
 
         local count = get_bucket_item_count(bucket, farmingDefinition.ItemId)
         if count <= 0 then continue end
 
-        seenItemIds[farmingDefinition.ItemId] = true
-        entries[#entries + 1] = create_entry(ToolItemCatalog.GetItemDefinition(farmingDefinition.ItemId), farmingDefinition, count)
+        seenEntryKeys[entryKey] = true
+        entries[#entries + 1] = create_item_entry(
+            ToolItemCatalog.GetItemDefinition(farmingDefinition.ItemId),
+            farmingDefinition,
+            count
+        )
+    end
+end
+
+local function push_default_generic_entries(entries, seenEntryKeys)
+    for _, definition in ipairs(DEFAULT_GENERIC_TOOL_DEFINITIONS) do
+        local entry = create_generic_entry(definition)
+        if not entry or not entry.EntryKey or seenEntryKeys[entry.EntryKey] then continue end
+
+        seenEntryKeys[entry.EntryKey] = true
+        entries[#entries + 1] = entry
     end
 end
 
 local function build_category_entries(categoryId)
     local entries = {}
-    local seenItemIds = {}
+    local seenEntryKeys = {}
 
     for _, toolCategory in ipairs(CATEGORY_TOOL_CATEGORIES[categoryId] or {}) do
-        push_tool_category_entries(entries, seenItemIds, toolCategory)
+        push_tool_category_entries(entries, seenEntryKeys, toolCategory)
     end
 
-    if categoryId == "Seeds" then
-        push_missing_farming_entries(entries, seenItemIds, FarmingCatalog.GetSeedItems(), "Inventory.Seeds")
+    if categoryId == "Utility" then
+        push_default_generic_entries(entries, seenEntryKeys)
+    elseif categoryId == "Seeds" then
+        push_missing_farming_entries(entries, seenEntryKeys, FarmingCatalog.GetSeedItems(), "Inventory.Seeds")
     elseif categoryId == "Foods" then
-        push_missing_farming_entries(entries, seenItemIds, FarmingCatalog.GetFruitItems(), "Inventory.Fruits")
+        push_missing_farming_entries(entries, seenEntryKeys, FarmingCatalog.GetFruitItems(), "Inventory.Fruits")
     end
 
     table.sort(entries, function(left, right)
@@ -522,21 +762,24 @@ local function build_category_entries(categoryId)
     return entries
 end
 
-local function resolve_tool_item_id(tool)
+local function resolve_tool_entry_key(tool)
     local farmingItemId = normalize_key(tool:GetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE))
     if farmingItemId and FarmingCatalog.GetItem(farmingItemId) then
-        return farmingItemId
+        return get_entry_key_from_item_id(farmingItemId)
     end
 
     local toolDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
-    if toolDefinition then return toolDefinition.ItemId end
+    if toolDefinition then
+        return get_entry_key_from_item_id(toolDefinition.ItemId)
+    end
 
     local explicitItemId = normalize_key(tool:GetAttribute("ToolItemId"))
         or normalize_key(tool:GetAttribute("ItemId"))
     if explicitItemId and (ToolItemCatalog.GetItemDefinition(explicitItemId) or FarmingCatalog.GetItem(explicitItemId)) then
-        return explicitItemId
+        return get_entry_key_from_item_id(explicitItemId)
     end
-    return nil
+
+    return build_generic_entry_key(tool.Name)
 end
 
 local function rebuild_live_groups()
@@ -544,22 +787,23 @@ local function rebuild_live_groups()
     local backpack = localPlayer:FindFirstChildOfClass("Backpack")
     local character = localPlayer.Character
 
-    local function register_tool(tool, isEquipped)
-        local itemId = resolve_tool_item_id(tool)
-        if not itemId then return end
+    local function register_tool(tool, isCharacterTool)
+        local entryKey = resolve_tool_entry_key(tool)
+        if not entryKey then return end
 
-        local group = currentLiveGroups[itemId]
+        local group = currentLiveGroups[entryKey]
         if not group then
             group = {
-                Tools = {}, BackpackTools = {}, CharacterTools = {}, Equipped = false,
+                Tools = {},
+                BackpackTools = {},
+                CharacterTools = {},
             }
-            currentLiveGroups[itemId] = group
+            currentLiveGroups[entryKey] = group
         end
 
         group.Tools[#group.Tools + 1] = tool
-        if isEquipped then
+        if isCharacterTool then
             group.CharacterTools[#group.CharacterTools + 1] = tool
-            group.Equipped = true
         else
             group.BackpackTools[#group.BackpackTools + 1] = tool
         end
@@ -607,18 +851,18 @@ local function render_details(entry)
         end
     end
 
-    local liveGroup = entry and currentLiveGroups[entry.ItemId] or nil
-    local isEquipped = liveGroup and liveGroup.Equipped == true or false
-    local hasToolInstance = liveGroup and #liveGroup.Tools > 0 or false
+    local liveGroup = entry and currentLiveGroups[entry.EntryKey] or nil
+    local isInHotbar = liveGroup and #liveGroup.Tools > 0 or false
+    local canEquip = entry ~= nil and entry.CanHotbarEquip == true
 
     if currentUi.EquipButton then
-        currentUi.EquipButton.Visible = entry ~= nil and not isEquipped
-        set_button_enabled(currentUi.EquipButton, entry ~= nil and hasToolInstance and not isEquipped)
+        currentUi.EquipButton.Visible = entry ~= nil and not isInHotbar
+        set_button_enabled(currentUi.EquipButton, canEquip and not isInHotbar)
     end
 
     if currentUi.UnequipButton then
-        currentUi.UnequipButton.Visible = entry ~= nil and isEquipped
-        set_button_enabled(currentUi.UnequipButton, entry ~= nil and isEquipped)
+        currentUi.UnequipButton.Visible = entry ~= nil and isInHotbar
+        set_button_enabled(currentUi.UnequipButton, entry ~= nil and isInHotbar)
     end
 end
 
@@ -639,7 +883,7 @@ apply_selection = function()
 end
 
 local function configure_card(card, entry, layoutOrder)
-    card.Name = entry.ItemId
+    card.Name = entry.EntryKey or entry.ItemId
     card.LayoutOrder = layoutOrder
     card.Visible = true
 
@@ -676,12 +920,12 @@ local function render_inventory()
         card.Parent = currentUi.GridContainer
         cardTrove:Add(card)
 
-        activeEntriesByItemId[entry.ItemId] = entry
-        activeCardsByItemId[entry.ItemId] = card
+        activeEntriesByItemId[entry.EntryKey] = entry
+        activeCardsByItemId[entry.EntryKey] = card
 
         if clickTarget then
             cardTrove:Connect(clickTarget.Activated, function()
-                selectedItemId = entry.ItemId
+                selectedItemId = entry.EntryKey
                 apply_selection()
             end)
         end
@@ -689,6 +933,7 @@ local function render_inventory()
 
     lastRenderedCategoryId = activeCategoryId
     apply_selection()
+    update_grid_layout()
 end
 
 queue_render = function()
@@ -702,39 +947,48 @@ end
 
 local function equip_selected_item()
     if not selectedItemId then return end
-    rebuild_live_groups()
-
-    local liveGroup = currentLiveGroups[selectedItemId]
-    local character = localPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if not liveGroup or liveGroup.Equipped or not humanoid then
+    local entry = activeEntriesByItemId[selectedItemId]
+    if not entry or entry.CanHotbarEquip ~= true then
         apply_selection()
         return
     end
 
-    for _, tool in ipairs(liveGroup.BackpackTools) do
-        if tool.Parent and tool.Parent:IsA("Backpack") then
-            humanoid:EquipTool(tool)
-            break
-        end
+    local success, updated = pcall(function()
+        return Net.Function[UPDATE_LOADOUT_REMOTE_NAME]:Call({
+            Kind = entry.LoadoutKind,
+            Value = entry.LoadoutValue,
+            Equipped = true,
+        })
+    end)
+    if success and updated ~= false then
+        task.defer(queue_live_groups_refresh)
+        task.defer(queue_render)
+    else
+        apply_selection()
     end
-    task.defer(queue_live_groups_refresh)
 end
 
 local function unequip_selected_item()
     if not selectedItemId then return end
-    rebuild_live_groups()
-
-    local liveGroup = currentLiveGroups[selectedItemId]
-    local character = localPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if not liveGroup or not liveGroup.Equipped or not humanoid then
+    local entry = activeEntriesByItemId[selectedItemId]
+    if not entry then
         apply_selection()
         return
     end
 
-    humanoid:UnequipTools()
-    task.defer(queue_live_groups_refresh)
+    local success, updated = pcall(function()
+        return Net.Function[UPDATE_LOADOUT_REMOTE_NAME]:Call({
+            Kind = entry.LoadoutKind,
+            Value = entry.LoadoutValue,
+            Equipped = false,
+        })
+    end)
+    if success and updated ~= false then
+        task.defer(queue_live_groups_refresh)
+        task.defer(queue_render)
+    else
+        apply_selection()
+    end
 end
 
 local function set_active_category(categoryId)
@@ -820,6 +1074,7 @@ local function destroy_ui_binding()
     currentUi = nil
     currentTemplateSource = nil
     lastRenderedCategoryId = nil
+    currentGridTemplateMetrics = nil
 end
 
 local function bind_ui(ui)
@@ -830,6 +1085,8 @@ local function bind_ui(ui)
     destroy_ui_binding()
 
     currentUi = ui
+    local gridLayout = ui.GridContainer:IsA("ScrollingFrame") and find_grid_layout(ui.GridContainer) or nil
+    currentGridTemplateMetrics = capture_template_metrics(ui.Template, ui.GridContainer, gridLayout)
     currentTemplateSource = make_template_source(ui.Template)
     uiTrove:Add(currentTemplateSource)
 
@@ -837,8 +1094,7 @@ local function bind_ui(ui)
         ui.GridContainer.Active = true
         ui.GridContainer.ScrollingEnabled = true
         
-        -- Modificação crucial aqui! Passando o controle do canvas para o Roblox nativamente:
-        ui.GridContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        ui.GridContainer.AutomaticCanvasSize = Enum.AutomaticSize.None
         ui.GridContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
         
         ui.GridContainer.ScrollingDirection = Enum.ScrollingDirection.Y
@@ -867,6 +1123,21 @@ local function bind_ui(ui)
 
     for _, inventoryPath in ipairs(RELEVANT_INVENTORY_PATHS) do
         uiTrove:Add(DataUtility.client.bind(inventoryPath, queue_render))
+    end
+
+    if ui.GridContainer:IsA("ScrollingFrame") then
+        local scrollingFrame = ui.GridContainer
+        local layout = find_grid_layout(scrollingFrame)
+
+        if layout then
+            uiTrove:Connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), update_canvas_size)
+            uiTrove:Connect(layout:GetPropertyChangedSignal("CellPadding"), update_grid_layout)
+            uiTrove:Connect(layout:GetPropertyChangedSignal("FillDirectionMaxCells"), update_grid_layout)
+        end
+
+        uiTrove:Connect(scrollingFrame:GetPropertyChangedSignal("AbsoluteSize"), update_grid_layout)
+        uiTrove:Connect(scrollingFrame:GetPropertyChangedSignal("ScrollBarThickness"), update_grid_layout)
+        update_grid_layout()
     end
 
     uiTrove:Connect(ui.Root.AncestryChanged, function(_, parent)

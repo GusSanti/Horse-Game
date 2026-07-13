@@ -10,6 +10,7 @@ local Utility = Modules:WaitForChild("Utility")
 local Trove = require(Libraries:WaitForChild("Trove"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 
 local PersistentToolService = {}
@@ -165,6 +166,66 @@ local function count_map_has_decrease(nextCounts, currentCounts)
 	end
 
 	return false
+end
+
+local function is_item_selected_for_hotbar(player, itemId)
+	local initialized = DataUtility.server.get(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
+	if not initialized then
+		return true
+	end
+
+	return InventoryLoadout.IsItemEquipped(
+		DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH),
+		itemId
+	)
+end
+
+local function is_generic_selected_for_hotbar(player, toolName)
+	local initialized = DataUtility.server.get(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
+	if not initialized then
+		return true
+	end
+
+	return InventoryLoadout.IsGenericToolEquipped(
+		DataUtility.server.get(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH),
+		toolName
+	)
+end
+
+local function apply_loadout_to_starter_counts(player, starterItemCounts, starterGenericCounts)
+	local filteredItemCounts = {}
+	local filteredGenericCounts = {}
+
+	for itemId, count in pairs(starterItemCounts or {}) do
+		if is_item_selected_for_hotbar(player, itemId) then
+			filteredItemCounts[itemId] = count
+		end
+	end
+
+	for toolName, count in pairs(starterGenericCounts or {}) do
+		if is_generic_selected_for_hotbar(player, toolName) then
+			filteredGenericCounts[toolName] = count
+		end
+	end
+
+	return filteredItemCounts, filteredGenericCounts
+end
+
+local function apply_default_hotbar_item_counts(player, baseItemCounts)
+	local nextItemCounts = {}
+
+	for itemId, count in pairs(baseItemCounts or {}) do
+		nextItemCounts[itemId] = count
+	end
+
+	for _, itemId in ipairs(InventoryLoadout.GetDefaultItemIds()) do
+		local itemDefinition = ToolItemCatalog.GetItemDefinition(itemId)
+		if itemDefinition and is_item_selected_for_hotbar(player, itemDefinition.ItemId) then
+			nextItemCounts[itemDefinition.ItemId] = math.max(nextItemCounts[itemDefinition.ItemId] or 0, 1)
+		end
+	end
+
+	return nextItemCounts
 end
 
 local function is_character_transitioning(player)
@@ -563,6 +624,8 @@ local function sync_player_tools(player)
 	suppressRefresh[player] = true
 
 	local starterItemCounts, starterGenericCounts = collect_starter_pack_tool_counts()
+	starterItemCounts, starterGenericCounts = apply_loadout_to_starter_counts(player, starterItemCounts, starterGenericCounts)
+	starterItemCounts = apply_default_hotbar_item_counts(player, starterItemCounts)
 	local savedItemCounts = sanitize_item_count_map(DataUtility.server.get(player, SAVED_ITEM_COUNTS_PATH))
 	local savedGenericCounts = sanitize_generic_count_map(DataUtility.server.get(player, SAVED_GENERIC_COUNTS_PATH))
 	local desiredItemCounts = combine_count_maps(starterItemCounts, savedItemCounts)
@@ -594,6 +657,8 @@ local function refresh_saved_tools(player)
 	end
 
 	local starterItemCounts, starterGenericCounts = collect_starter_pack_tool_counts()
+	starterItemCounts, starterGenericCounts = apply_loadout_to_starter_counts(player, starterItemCounts, starterGenericCounts)
+	starterItemCounts = apply_default_hotbar_item_counts(player, starterItemCounts)
 	local liveItemCounts, liveGenericCounts = collect_saved_tool_counts(player)
 	local nextItemCounts = subtract_count_maps(liveItemCounts, starterItemCounts)
 	local nextGenericCounts = subtract_count_maps(liveGenericCounts, starterGenericCounts)
@@ -629,6 +694,8 @@ local function persist_saved_tools(player)
 	end
 
 	local starterItemCounts, starterGenericCounts = collect_starter_pack_tool_counts()
+	starterItemCounts, starterGenericCounts = apply_loadout_to_starter_counts(player, starterItemCounts, starterGenericCounts)
+	starterItemCounts = apply_default_hotbar_item_counts(player, starterItemCounts)
 	local liveItemCounts, liveGenericCounts = collect_saved_tool_counts(player)
 	local nextItemCounts = subtract_count_maps(liveItemCounts, starterItemCounts)
 	local nextGenericCounts = subtract_count_maps(liveGenericCounts, starterGenericCounts)
@@ -735,6 +802,20 @@ local function track_player(player)
 	end))
 
 	trove:Add(player.CharacterAdded:Connect(bind_character))
+
+	for _, loadoutPath in ipairs({
+		InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
+		InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH,
+		InventoryLoadout.HOTBAR_INITIALIZED_PATH,
+	}) do
+		local connection = DataUtility.server.bind(player, loadoutPath, function()
+			task.defer(sync_player_tools, player)
+		end)
+
+		if connection then
+			trove:Add(connection)
+		end
+	end
 
 	task.defer(sync_player_tools, player)
 end

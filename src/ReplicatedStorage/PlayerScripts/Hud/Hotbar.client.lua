@@ -13,6 +13,7 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
+local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
@@ -163,6 +164,45 @@ end
 
 local function format_amount(value): string
 	return tostring(math.max(0, math.floor(tonumber(value) or 0)))
+end
+
+local function format_hotbar_quantity(value): string
+	local amount = math.max(0, math.floor(tonumber(value) or 0))
+	return string.format("%02d", amount)
+end
+
+local function normalize_inventory_path(path: string?): string?
+	if type(path) ~= "string" then
+		return nil
+	end
+
+	local trimmedPath = string.gsub(path, "^%s*(.-)%s*$", "%1")
+	if trimmedPath == "" then
+		return nil
+	end
+
+	if string.sub(trimmedPath, 1, #"Inventory.") == "Inventory." then
+		return trimmedPath
+	end
+
+	return ("Inventory.%s"):format(trimmedPath)
+end
+
+local function get_bucket_item_count(bucket, itemId): number
+	if type(bucket) ~= "table" then
+		return 0
+	end
+
+	return math.max(0, math.floor(tonumber(bucket[itemId]) or 0))
+end
+
+local function get_inventory_quantity(itemId: string, inventoryPath: string?): number
+	local normalizedInventoryPath = normalize_inventory_path(inventoryPath)
+	if not normalizedInventoryPath then
+		return 0
+	end
+
+	return get_bucket_item_count(DataUtility.client.get(normalizedInventoryPath), itemId)
 end
 
 local function disable_default_backpack()
@@ -430,6 +470,7 @@ local function resolve_tool_metadata(tool: Tool)
 	if type(farmingItemId) == "string" and farmingItemId ~= "" then
 		local farmingDefinition = FarmingCatalog.GetItem(farmingItemId)
 		if farmingDefinition then
+			local quantity = get_inventory_quantity(farmingDefinition.ItemId, farmingDefinition.InventoryPath)
 			return {
 				Key = farmingDefinition.ItemId,
 				DisplayName = farmingDefinition.DisplayName or tool.Name,
@@ -438,18 +479,24 @@ local function resolve_tool_metadata(tool: Tool)
 					or (categoryOrderLookup.Food or math.huge),
 				SortOrder = farmingDefinition.SortOrder or math.huge,
 				RenderSource = get_farming_render_source(farmingDefinition) or tool,
+				Quantity = math.max(quantity, 1),
+				ShowsQuantity = quantity > 1,
 			}
 		end
 	end
 
 	local toolDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
 	if toolDefinition then
+		local quantity = get_inventory_quantity(toolDefinition.ItemId, toolDefinition.InventoryPath)
+		local isDefaultItem = InventoryLoadout.IsDefaultItemId(toolDefinition.ItemId)
 		return {
 			Key = toolDefinition.ItemId,
 			DisplayName = toolDefinition.DisplayName or tool.Name,
 			SortCategory = categoryOrderLookup[toolDefinition.ToolCategory] or math.huge,
 			SortOrder = toolDefinition.SortOrder or math.huge,
 			RenderSource = get_catalog_render_source(toolDefinition) or tool,
+			Quantity = math.max(quantity, 1),
+			ShowsQuantity = not isDefaultItem and quantity > 1,
 		}
 	end
 
@@ -459,6 +506,8 @@ local function resolve_tool_metadata(tool: Tool)
 		SortCategory = math.huge,
 		SortOrder = math.huge,
 		RenderSource = tool,
+		Quantity = 1,
+		ShowsQuantity = false,
 	}
 end
 
@@ -663,11 +712,16 @@ local function build_groups()
 				SortCategory = metadata.SortCategory,
 				SortOrder = metadata.SortOrder,
 				RenderSource = metadata.RenderSource or tool,
+				Quantity = metadata.Quantity or 1,
+				ShowsQuantity = metadata.ShowsQuantity == true,
 				Tools = {},
 				EquippedTool = nil,
 			}
 			groups[itemKey] = existingGroup
 		end
+
+		existingGroup.Quantity = math.max(existingGroup.Quantity or 1, metadata.Quantity or 1)
+		existingGroup.ShowsQuantity = existingGroup.ShowsQuantity or metadata.ShowsQuantity == true
 
 		existingGroup.Tools[#existingGroup.Tools + 1] = tool
 
@@ -774,14 +828,17 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 	hide_bind_indicators(slot)
 
 	local amountLabel = find_text_label(slot, AMOUNT_LABEL_NAMES, true)
-	local amountText = tostring(#group.Tools)
+	local showsQuantity = group.ShowsQuantity == true
+	local amountText = showsQuantity and format_hotbar_quantity(group.Quantity or #group.Tools) or ""
 	if amountLabel then
 		amountLabel.Text = amountText
+		amountLabel.Visible = showsQuantity
 	end
 
 	local amountShadowLabel = find_text_label(slot, AMOUNT_SHADOW_LABEL_NAMES, true)
 	if amountShadowLabel then
 		amountShadowLabel.Text = amountText
+		amountShadowLabel.Visible = showsQuantity
 	end
 
 	local imageItem = find_named_instance(slot, { "ImageItem" }, nil, true)
@@ -1029,6 +1086,17 @@ bind_backpack()
 bind_ui_watchers()
 try_bind_hotbar()
 rootTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", update_money_display))
+for _, inventoryPath in ipairs({
+	"Inventory.Seeds",
+	"Inventory.Fruits",
+	"Inventory.Consumables.Food",
+	"Inventory.Consumables.Water",
+	"Inventory.Consumables.Grooming",
+	"Inventory.Consumables.Misc",
+	"Inventory.Consumables.Medical",
+}) do
+	rootTrove:Add(DataUtility.client.bind(inventoryPath, queue_refresh))
+end
 
 if localPlayer.Character then
 	bind_character(localPlayer.Character)
