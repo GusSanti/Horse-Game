@@ -13,9 +13,12 @@ local dataStoreModules = serverModules:WaitForChild("DataStore")
 local ProfileStore = require(dataStoreModules:WaitForChild("ProfileStore"))
 local ProfileTemplate = require(dataStoreModules:WaitForChild("DataTemplate"))
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
+local ProfileSessionService = require(serverModules:WaitForChild("ProfileSessionService"))
 
 local store = ProfileStore.New(STORE_NAME, ProfileTemplate)
 local profilesByUserId: {[number]: any} = {}
+
+ProfileSessionService.SetStore(store)
 
 ------------------//FUNCTIONS
 local function attach_player_profile(player)
@@ -40,16 +43,19 @@ local function attach_player_profile(player)
 	end)
 
 	DataUtility.server.attach_profile(player, profile)
+	ProfileSessionService.RegisterProfile(player, profile)
 
 	print(profile.Data, "- " .. player.Name .. " - " .. player.UserId)
 
 	profile.OnSessionEnd:Connect(function()
 		DataUtility.server.detach_profile(player)
+		ProfileSessionService.UnregisterProfile(player)
 		profilesByUserId[player.UserId] = nil
 	end)
 end
 
 local function release_player_profile(player: Player): ()
+	ProfileSessionService.UnregisterProfile(player)
 	local profile = profilesByUserId[player.UserId]
 	if profile then
 		profile:EndSession()

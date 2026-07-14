@@ -2,6 +2,7 @@ local Shared = require(script.Parent:WaitForChild("Shared"))
 
 return {
 	Shared.CreateMedicine({
+		ShopId = "Doctor",
 		ItemId = "basic_bandage",
 		DisplayName = "Basic Bandage",
 		Description = "A simple wrap for light injuries and quick stable care.",
@@ -17,6 +18,7 @@ return {
 		Tags = { "Bandage", "Starter" },
 	}),
 	Shared.CreateMedicine({
+		ShopId = "Doctor",
 		ItemId = "herbal_poultice",
 		DisplayName = "Herbal Poultice",
 		Description = "A gentle herbal blend that heals while helping the horse relax.",
@@ -35,6 +37,7 @@ return {
 		Tags = { "Herbal", "Comfort" },
 	}),
 	Shared.CreateMedicine({
+		ShopId = "Doctor",
 		ItemId = "bitter_syrup",
 		DisplayName = "Bitter Syrup",
 		Description = "A strong emergency medicine that works well, even if the horse hates the taste.",
@@ -50,6 +53,7 @@ return {
 		Tags = { "Emergency", "Strong" },
 	}),
 	Shared.CreateMedicine({
+		ShopId = "Doctor",
 		ItemId = "digestive_relief",
 		DisplayName = "Digestive Relief",
 		Description = "Settles the stomach and clears excess food or water overload.",
@@ -66,6 +70,7 @@ return {
 		Tags = { "Digestive", "Overflow" },
 	}),
 	Shared.CreateMedicine({
+		ShopId = "Doctor",
 		ItemId = "recovery_tonic",
 		DisplayName = "Recovery Tonic",
 		Description = "A premium tonic with instant healing and a slower recovery effect over time.",

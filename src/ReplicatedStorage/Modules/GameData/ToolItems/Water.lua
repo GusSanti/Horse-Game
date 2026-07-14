@@ -2,6 +2,7 @@ local Shared = require(script.Parent:WaitForChild("Shared"))
 
 return {
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "fresh_bucket",
 		DisplayName = "Fresh Bucket",
 		Description = "Basic water with reliable thirst recovery and no extra frills.",
@@ -25,6 +26,7 @@ return {
 		Tags = { "Starter", "Basic" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "cool_stream",
 		DisplayName = "Cool Stream",
 		Description = "Less thirst fill than a full bucket, but better comfort and recovery.",
@@ -48,6 +50,7 @@ return {
 		Tags = { "Comfort", "Balanced" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "mint_infusion",
 		DisplayName = "Mint Infusion",
 		Description = "Light water that does not quench as much, but keeps the horse extra happy.",
@@ -71,6 +74,7 @@ return {
 		Tags = { "Mint", "Happy" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "apple_splash",
 		DisplayName = "Apple Splash",
 		Description = "A sweet water mix that makes the horse happier than plain water.",
@@ -94,6 +98,7 @@ return {
 		Tags = { "Sweet", "Treat" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "spring_water",
 		DisplayName = "Spring Water",
 		Description = "Strong thirst recovery with a steady slowdown on future thirst decay.",
@@ -117,6 +122,7 @@ return {
 		Tags = { "Spring", "Steady" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "rain_barrel",
 		DisplayName = "Rain Barrel",
 		Description = "A soft refill that is not fancy, but keeps thirst dropping slower for longer.",
@@ -140,6 +146,7 @@ return {
 		Tags = { "Barrel", "SlowDecay" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "electrolyte_mix",
 		DisplayName = "Electrolyte Mix",
 		Description = "A stronger water mix that gives thirst back fast and helps health a bit.",
@@ -163,6 +170,7 @@ return {
 		Tags = { "Recovery", "Health" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "herbal_cooler",
 		DisplayName = "Herbal Cooler",
 		Description = "A calmer drink with lower thirst fill, but one of the best mood gains.",
@@ -186,6 +194,7 @@ return {
 		Tags = { "Herbal", "Mood" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "glacier_sip",
 		DisplayName = "Glacier Sip",
 		Description = "A cold premium drink that restores a lot of thirst, but is less forgiving in excess.",
@@ -209,6 +218,7 @@ return {
 		Tags = { "Cold", "Premium" },
 	}),
 	Shared.CreateWater({
+		ShopId = "Cowboy",
 		ItemId = "golden_trough",
 		DisplayName = "Golden Trough",
 		Description = "An expensive full drink that restores a lot and keeps thirst low for a long time.",

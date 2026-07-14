@@ -2,6 +2,7 @@ local Shared = require(script.Parent:WaitForChild("Shared"))
 
 return {
 	Shared.CreateMisc({
+		ShopId = "Cowboy",
 		ItemId = "soap",
 		DisplayName = "Soap",
 		Description = "Basic soap used to wash your horse and restore cleanliness.",
@@ -20,6 +21,7 @@ return {
 		Tags = { "Cleaning", "Soap" },
 	}),
 	Shared.CreateMisc({
+		ShopId = "Cowboy",
 		ItemId = "horse_brush",
 		DisplayName = "Horse Brush",
 		Description = "A soft brush used to calm your horse and make it feel cared for.",
