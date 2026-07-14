@@ -15,7 +15,7 @@ FarmingUtility.STAGE_FOLDER_NAME = "StagePlants"
 FarmingUtility.FARMING_ITEM_ATTRIBUTE = "FarmingItemId"
 FarmingUtility.FARMING_CROP_ATTRIBUTE = "FarmingCropId"
 FarmingUtility.FARMING_KIND_ATTRIBUTE = "FarmingToolKind"
-FarmingUtility.MAX_STAGE = 5
+FarmingUtility.MAX_STAGE = 4
 
 local function normalize_key(value): string?
 	if type(value) ~= "string" then
@@ -28,6 +28,15 @@ local function normalize_key(value): string?
 	end
 
 	return normalizedValue
+end
+
+local function normalize_asset_name(value): string?
+	local normalizedValue = normalize_key(value)
+	if not normalizedValue then
+		return nil
+	end
+
+	return string.gsub(normalizedValue, "[_%-%s]+", "")
 end
 
 local function get_seed_items()
@@ -116,6 +125,92 @@ local function insert_unique_instance(instances, instance: Instance?)
 	end
 
 	instances[#instances + 1] = instance
+end
+
+local function push_unique_name(names, seenLookup, value)
+	if type(value) ~= "string" or value == "" then
+		return
+	end
+
+	if seenLookup[value] then
+		return
+	end
+
+	seenLookup[value] = true
+	names[#names + 1] = value
+end
+
+local function get_crop_stage_folder_candidates(cropDefinition): { string }
+	local names = {}
+	local seen = {}
+
+	push_unique_name(names, seen, cropDefinition and cropDefinition.StageFolderName)
+	push_unique_name(names, seen, cropDefinition and cropDefinition.CropId)
+	push_unique_name(names, seen, cropDefinition and cropDefinition.DisplayName)
+
+	for _, alias in ipairs(cropDefinition and cropDefinition.StageFolderAliases or {}) do
+		push_unique_name(names, seen, alias)
+	end
+
+	return names
+end
+
+local function get_stage_template_name_candidates(cropDefinition, stage: number): { string }
+	local names = {}
+	local seen = {}
+	local cropId = cropDefinition and cropDefinition.CropId or ""
+	local displayName = cropDefinition and cropDefinition.DisplayName or ""
+	local stageAssetPrefix = cropDefinition and cropDefinition.StageAssetPrefix or nil
+
+	push_unique_name(names, seen, ("Plant%d"):format(stage))
+	push_unique_name(names, seen, ("Stage%d"):format(stage))
+
+	if type(stageAssetPrefix) == "string" and stageAssetPrefix ~= "" then
+		push_unique_name(names, seen, ("%s_Stage%d"):format(stageAssetPrefix, stage))
+		push_unique_name(names, seen, ("%sStage%d"):format(stageAssetPrefix, stage))
+	end
+
+	if cropId ~= "" then
+		push_unique_name(names, seen, ("%s_Stage%d"):format(cropId, stage))
+		push_unique_name(names, seen, ("%sStage%d"):format(cropId, stage))
+	end
+
+	if displayName ~= "" then
+		push_unique_name(names, seen, ("%s_Stage%d"):format(displayName, stage))
+		push_unique_name(names, seen, ("%sStage%d"):format(displayName, stage))
+	end
+
+	return names
+end
+
+local function find_child_by_name_candidates(root: Instance?, candidateNames): Instance?
+	if not root then
+		return nil
+	end
+
+	for _, candidateName in ipairs(candidateNames or {}) do
+		local directChild = root:FindFirstChild(candidateName)
+		if directChild then
+			return directChild
+		end
+	end
+
+	local normalizedCandidateLookup = {}
+	for _, candidateName in ipairs(candidateNames or {}) do
+		local normalizedCandidateName = normalize_asset_name(candidateName)
+		if normalizedCandidateName then
+			normalizedCandidateLookup[normalizedCandidateName] = true
+		end
+	end
+
+	for _, child in ipairs(root:GetChildren()) do
+		local normalizedChildName = normalize_asset_name(child.Name)
+		if normalizedChildName and normalizedCandidateLookup[normalizedChildName] then
+			return child
+		end
+	end
+
+	return nil
 end
 
 local function get_item_search_names(itemDefinition): { string }
@@ -212,16 +307,10 @@ function FarmingUtility.GetViewportAsset(itemDefinition): Instance?
 	return resolve_item_asset(itemDefinition, itemDefinition and itemDefinition.ViewportAssetPath)
 end
 
-function FarmingUtility.GetCropStageFolder(cropDefinition): Folder?
+function FarmingUtility.GetCropStageFolder(cropDefinition): Instance?
 	local stagePlantsFolder = FarmingUtility.GetStagePlantsFolder()
-	local folderName = cropDefinition and cropDefinition.StageFolderName
-
-	if type(folderName) ~= "string" or folderName == "" then
-		return nil
-	end
-
-	local folder = stagePlantsFolder:FindFirstChild(folderName)
-	if folder and folder:IsA("Folder") then
+	local folder = find_child_by_name_candidates(stagePlantsFolder, get_crop_stage_folder_candidates(cropDefinition))
+	if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
 		return folder
 	end
 
@@ -234,7 +323,31 @@ function FarmingUtility.GetStageTemplate(cropDefinition, stage: number): Instanc
 		return nil
 	end
 
-	return cropStageFolder:FindFirstChild(("Plant%d"):format(stage))
+	local template = find_child_by_name_candidates(cropStageFolder, get_stage_template_name_candidates(cropDefinition, stage))
+	if template then
+		return template
+	end
+
+	local normalizedCropToken = normalize_asset_name(cropDefinition and cropDefinition.CropId)
+		or normalize_asset_name(cropDefinition and cropDefinition.DisplayName)
+	local normalizedStageToken = normalize_asset_name(("stage%d"):format(stage))
+
+	for _, child in ipairs(cropStageFolder:GetChildren()) do
+		local normalizedChildName = normalize_asset_name(child.Name)
+		if normalizedChildName
+			and normalizedStageToken
+			and string.find(normalizedChildName, normalizedStageToken, 1, true)
+			and (
+				not normalizedCropToken
+				or normalizedCropToken == ""
+				or string.find(normalizedChildName, normalizedCropToken, 1, true)
+			)
+		then
+			return child
+		end
+	end
+
+	return nil
 end
 
 function FarmingUtility.GetFarmingZone(): Instance
