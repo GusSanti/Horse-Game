@@ -18,17 +18,20 @@ local FarmingShopService = {}
 
 local initialized = false
 local playerTroves = {}
+local queuedToolSyncs = {}
 
 local LEGACY_ITEM_ATTRIBUTE = "ItemId"
 local LEGACY_TOOL_ITEM_ATTRIBUTE = "ToolItemId"
+local SHOP_ACTION_FUNCTION_NAME = "FarmingShopAction"
+local SEED_INVENTORY_PATH = "Inventory.Seeds"
+local FRUIT_INVENTORY_PATH = "Inventory.Fruits"
 
 local function normalize_key(value): string?
 	if type(value) ~= "string" then
 		return nil
 	end
 
-	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
-	local normalizedValue = string.lower(trimmedValue)
+	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
 	if normalizedValue == "" then
 		return nil
 	end
@@ -88,45 +91,35 @@ local function get_by_path(root, path)
 	return current
 end
 
-local function get_seed_items()
-	if type(FarmingCatalog.GetSeedItems) == "function" then
-		return FarmingCatalog.GetSeedItems() or {}
-	end
+local seedItems = if type(FarmingCatalog.GetSeedItems) == "function" then (FarmingCatalog.GetSeedItems() or {}) else (type(FarmingCatalog.Seeds) == "table" and FarmingCatalog.Seeds or {})
+local fruitItems = if type(FarmingCatalog.GetFruitItems) == "function" then (FarmingCatalog.GetFruitItems() or {}) else (type(FarmingCatalog.Fruits) == "table" and FarmingCatalog.Fruits or {})
+local itemDefinitionsById = {}
 
-	return type(FarmingCatalog.Seeds) == "table" and FarmingCatalog.Seeds or {}
+for _, itemDefinition in ipairs(seedItems) do
+	itemDefinition.NormalizedItemId = itemDefinition.NormalizedItemId or normalize_key(itemDefinition.ItemId)
+	itemDefinitionsById[itemDefinition.NormalizedItemId] = itemDefinition
+end
+
+for _, itemDefinition in ipairs(fruitItems) do
+	itemDefinition.NormalizedItemId = itemDefinition.NormalizedItemId or normalize_key(itemDefinition.ItemId)
+	itemDefinitionsById[itemDefinition.NormalizedItemId] = itemDefinition
+end
+
+local function get_seed_items()
+	return seedItems
 end
 
 local function get_fruit_items()
-	if type(FarmingCatalog.GetFruitItems) == "function" then
-		return FarmingCatalog.GetFruitItems() or {}
-	end
-
-	return type(FarmingCatalog.Fruits) == "table" and FarmingCatalog.Fruits or {}
+	return fruitItems
 end
 
 local function get_item_definition(itemId)
-	if type(FarmingCatalog.GetItem) == "function" then
-		return FarmingCatalog.GetItem(itemId)
-	end
-
 	local normalizedItemId = normalize_key(itemId)
 	if not normalizedItemId then
 		return nil
 	end
 
-	for _, itemDefinition in ipairs(get_seed_items()) do
-		if normalize_key(itemDefinition.ItemId) == normalizedItemId then
-			return itemDefinition
-		end
-	end
-
-	for _, itemDefinition in ipairs(get_fruit_items()) do
-		if normalize_key(itemDefinition.ItemId) == normalizedItemId then
-			return itemDefinition
-		end
-	end
-
-	return nil
+	return itemDefinitionsById[normalizedItemId]
 end
 
 local function get_bucket_item_count(bucket, itemId): number
@@ -141,14 +134,21 @@ local function get_bucket_item_count(bucket, itemId): number
 	return bucket[itemId] or 0
 end
 
-local function get_horseshoes(player: Player): number
-	return DataUtility.server.get(player, "Currencies.Horseshoes") or 0
+local function get_profile_data(player: Player)
+	return DataUtility.server.get(player)
 end
 
-local function set_horseshoes(player: Player, amount: number): number
-	local normalizedAmount = math.max(0, math.floor(amount))
-	DataUtility.server.set(player, "Currencies.Horseshoes", normalizedAmount)
-	return normalizedAmount
+local function get_horseshoes_from_profile(profileData): number
+	return math.max(0, math.floor(tonumber(get_by_path(profileData, "Currencies.Horseshoes")) or 0))
+end
+
+local function get_horseshoes(player: Player): number
+	local profileData = get_profile_data(player)
+	if not profileData then
+		return 0
+	end
+
+	return get_horseshoes_from_profile(profileData)
 end
 
 local function resolve_item_definition(itemOrId, expectedKind: string?)
@@ -174,9 +174,13 @@ local function get_item_count(player: Player, itemDefinition): number
 	return get_bucket_item_count(bucket, itemDefinition.ItemId)
 end
 
+local function get_item_count_from_profile(profileData, itemDefinition): number
+	return get_bucket_item_count(get_by_path(profileData, itemDefinition.InventoryPath), itemDefinition.ItemId)
+end
+
 local function is_item_selected_for_hotbar(player: Player, itemDefinition): boolean
-	local initialized = DataUtility.server.get(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
-	if not initialized then
+	local initializedLoadout = DataUtility.server.get(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
+	if not initializedLoadout then
 		return true
 	end
 
@@ -196,12 +200,17 @@ local function get_total_count(player: Player, itemDefinitions): number
 	return total
 end
 
-local function set_item_count(player: Player, itemDefinition, amount: number): number
-	local profileData = DataUtility.server.get(player)
-	if not profileData then
-		return 0
+local function get_total_count_from_profile(profileData, itemDefinitions): number
+	local total = 0
+
+	for _, itemDefinition in ipairs(itemDefinitions) do
+		total += get_item_count_from_profile(profileData, itemDefinition)
 	end
 
+	return total
+end
+
+local function write_item_count(profileData, itemDefinition, amount: number): (table, number)
 	local bucket = ensure_path(profileData, itemDefinition.InventoryPath)
 	local normalizedAmount = math.max(0, math.floor(amount))
 
@@ -211,21 +220,16 @@ local function set_item_count(player: Player, itemDefinition, amount: number): n
 		bucket[itemDefinition.ItemId] = nil
 	end
 
-	DataUtility.server.set(player, itemDefinition.InventoryPath, bucket)
-	return normalizedAmount
-end
-
-local function add_item_count(player: Player, itemDefinition, amount: number): number
-	return set_item_count(player, itemDefinition, get_item_count(player, itemDefinition) + amount)
+	return bucket, normalizedAmount
 end
 
 local function migrate_legacy_inventory(player: Player)
-	local profileData = DataUtility.server.get(player)
+	local profileData = get_profile_data(player)
 	if not profileData then
 		return
 	end
 
-	local fruitsBucket = ensure_path(profileData, "Inventory.Fruits")
+	local fruitsBucket = ensure_path(profileData, FRUIT_INVENTORY_PATH)
 	local legacyFoodBucket = get_by_path(profileData, "Inventory.Consumables.Food")
 	local changed = false
 
@@ -250,7 +254,7 @@ local function migrate_legacy_inventory(player: Player)
 	end
 
 	if changed then
-		DataUtility.server.set(player, "Inventory.Fruits", fruitsBucket)
+		DataUtility.server.set(player, FRUIT_INVENTORY_PATH, fruitsBucket)
 	end
 end
 
@@ -297,7 +301,7 @@ local function create_placeholder_tool(itemDefinition): Tool
 	handle.Material = Enum.Material.SmoothPlastic
 	handle.TopSurface = Enum.SurfaceType.Smooth
 	handle.BottomSurface = Enum.SurfaceType.Smooth
-	handle.Color = itemDefinition.Kind == "Seed" and Color3.fromRGB(126, 97, 64) or Color3.fromRGB(209, 106, 62)
+	handle.Color = if itemDefinition.Kind == "Seed" then Color3.fromRGB(126, 97, 64) else Color3.fromRGB(209, 106, 62)
 	handle.CanCollide = false
 	handle.Parent = tool
 
@@ -336,7 +340,7 @@ local function sanitize_tool(tool: Tool, itemDefinition)
 		handle.CanCollide = false
 	end
 
-	local legacyAttributes = {
+	for _, attributeName in ipairs({
 		"ToolItemId",
 		"ItemId",
 		"InventoryPath",
@@ -348,9 +352,7 @@ local function sanitize_tool(tool: Tool, itemDefinition)
 		"ShopId",
 		"CareType",
 		"UseType",
-	}
-
-	for _, attributeName in ipairs(legacyAttributes) do
+	}) do
 		if tool:GetAttribute(attributeName) ~= nil then
 			tool:SetAttribute(attributeName, nil)
 		end
@@ -376,7 +378,7 @@ local function clone_item_tool(itemDefinition): Tool
 	return tool
 end
 
-local function collect_matching_tools(container: Instance?, itemDefinition): { Tool }
+local function collect_matching_tools(container: Instance?, itemDefinition): {Tool}
 	local tools = {}
 
 	if not container then
@@ -425,25 +427,23 @@ local function sync_item_tools(player: Player, itemDefinition)
 		end
 	elseif liveCount < desiredCount then
 		for _ = 1, desiredCount - liveCount do
-			local tool = clone_item_tool(itemDefinition)
-			tool.Parent = backpack or player
+			clone_item_tool(itemDefinition).Parent = backpack or player
 		end
 	end
 
 	local starterGear = player:FindFirstChild("StarterGear") or player:WaitForChild("StarterGear", 5)
 	if starterGear then
-		local currentStarterTools = collect_matching_tools(starterGear, itemDefinition)
-		if #currentStarterTools > desiredCount then
-			for index = 1, #currentStarterTools - desiredCount do
-				local tool = currentStarterTools[#currentStarterTools - index + 1]
+		local starterTools = collect_matching_tools(starterGear, itemDefinition)
+		if #starterTools > desiredCount then
+			for index = 1, #starterTools - desiredCount do
+				local tool = starterTools[#starterTools - index + 1]
 				if tool and tool.Parent then
 					tool:Destroy()
 				end
 			end
-		else
-			for _ = 1, desiredCount - #currentStarterTools do
-				local tool = clone_item_tool(itemDefinition)
-				tool.Parent = starterGear
+		elseif #starterTools < desiredCount then
+			for _ = 1, desiredCount - #starterTools do
+				clone_item_tool(itemDefinition).Parent = starterGear
 			end
 		end
 	end
@@ -461,13 +461,59 @@ local function sync_fruit_tools(player: Player)
 	end
 end
 
-local function sync_player_tools(player: Player)
-	migrate_legacy_inventory(player)
-	sync_seed_tools(player)
-	sync_fruit_tools(player)
+local function request_tool_sync(player: Player, mode: string)
+	local state = queuedToolSyncs[player]
+	if not state then
+		state = {
+			Queued = false,
+			Full = false,
+			Seed = false,
+			Fruit = false,
+		}
+		queuedToolSyncs[player] = state
+	end
+
+	if mode == "Full" then
+		state.Full = true
+		state.Seed = true
+		state.Fruit = true
+	elseif mode == "Seed" then
+		state.Seed = true
+	elseif mode == "Fruit" then
+		state.Fruit = true
+	end
+
+	if state.Queued then
+		return
+	end
+
+	state.Queued = true
+
+	task.defer(function()
+		local queuedState = queuedToolSyncs[player]
+		queuedToolSyncs[player] = nil
+
+		if not queuedState or not player.Parent then
+			return
+		end
+
+		if queuedState.Full or queuedState.Fruit then
+			migrate_legacy_inventory(player)
+		end
+
+		if queuedState.Full or queuedState.Seed then
+			sync_seed_tools(player)
+		end
+
+		if queuedState.Full or queuedState.Fruit then
+			sync_fruit_tools(player)
+		end
+	end)
 end
 
 local function disconnect_player(player: Player)
+	queuedToolSyncs[player] = nil
+
 	local trove = playerTroves[player]
 	if not trove then
 		return
@@ -483,19 +529,18 @@ local function track_player(player: Player)
 	local trove = Trove.new()
 	playerTroves[player] = trove
 
-	local inventoryPaths = {
-		"Inventory.Seeds",
-		"Inventory.Fruits",
-	}
+	local seedConnection = DataUtility.server.bind(player, SEED_INVENTORY_PATH, function()
+		request_tool_sync(player, "Seed")
+	end)
+	if seedConnection then
+		trove:Add(seedConnection)
+	end
 
-	for _, inventoryPath in ipairs(inventoryPaths) do
-		local connection = DataUtility.server.bind(player, inventoryPath, function()
-			task.defer(sync_player_tools, player)
-		end)
-
-		if connection then
-			trove:Add(connection)
-		end
+	local fruitConnection = DataUtility.server.bind(player, FRUIT_INVENTORY_PATH, function()
+		request_tool_sync(player, "Fruit")
+	end)
+	if fruitConnection then
+		trove:Add(fruitConnection)
 	end
 
 	for _, loadoutPath in ipairs({
@@ -503,7 +548,7 @@ local function track_player(player: Player)
 		InventoryLoadout.HOTBAR_INITIALIZED_PATH,
 	}) do
 		local connection = DataUtility.server.bind(player, loadoutPath, function()
-			task.defer(sync_player_tools, player)
+			request_tool_sync(player, "Full")
 		end)
 
 		if connection then
@@ -512,22 +557,67 @@ local function track_player(player: Player)
 	end
 
 	trove:Add(player.CharacterAdded:Connect(function()
-		task.defer(sync_player_tools, player)
+		request_tool_sync(player, "Full")
 	end))
 
-	task.defer(sync_player_tools, player)
+	request_tool_sync(player, "Full")
 end
 
-local function create_state_payload(player: Player, success: boolean, code: string, itemDefinition)
+local function create_state_payload(player: Player, success: boolean, code: string, itemDefinition, profileDataOverride)
+	local profileData = profileDataOverride or get_profile_data(player)
+	local horseshoes = 0
+	local seedCount = 0
+	local fruitCount = 0
+	local itemCount = 0
+
+	if profileData then
+		horseshoes = get_horseshoes_from_profile(profileData)
+		seedCount = get_total_count_from_profile(profileData, get_seed_items())
+		fruitCount = get_total_count_from_profile(profileData, get_fruit_items())
+
+		if itemDefinition then
+			itemCount = get_item_count_from_profile(profileData, itemDefinition)
+		end
+	else
+		horseshoes = get_horseshoes(player)
+		seedCount = get_total_count(player, get_seed_items())
+		fruitCount = get_total_count(player, get_fruit_items())
+
+		if itemDefinition then
+			itemCount = get_item_count(player, itemDefinition)
+		end
+	end
+
 	return {
 		Success = success,
 		Code = code,
 		ItemId = itemDefinition and itemDefinition.ItemId or nil,
-		Horseshoes = get_horseshoes(player),
-		SeedCount = get_total_count(player, get_seed_items()),
-		FruitCount = get_total_count(player, get_fruit_items()),
-		ItemCount = itemDefinition and get_item_count(player, itemDefinition) or 0,
+		Horseshoes = horseshoes,
+		SeedCount = seedCount,
+		FruitCount = fruitCount,
+		ItemCount = itemCount,
 	}
+end
+
+local function handle_shop_action(player: Player, actionOrPayload, itemId: string?)
+	local actionName = actionOrPayload
+	local resolvedItemId = itemId
+
+	if type(actionOrPayload) == "table" then
+		actionName = actionOrPayload.Action or actionOrPayload.Type
+		resolvedItemId = actionOrPayload.ItemId
+	end
+
+	if actionName == "BuySeed" then
+		return FarmingShopService.BuySeed(player, resolvedItemId)
+	end
+
+	if actionName == "SellFruit" then
+		return FarmingShopService.SellFruit(player, resolvedItemId)
+	end
+
+	local itemDefinition = resolve_item_definition(resolvedItemId, nil)
+	return create_state_payload(player, false, "UnknownAction", itemDefinition)
 end
 
 function FarmingShopService.SyncSeedTools(player: Player)
@@ -539,7 +629,13 @@ function FarmingShopService.SyncFruitTools(player: Player)
 end
 
 function FarmingShopService.SyncPlayerTools(player: Player)
-	sync_player_tools(player)
+	if not player or not player.Parent then
+		return
+	end
+
+	migrate_legacy_inventory(player)
+	sync_seed_tools(player)
+	sync_fruit_tools(player)
 end
 
 function FarmingShopService.GetSeedCount(player: Player, itemId): number
@@ -566,15 +662,28 @@ function FarmingShopService.BuySeed(player: Player, itemId)
 		return create_state_payload(player, false, "UnknownSeed", nil)
 	end
 
-	local currentHorseshoes = get_horseshoes(player)
-	if currentHorseshoes < itemDefinition.Price then
-		return create_state_payload(player, false, "NotEnoughHorseshoes", itemDefinition)
+	local profileData = get_profile_data(player)
+	if not profileData then
+		return create_state_payload(player, false, "ProfileUnavailable", itemDefinition)
 	end
 
-	set_horseshoes(player, currentHorseshoes - itemDefinition.Price)
-	add_item_count(player, itemDefinition, 1)
+	local currentHorseshoes = get_horseshoes_from_profile(profileData)
+	if currentHorseshoes < itemDefinition.Price then
+		return create_state_payload(player, false, "NotEnoughHorseshoes", itemDefinition, profileData)
+	end
 
-	return create_state_payload(player, true, "SeedPurchased", itemDefinition)
+	local bucket = select(1, write_item_count(
+		profileData,
+		itemDefinition,
+		get_item_count_from_profile(profileData, itemDefinition) + 1
+	))
+
+	DataUtility.server.set_many(player, {
+		{ Path = "Currencies.Horseshoes", Value = currentHorseshoes - itemDefinition.Price },
+		{ Path = itemDefinition.InventoryPath, Value = bucket },
+	})
+
+	return create_state_payload(player, true, "SeedPurchased", itemDefinition, profileData)
 end
 
 function FarmingShopService.SellFruit(player: Player, itemId)
@@ -583,15 +692,24 @@ function FarmingShopService.SellFruit(player: Player, itemId)
 		return create_state_payload(player, false, "UnknownFruit", nil)
 	end
 
-	local currentFruitCount = get_item_count(player, itemDefinition)
-	if currentFruitCount < 1 then
-		return create_state_payload(player, false, "NoFruitAvailable", itemDefinition)
+	local profileData = get_profile_data(player)
+	if not profileData then
+		return create_state_payload(player, false, "ProfileUnavailable", itemDefinition)
 	end
 
-	set_item_count(player, itemDefinition, currentFruitCount - 1)
-	set_horseshoes(player, get_horseshoes(player) + itemDefinition.SellPrice)
+	local currentFruitCount = get_item_count_from_profile(profileData, itemDefinition)
+	if currentFruitCount < 1 then
+		return create_state_payload(player, false, "NoFruitAvailable", itemDefinition, profileData)
+	end
 
-	return create_state_payload(player, true, "FruitSold", itemDefinition)
+	local bucket = select(1, write_item_count(profileData, itemDefinition, currentFruitCount - 1))
+
+	DataUtility.server.set_many(player, {
+		{ Path = itemDefinition.InventoryPath, Value = bucket },
+		{ Path = "Currencies.Horseshoes", Value = get_horseshoes_from_profile(profileData) + itemDefinition.SellPrice },
+	})
+
+	return create_state_payload(player, true, "FruitSold", itemDefinition, profileData)
 end
 
 function FarmingShopService.ConsumeSeed(player: Player, itemId)
@@ -600,14 +718,23 @@ function FarmingShopService.ConsumeSeed(player: Player, itemId)
 		return false, create_state_payload(player, false, "UnknownSeed", nil)
 	end
 
-	local currentSeedCount = get_item_count(player, itemDefinition)
-	if currentSeedCount < 1 then
-		return false, create_state_payload(player, false, "NoSeedsAvailable", itemDefinition)
+	local profileData = get_profile_data(player)
+	if not profileData then
+		return false, create_state_payload(player, false, "ProfileUnavailable", itemDefinition)
 	end
 
-	set_item_count(player, itemDefinition, currentSeedCount - 1)
+	local currentSeedCount = get_item_count_from_profile(profileData, itemDefinition)
+	if currentSeedCount < 1 then
+		return false, create_state_payload(player, false, "NoSeedsAvailable", itemDefinition, profileData)
+	end
 
-	return true, create_state_payload(player, true, "SeedConsumed", itemDefinition)
+	local bucket = select(1, write_item_count(profileData, itemDefinition, currentSeedCount - 1))
+
+	DataUtility.server.set_many(player, {
+		{ Path = itemDefinition.InventoryPath, Value = bucket },
+	})
+
+	return true, create_state_payload(player, true, "SeedConsumed", itemDefinition, profileData)
 end
 
 function FarmingShopService.AwardHarvest(player: Player, itemId, amount: number?)
@@ -616,8 +743,22 @@ function FarmingShopService.AwardHarvest(player: Player, itemId, amount: number?
 		return create_state_payload(player, false, "UnknownFruit", nil)
 	end
 
-	add_item_count(player, itemDefinition, amount or itemDefinition.HarvestYield or 1)
-	return create_state_payload(player, true, "HarvestAwarded", itemDefinition)
+	local profileData = get_profile_data(player)
+	if not profileData then
+		return create_state_payload(player, false, "ProfileUnavailable", itemDefinition)
+	end
+
+	local bucket = select(1, write_item_count(
+		profileData,
+		itemDefinition,
+		get_item_count_from_profile(profileData, itemDefinition) + (amount or itemDefinition.HarvestYield or 1)
+	))
+
+	DataUtility.server.set_many(player, {
+		{ Path = itemDefinition.InventoryPath, Value = bucket },
+	})
+
+	return create_state_payload(player, true, "HarvestAwarded", itemDefinition, profileData)
 end
 
 function FarmingShopService.Init()
@@ -625,12 +766,16 @@ function FarmingShopService.Init()
 		return
 	end
 
+	Net.Function[SHOP_ACTION_FUNCTION_NAME]:Respond(function(player, payload)
+		return handle_shop_action(player, payload)
+	end)
+
 	Net.Function.BuySeed:Respond(function(player, itemId)
-		return FarmingShopService.BuySeed(player, itemId)
+		return handle_shop_action(player, "BuySeed", itemId)
 	end)
 
 	Net.Function.SellFruit:Respond(function(player, itemId)
-		return FarmingShopService.SellFruit(player, itemId)
+		return handle_shop_action(player, "SellFruit", itemId)
 	end)
 
 	for _, player in ipairs(Players:GetPlayers()) do
