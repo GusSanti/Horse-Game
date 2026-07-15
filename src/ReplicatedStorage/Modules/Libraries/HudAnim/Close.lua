@@ -6,6 +6,7 @@ local Camera = workspace.CurrentCamera
 ------------------//VARIABLES
 local Close = {}
 local closing_deb = {}
+local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
 
 ------------------//FUNCTIONS
 local function get_number_attribute(inst: Instance, attributeName: string, fallback: number): number
@@ -37,6 +38,20 @@ end
 local function tween_fov(target, t)
 	local info = TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	TweenService:Create(Camera, info, { FieldOfView = target }):Play()
+end
+
+local function has_true_attribute(instance: Instance?, attributeName: string): boolean
+	local current = instance
+
+	while current do
+		if current:GetAttribute(attributeName) == true then
+			return true
+		end
+
+		current = current.Parent
+	end
+
+	return false
 end
 
 local function finish_close(inst, state, hasBlur, t)
@@ -130,6 +145,9 @@ function Close.bind(inst, state, utils, sfx)
 		-- Detecta fechamento real
 		if inst.Visible == false then
 			if not inst:GetAttribute("UIOpen") then
+				return
+			end
+			if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
 				return
 			end
 			if closing_deb[inst] then

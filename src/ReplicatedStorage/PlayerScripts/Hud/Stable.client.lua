@@ -18,6 +18,7 @@ local HorseBondService = require(Services:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
+local Net = require(Libraries:WaitForChild("Net"))
 
 local localPlayer: Player = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui") :: PlayerGui
@@ -104,6 +105,7 @@ local refreshAccumulator = 0
 local renderQueued = false
 local renderGeneration = 0
 local stableRenderDirty = false
+local mountRequestInFlight = false
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -174,6 +176,37 @@ local function find_gui_object(root: Instance?, aliases: {string}, recursive: bo
 	end
 
 	return nil
+end
+
+local function find_horse_mount_button(card: GuiObject, horseImage: GuiObject?): GuiButton?
+	if horseImage and horseImage:IsA("GuiButton") then
+		return horseImage
+	end
+
+	if card:IsA("GuiButton") then
+		return card
+	end
+
+	return nil
+end
+
+local function mount_horse_from_stable(horseId: string): ()
+	if mountRequestInFlight or horseId == "" then
+		return
+	end
+
+	mountRequestInFlight = true
+
+	task.spawn(function()
+		pcall(function()
+			Net.Function.HorseMountAction:Call({
+				Action = "Mount",
+				HorseId = horseId,
+			})
+		end)
+
+		mountRequestInFlight = false
+	end)
 end
 
 local function find_frame(root: Instance?, aliases: {string}, recursive: boolean?): Frame?
@@ -850,6 +883,7 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 	local nameLabel = find_text_label(card, HORSE_NAME_NAMES)
 	local detailsLabel = find_text_label(card, HORSE_DETAILS_NAMES)
 	local horseImage = find_gui_object(card, HORSE_IMAGE_NAMES, true)
+	local mountButton = find_horse_mount_button(card, horseImage)
 	local selectedFrame = find_gui_object(card, SELECTED_FRAME_NAMES, true)
 	local selectedLabel = find_text_label(selectedFrame, SELECTED_TEXT_NAMES)
 	local viewportFrame = find_viewport_frame(horseImage or card)
@@ -880,6 +914,12 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 
 	if viewportFrame then
 		populate_viewport(viewportFrame, stableHorseEntry.HorseId, stableHorseEntry.SlotName)
+	end
+
+	if mountButton then
+		cardTrove:Connect(mountButton.Activated, function()
+			mount_horse_from_stable(stableHorseEntry.HorseId)
+		end)
 	end
 
 	if statsContainer and statTemplate then

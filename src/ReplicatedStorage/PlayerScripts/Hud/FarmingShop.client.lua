@@ -21,18 +21,23 @@ local SHOP_ACTION_REMOTE_NAME = "FarmingShopAction"
 local MAX_PRELOAD_WAIT_SECONDS = 3
 local SHOP_UI_DISCOVERY_INTERVAL = 0.5
 local SHOP_UI_WARNING_INTERVAL = 20
+local CARD_BUILD_INTERVAL_SECONDS = 0.03
+local SECONDARY_TAB_PRELOAD_DELAY_SECONDS = 0.2
 
 local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAME = "MainframeFR"
 local FRAMES_CONTAINER_NAME = "Frames"
-local SHOP_FRAME_NAME = "SeedShop"
-local SHOP_BACKGROUND_NAME = "SeedShopBG"
+local SEED_SHOP_FRAME_NAME = "SeedShop"
+local FRUIT_SHOP_FRAME_NAME = "FruitShop"
 local TABS_CONTAINER_NAME = "BuySellSeedsFR"
 local SCROLLING_FRAME_NAME = "ListScrollingFrame"
 local SEED_TEMPLATE_NAME = "SeedListBG"
 local FRUIT_TEMPLATE_NAME = "FruitListBG"
 local SEED_TAB_NAME = "Seeds"
 local FRUIT_TAB_NAME = "Fruits"
+local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
+local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
+
 local CLOSE_BUTTON_NAMES = { "CloseBT", "ExitBT" }
 local RESTOCK_BUTTON_NAMES = { "RestyockBT", "RestockBT", "ReestockBT" }
 local PURCHASE_BUTTON_NAMES = { "PurchaseBT" }
@@ -43,22 +48,21 @@ local VALUE_LABEL_NAMES = { "ValueTX" }
 local OUT_OF_STOCK_LABEL_NAMES = { "StockTX" }
 local IMAGE_CONTAINER_NAMES = { "ImageLabel", "ImageItem", "ItemImage", "Icon" }
 local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
+local SHOP_BACKGROUND_NAMES = { "SeedShopBG", "FruitShopBG", "ShopBG" }
 local SHALLOW_SEARCH_DEPTH = 3
 
-type ShopUi = {
-	Root: GuiObject,
-	ScrollingFrame: ScrollingFrame,
-	SeedTemplate: GuiObject,
-	FruitTemplate: GuiObject,
-	SeedsButton: GuiButton,
-	FruitsButton: GuiButton,
-	CloseButton: GuiButton?,
-	RestockButton: GuiButton?,
+type ShopCardTemplateMap = {
+	PurchaseButtonPath: { string }?,
+	StockCountLabelPath: { string }?,
+	ValueLabelPath: { string }?,
+	OutOfStockLabelPath: { string }?,
+	ButtonTextPath: { string }?,
+	NameLabelPath: { string }?,
+	ViewportFramePath: { string }?,
 }
 
 type ShopCardEntry = {
 	Card: GuiObject,
-	Kind: string,
 	ItemDefinition: any,
 	PurchaseButton: GuiButton?,
 	StockCountLabel: TextLabel?,
@@ -71,32 +75,38 @@ type ShopCardEntry = {
 	ButtonConnection: RBXScriptConnection?,
 }
 
-type ShopCardTemplateMap = {
-	PurchaseButtonPath: {string}?,
-	StockCountLabelPath: {string}?,
-	ValueLabelPath: {string}?,
-	OutOfStockLabelPath: {string}?,
-	ButtonTextPath: {string}?,
-	NameLabelPath: {string}?,
-	ViewportFramePath: {string}?,
+type ShopPanel = {
+	Kind: string,
+	Root: GuiObject,
+	ScrollingFrame: ScrollingFrame,
+	Template: GuiObject,
+	TemplateMap: ShopCardTemplateMap?,
+	SeedsButton: GuiButton,
+	FruitsButton: GuiButton,
+	CloseButton: GuiButton?,
+	RestockButton: GuiButton?,
+	Entries: { ShopCardEntry },
+	BuildToken: number,
+	BuildStarted: boolean,
+	BuildCompleted: boolean,
+}
+
+type ShopUi = {
+	SeedPanel: ShopPanel,
+	FruitPanel: ShopPanel,
 }
 
 local currentUi: ShopUi? = nil
 local currentUiConnections = {}
-local pooledEntriesByKind = {
-	Seed = {},
-	Fruit = {},
-}
-local activeEntries = {}
 local activeTab = "Seed"
-local renderedTab: string? = nil
 local requestInFlight = false
-local renderQueued = false
-local rebuildQueued = false
-local poolsInitialized = false
 
 local seedItems = if type(FarmingCatalog.GetSeedItems) == "function" then (FarmingCatalog.GetSeedItems() or {}) else (type(FarmingCatalog.Seeds) == "table" and FarmingCatalog.Seeds or {})
 local fruitItems = if type(FarmingCatalog.GetFruitItems) == "function" then (FarmingCatalog.GetFruitItems() or {}) else (type(FarmingCatalog.Fruits) == "table" and FarmingCatalog.Fruits or {})
+local itemDefinitionsByKind = {
+	Seed = seedItems,
+	Fruit = fruitItems,
+}
 
 local function wait_for_preload_ready()
 	local startedAt = os.clock()
@@ -198,20 +208,12 @@ end
 
 local function find_text_label(root: Instance?, aliases): TextLabel?
 	local instance = find_shallow_named_descendant(root, aliases, "TextLabel", SHALLOW_SEARCH_DEPTH)
-	if instance then
-		return instance :: TextLabel
-	end
-
-	return nil
+	return if instance then instance :: TextLabel else nil
 end
 
-local function find_gui_button(root: Instance?, aliases): GuiButton?
-	local instance = find_shallow_named_descendant(root, aliases, "GuiButton", SHALLOW_SEARCH_DEPTH)
-	if instance then
-		return instance :: GuiButton
-	end
-
-	return nil
+local function find_gui_button(root: Instance?, aliases, maxDepth: number?): GuiButton?
+	local instance = find_shallow_named_descendant(root, aliases, "GuiButton", maxDepth or SHALLOW_SEARCH_DEPTH)
+	return if instance then instance :: GuiButton else nil
 end
 
 local function find_viewport_frame(root: Instance?): ViewportFrame?
@@ -222,11 +224,7 @@ local function find_viewport_frame(root: Instance?): ViewportFrame?
 	end
 
 	local fallback = find_shallow_named_descendant(root, VIEWPORT_FRAME_NAMES, "ViewportFrame", SHALLOW_SEARCH_DEPTH)
-	if fallback then
-		return fallback :: ViewportFrame
-	end
-
-	return nil
+	return if fallback then fallback :: ViewportFrame else nil
 end
 
 local function strip_local_scripts(root: Instance)
@@ -253,6 +251,10 @@ local function get_horseshoes_amount(): number
 	return math.max(0, math.floor(tonumber(DataUtility.client.get("Currencies.Horseshoes")) or 0))
 end
 
+local function get_inventory_path(kind: string): string
+	return if kind == "Seed" then "Inventory.Seeds" else "Inventory.Fruits"
+end
+
 local function get_item_count(bucket, itemId): number
 	if type(FarmingCatalog.GetItemCount) == "function" then
 		return FarmingCatalog.GetItemCount(bucket, itemId)
@@ -263,10 +265,6 @@ local function get_item_count(bucket, itemId): number
 	end
 
 	return bucket[itemId] or 0
-end
-
-local function get_active_inventory_path(): string
-	return if activeTab == "Seed" then "Inventory.Seeds" else "Inventory.Fruits"
 end
 
 local function set_button_enabled(button: GuiButton?, isEnabled: boolean)
@@ -282,14 +280,14 @@ local function set_button_enabled(button: GuiButton?, isEnabled: boolean)
 	end
 end
 
-local function update_canvas_size()
-	if not currentUi then
+local function update_canvas_size(scrollingFrame: ScrollingFrame?)
+	if not scrollingFrame then
 		return
 	end
 
-	local layout = currentUi.ScrollingFrame:FindFirstChildOfClass("UIListLayout")
+	local layout = scrollingFrame:FindFirstChildOfClass("UIListLayout")
 	if layout then
-		currentUi.ScrollingFrame.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y)
+		scrollingFrame.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y)
 	end
 end
 
@@ -337,7 +335,7 @@ local function ensure_viewport_state(entry: ShopCardEntry)
 	entry.Camera = camera
 end
 
-local function get_relative_child_path(root: Instance, descendant: Instance?): {string}?
+local function get_relative_child_path(root: Instance, descendant: Instance?): { string }?
 	if not descendant or descendant == root then
 		return nil
 	end
@@ -357,7 +355,7 @@ local function get_relative_child_path(root: Instance, descendant: Instance?): {
 	return path
 end
 
-local function resolve_child_by_path(root: Instance?, path: {string}?, className: string?): Instance?
+local function resolve_child_by_path(root: Instance?, path: { string }?, className: string?): Instance?
 	if not root or not path then
 		return nil
 	end
@@ -418,20 +416,86 @@ local function apply_cached_viewport(entry: ShopCardEntry)
 	entry.ViewportFrame.CurrentCamera = entry.Camera
 end
 
-local call_shop
+local function get_panel(ui: ShopUi?, kind: string): ShopPanel?
+	if not ui then
+		return nil
+	end
 
-local function create_pooled_card_entry(kind: string, template: GuiObject, templateMap: ShopCardTemplateMap, itemDefinition): ShopCardEntry
-	local card = template:Clone()
+	return if kind == "Seed" then ui.SeedPanel else ui.FruitPanel
+end
+
+local function clear_panel_entries(panel: ShopPanel)
+	for _, entry in ipairs(panel.Entries) do
+		disconnect_connection(entry.ButtonConnection)
+		entry.ButtonConnection = nil
+		entry.Card:Destroy()
+	end
+
+	panel.Entries = {}
+end
+
+local function cancel_panel_build(panel: ShopPanel)
+	panel.BuildToken += 1
+	panel.BuildStarted = false
+	panel.BuildCompleted = false
+end
+
+local function reset_panel(panel: ShopPanel)
+	cancel_panel_build(panel)
+	clear_panel_entries(panel)
+end
+
+local function refresh_card(entry: ShopCardEntry, inventoryBucket, horseshoes: number)
+	local itemDefinition = entry.ItemDefinition
+	local amount = get_item_count(inventoryBucket, itemDefinition.ItemId)
+
+	if entry.StockCountLabel then
+		entry.StockCountLabel.Text = format_count(amount)
+	end
+
+	if entry.OutOfStockLabel then
+		entry.OutOfStockLabel.Visible = itemDefinition.Kind == "Seed" and amount <= 0
+	end
+
+	if itemDefinition.Kind == "Seed" then
+		set_button_enabled(entry.PurchaseButton, (not requestInFlight) and horseshoes >= (itemDefinition.Price or 0))
+	else
+		set_button_enabled(entry.PurchaseButton, (not requestInFlight) and amount > 0)
+	end
+end
+
+local function refresh_kind(kind: string)
+	local panel = get_panel(currentUi, kind)
+	if not panel then
+		return
+	end
+
+	local inventoryBucket = DataUtility.client.get(get_inventory_path(kind)) or {}
+	local horseshoes = get_horseshoes_amount()
+
+	for _, entry in ipairs(panel.Entries) do
+		refresh_card(entry, inventoryBucket, horseshoes)
+	end
+end
+
+local function refresh_all()
+	refresh_kind("Seed")
+	refresh_kind("Fruit")
+end
+
+local function create_card_entry(panel: ShopPanel, itemDefinition): ShopCardEntry
+	local templateMap = panel.TemplateMap or create_template_map(panel.Template)
+	panel.TemplateMap = templateMap
+
+	local card = panel.Template:Clone()
 	card.Name = itemDefinition.ItemId
-	card.Visible = false
-	card.Parent = nil
+	card.Visible = true
 	card.LayoutOrder = itemDefinition.SortOrder or 0
 
 	strip_local_scripts(card)
 
 	local entry: ShopCardEntry = {
 		Card = card,
-		Kind = kind,
 		ItemDefinition = itemDefinition,
 		PurchaseButton = resolve_child_by_path(card, templateMap.PurchaseButtonPath, "GuiButton") :: GuiButton?,
 		StockCountLabel = resolve_child_by_path(card, templateMap.StockCountLabelPath, "TextLabel") :: TextLabel?,
@@ -454,162 +518,212 @@ local function create_pooled_card_entry(kind: string, template: GuiObject, templ
 	end
 
 	if entry.ButtonText then
-		entry.ButtonText.Text = if kind == "Seed" then "Buy" else "Sell"
+		entry.ButtonText.Text = if panel.Kind == "Seed" then "Buy" else "Sell"
 	end
 
 	apply_cached_viewport(entry)
 
 	if entry.PurchaseButton then
 		entry.ButtonConnection = entry.PurchaseButton.Activated:Connect(function()
-			call_shop(if entry.Kind == "Seed" then "BuySeed" else "SellFruit", entry.ItemDefinition.ItemId)
+			if requestInFlight then
+				return
+			end
+
+			requestInFlight = true
+			refresh_all()
+
+			task.spawn(function()
+				pcall(function()
+					Net.Function[SHOP_ACTION_REMOTE_NAME]:Call({
+						Action = if panel.Kind == "Seed" then "BuySeed" else "SellFruit",
+						ItemId = itemDefinition.ItemId,
+					})
+				end)
+
+				requestInFlight = false
+				refresh_all()
+			end)
 		end)
 	end
 
 	return entry
 end
 
-local function release_active_entries()
-	for _, entry in ipairs(activeEntries) do
-		entry.Card.Visible = false
-		entry.Card.Parent = nil
-	end
-
-	activeEntries = {}
-	renderedTab = nil
+local function apply_manual_shop_control(panel: ShopPanel)
+	panel.Root:SetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE, true)
+	panel.Root:SetAttribute(IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE, true)
+	panel.Root:SetAttribute("UIOpen", false)
+	panel.Template.Visible = false
 end
 
-local function refresh_card(entry: ShopCardEntry, inventoryBucket, horseshoes: number)
-	local itemDefinition = entry.ItemDefinition
-	local amount = get_item_count(inventoryBucket, itemDefinition.ItemId)
-
-	if entry.StockCountLabel then
-		entry.StockCountLabel.Text = format_count(amount)
-	end
-
-	if entry.OutOfStockLabel then
-		entry.OutOfStockLabel.Visible = itemDefinition.Kind == "Seed" and amount <= 0
-	end
-
-	if itemDefinition.Kind == "Seed" then
-		set_button_enabled(entry.PurchaseButton, (not requestInFlight) and horseshoes >= (itemDefinition.Price or 0))
-	else
-		set_button_enabled(entry.PurchaseButton, (not requestInFlight) and amount > 0)
-	end
-end
-
-local function refresh_visible_cards()
-	if not currentUi then
+local function start_panel_build(panel: ShopPanel)
+	local itemDefinitions = itemDefinitionsByKind[panel.Kind]
+	if not itemDefinitions or panel.BuildStarted or panel.BuildCompleted then
 		return
 	end
 
-	local inventoryBucket = DataUtility.client.get(get_active_inventory_path()) or {}
-	local horseshoes = get_horseshoes_amount()
+	panel.TemplateMap = panel.TemplateMap or create_template_map(panel.Template)
+	panel.BuildToken += 1
+	panel.BuildStarted = true
 
-	for _, entry in ipairs(activeEntries) do
-		refresh_card(entry, inventoryBucket, horseshoes)
-	end
-end
-
-call_shop = function(actionName: string, itemId: string)
-	if requestInFlight then
-		return
-	end
-
-	requestInFlight = true
-	refresh_visible_cards()
+	local buildToken = panel.BuildToken
 
 	task.spawn(function()
-		pcall(function()
-			Net.Function[SHOP_ACTION_REMOTE_NAME]:Call({
-				Action = actionName,
-				ItemId = itemId,
-			})
+		for index, itemDefinition in ipairs(itemDefinitions) do
+			if not currentUi or get_panel(currentUi, panel.Kind) ~= panel or panel.BuildToken ~= buildToken then
+				return
+			end
+
+			local entry = create_card_entry(panel, itemDefinition)
+			entry.Card.Parent = panel.ScrollingFrame
+			panel.Entries[#panel.Entries + 1] = entry
+
+			local inventoryBucket = DataUtility.client.get(get_inventory_path(panel.Kind)) or {}
+			refresh_card(entry, inventoryBucket, get_horseshoes_amount())
+
+			if index == 1 or index % 4 == 0 or index == #itemDefinitions then
+				update_canvas_size(panel.ScrollingFrame)
+			end
+
+			task.wait(CARD_BUILD_INTERVAL_SECONDS)
+		end
+
+		if panel.BuildToken ~= buildToken then
+			return
+		end
+
+		panel.BuildStarted = false
+		panel.BuildCompleted = true
+		update_canvas_size(panel.ScrollingFrame)
+		task.defer(function()
+			update_canvas_size(panel.ScrollingFrame)
 		end)
-
-		requestInFlight = false
-		refresh_visible_cards()
 	end)
 end
 
-local function attach_entries_for_tab()
+local function show_tab(kind: string)
 	if not currentUi then
 		return
 	end
 
-	release_active_entries()
-	currentUi.ScrollingFrame.CanvasPosition = Vector2.zero
+	activeTab = kind
 
-	for _, entry in ipairs(pooledEntriesByKind[activeTab]) do
-		entry.Card.Parent = currentUi.ScrollingFrame
-		entry.Card.Visible = true
-		activeEntries[#activeEntries + 1] = entry
+	currentUi.SeedPanel.Root.Visible = kind == "Seed"
+	currentUi.FruitPanel.Root.Visible = kind == "Fruit"
+
+	if currentUi.SeedPanel.RestockButton then
+		currentUi.SeedPanel.RestockButton.Visible = false
 	end
 
-	renderedTab = activeTab
-	refresh_visible_cards()
-	update_canvas_size()
-	task.defer(update_canvas_size)
-end
+	if currentUi.FruitPanel.RestockButton then
+		currentUi.FruitPanel.RestockButton.Visible = kind == "Fruit"
+	end
 
-local function render_shop(forceRebuild: boolean)
-	if not currentUi then
+	local panel = get_panel(currentUi, kind)
+	if not panel then
 		return
 	end
 
-	if currentUi.RestockButton then
-		currentUi.RestockButton.Visible = activeTab == "Fruit"
-	end
-
-	if forceRebuild or renderedTab ~= activeTab then
-		attach_entries_for_tab()
-		return
-	end
-
-	refresh_visible_cards()
-end
-
-local function schedule_render(forceRebuild: boolean)
-	rebuildQueued = rebuildQueued or forceRebuild
-	if renderQueued then
-		return
-	end
-
-	renderQueued = true
-
+	start_panel_build(panel)
+	refresh_kind(kind)
+	update_canvas_size(panel.ScrollingFrame)
 	task.defer(function()
-		renderQueued = false
-
-		local shouldRebuild = rebuildQueued
-		rebuildQueued = false
-
-		render_shop(shouldRebuild)
+		update_canvas_size(panel.ScrollingFrame)
 	end)
 end
 
-local function build_card_pools(ui: ShopUi)
-	if poolsInitialized then
+local function hide_shop()
+	if not currentUi then
 		return
 	end
 
-	local seedTemplateMap = create_template_map(ui.SeedTemplate)
-	local fruitTemplateMap = create_template_map(ui.FruitTemplate)
+	currentUi.SeedPanel.Root.Visible = false
+	currentUi.FruitPanel.Root.Visible = false
+end
 
-	local function build_pool_for_kind(kind: string, template: GuiObject, templateMap: ShopCardTemplateMap, itemDefinitions)
-		for _, itemDefinition in ipairs(itemDefinitions) do
-			local entry = create_pooled_card_entry(kind, template, templateMap, itemDefinition)
-			pooledEntriesByKind[kind][#pooledEntriesByKind[kind] + 1] = entry
+local function find_shop_root(framesContainer: Instance?, frameName: string): GuiObject?
+	if not framesContainer then
+		return nil
+	end
+
+	local root = framesContainer:FindFirstChild(frameName)
+	if root and root:IsA("GuiObject") then
+		return root :: GuiObject
+	end
+
+	local nestedRoot = framesContainer:FindFirstChild(frameName, true)
+	return if nestedRoot and nestedRoot:IsA("GuiObject") then nestedRoot :: GuiObject else nil
+end
+
+local function find_scrolling_frame(shopRoot: GuiObject): ScrollingFrame?
+	local directScrollingFrame = find_direct_child(shopRoot, { SCROLLING_FRAME_NAME }, "ScrollingFrame")
+	if directScrollingFrame then
+		return directScrollingFrame :: ScrollingFrame
+	end
+
+	for _, backgroundName in ipairs(SHOP_BACKGROUND_NAMES) do
+		local background = find_shallow_named_descendant(shopRoot, { backgroundName }, "GuiObject", 2)
+		local nestedScrollingFrame = find_direct_child(background, { SCROLLING_FRAME_NAME }, "ScrollingFrame")
+		if nestedScrollingFrame then
+			return nestedScrollingFrame :: ScrollingFrame
 		end
 	end
 
-	build_pool_for_kind("Seed", ui.SeedTemplate, seedTemplateMap, seedItems)
-	build_pool_for_kind("Fruit", ui.FruitTemplate, fruitTemplateMap, fruitItems)
+	local fallback = find_shallow_named_descendant(shopRoot, { SCROLLING_FRAME_NAME }, "ScrollingFrame", SHALLOW_SEARCH_DEPTH)
+	return if fallback then fallback :: ScrollingFrame else nil
+end
 
-	ui.SeedTemplate.Visible = false
-	ui.FruitTemplate.Visible = false
-	ui.SeedTemplate.Parent = nil
-	ui.FruitTemplate.Parent = nil
+local function find_shop_panel(framesContainer: Instance?, frameName: string, kind: string, templateName: string): ShopPanel?
+	local shopRoot = find_shop_root(framesContainer, frameName)
+	if not shopRoot then
+		return nil
+	end
 
-	poolsInitialized = true
+	local tabsContainer = find_direct_child(shopRoot, { TABS_CONTAINER_NAME }, "GuiObject")
+		or find_shallow_named_descendant(shopRoot, { TABS_CONTAINER_NAME }, "GuiObject", SHALLOW_SEARCH_DEPTH)
+	if not tabsContainer then
+		return nil
+	end
+
+	local scrollingFrame = find_scrolling_frame(shopRoot)
+	if not scrollingFrame then
+		return nil
+	end
+
+	local template = find_direct_child(scrollingFrame, { templateName }, "GuiObject")
+		or find_shallow_named_descendant(scrollingFrame, { templateName }, "GuiObject", 2)
+	if not template then
+		return nil
+	end
+
+	local seedsButton = find_direct_child(tabsContainer, { SEED_TAB_NAME }, "GuiButton")
+		or find_gui_button(tabsContainer, { SEED_TAB_NAME }, 2)
+	local fruitsButton = find_direct_child(tabsContainer, { FRUIT_TAB_NAME }, "GuiButton")
+		or find_gui_button(tabsContainer, { FRUIT_TAB_NAME }, 2)
+	if not seedsButton or not fruitsButton then
+		return nil
+	end
+
+	local closeButton = find_direct_child(shopRoot, CLOSE_BUTTON_NAMES, "GuiButton")
+		or find_gui_button(shopRoot, CLOSE_BUTTON_NAMES, 2)
+	local restockButton = find_direct_child(shopRoot, RESTOCK_BUTTON_NAMES, "GuiButton")
+		or find_gui_button(shopRoot, RESTOCK_BUTTON_NAMES, 2)
+
+	return {
+		Kind = kind,
+		Root = shopRoot,
+		ScrollingFrame = scrollingFrame,
+		Template = template :: GuiObject,
+		TemplateMap = nil,
+		SeedsButton = seedsButton :: GuiButton,
+		FruitsButton = fruitsButton :: GuiButton,
+		CloseButton = closeButton :: GuiButton?,
+		RestockButton = restockButton :: GuiButton?,
+		Entries = {},
+		BuildToken = 0,
+		BuildStarted = false,
+		BuildCompleted = false,
+	}
 end
 
 local function try_get_shop_ui(): ShopUi?
@@ -628,102 +742,79 @@ local function try_get_shop_ui(): ShopUi?
 		return nil
 	end
 
-	local shopRoot = framesContainer:FindFirstChild(SHOP_FRAME_NAME)
-	if not shopRoot or not shopRoot:IsA("GuiObject") then
-		return nil
-	end
-
-	local shopBackground = shopRoot:FindFirstChild(SHOP_BACKGROUND_NAME)
-	local tabsContainer = shopRoot:FindFirstChild(TABS_CONTAINER_NAME)
-	if not shopBackground or not shopBackground:IsA("GuiObject") or not tabsContainer then
-		return nil
-	end
-
-	local scrollingFrame = shopBackground:FindFirstChild(SCROLLING_FRAME_NAME)
-	local seedTemplate = scrollingFrame and scrollingFrame:FindFirstChild(SEED_TEMPLATE_NAME)
-	local fruitTemplate = scrollingFrame and scrollingFrame:FindFirstChild(FRUIT_TEMPLATE_NAME)
-	local seedsButton = tabsContainer:FindFirstChild(SEED_TAB_NAME)
-	local fruitsButton = tabsContainer:FindFirstChild(FRUIT_TAB_NAME)
-
-	if not scrollingFrame or not scrollingFrame:IsA("ScrollingFrame") then
-		return nil
-	end
-
-	if not seedTemplate or not seedTemplate:IsA("GuiObject") then
-		return nil
-	end
-
-	if not fruitTemplate or not fruitTemplate:IsA("GuiObject") then
-		return nil
-	end
-
-	if not seedsButton or not seedsButton:IsA("GuiButton") then
-		return nil
-	end
-
-	if not fruitsButton or not fruitsButton:IsA("GuiButton") then
+	local seedPanel = find_shop_panel(framesContainer, SEED_SHOP_FRAME_NAME, "Seed", SEED_TEMPLATE_NAME)
+	local fruitPanel = find_shop_panel(framesContainer, FRUIT_SHOP_FRAME_NAME, "Fruit", FRUIT_TEMPLATE_NAME)
+	if not seedPanel or not fruitPanel then
 		return nil
 	end
 
 	return {
-		Root = shopRoot :: GuiObject,
-		ScrollingFrame = scrollingFrame :: ScrollingFrame,
-		SeedTemplate = seedTemplate :: GuiObject,
-		FruitTemplate = fruitTemplate :: GuiObject,
-		SeedsButton = seedsButton :: GuiButton,
-		FruitsButton = fruitsButton :: GuiButton,
-		CloseButton = find_direct_child(shopRoot, CLOSE_BUTTON_NAMES, "GuiButton") :: GuiButton?,
-		RestockButton = find_direct_child(shopRoot, RESTOCK_BUTTON_NAMES, "GuiButton") :: GuiButton?,
+		SeedPanel = seedPanel,
+		FruitPanel = fruitPanel,
 	}
+end
+
+local function bind_panel_buttons(panel: ShopPanel)
+	currentUiConnections[#currentUiConnections + 1] = panel.SeedsButton.Activated:Connect(function()
+		show_tab("Seed")
+	end)
+
+	currentUiConnections[#currentUiConnections + 1] = panel.FruitsButton.Activated:Connect(function()
+		show_tab("Fruit")
+	end)
+
+	if panel.CloseButton then
+		currentUiConnections[#currentUiConnections + 1] = panel.CloseButton.Activated:Connect(function()
+			hide_shop()
+		end)
+	end
+
+	if panel.RestockButton then
+		currentUiConnections[#currentUiConnections + 1] = panel.RestockButton.Activated:Connect(function()
+			show_tab("Seed")
+		end)
+	end
 end
 
 local function bind_ui(ui: ShopUi)
 	disconnect_connections(currentUiConnections)
-	release_active_entries()
+
+	if currentUi then
+		reset_panel(currentUi.SeedPanel)
+		reset_panel(currentUi.FruitPanel)
+	end
 
 	currentUi = ui
-	build_card_pools(ui)
 
-	currentUiConnections[#currentUiConnections + 1] = ui.SeedsButton.Activated:Connect(function()
-		activeTab = "Seed"
-		schedule_render(true)
-	end)
+	apply_manual_shop_control(ui.SeedPanel)
+	apply_manual_shop_control(ui.FruitPanel)
 
-	currentUiConnections[#currentUiConnections + 1] = ui.FruitsButton.Activated:Connect(function()
-		activeTab = "Fruit"
-		schedule_render(true)
-	end)
-
-	if ui.CloseButton then
-		currentUiConnections[#currentUiConnections + 1] = ui.CloseButton.Activated:Connect(function()
-			ui.Root.Visible = false
-		end)
-	end
-
-	if ui.RestockButton then
-		currentUiConnections[#currentUiConnections + 1] = ui.RestockButton.Activated:Connect(function()
-			activeTab = "Seed"
-			schedule_render(true)
-		end)
-	end
+	bind_panel_buttons(ui.SeedPanel)
+	bind_panel_buttons(ui.FruitPanel)
 
 	currentUiConnections[#currentUiConnections + 1] = DataUtility.client.bind("Currencies.Horseshoes", function()
-		schedule_render(false)
+		refresh_all()
 	end)
 
 	currentUiConnections[#currentUiConnections + 1] = DataUtility.client.bind("Inventory.Seeds", function()
-		if activeTab == "Seed" then
-			schedule_render(false)
-		end
+		refresh_kind("Seed")
 	end)
 
 	currentUiConnections[#currentUiConnections + 1] = DataUtility.client.bind("Inventory.Fruits", function()
-		if activeTab == "Fruit" then
-			schedule_render(false)
-		end
+		refresh_kind("Fruit")
 	end)
 
-	schedule_render(true)
+	show_tab(activeTab)
+
+	local primaryPanel = get_panel(ui, activeTab) or ui.SeedPanel
+	local secondaryPanel = if primaryPanel == ui.SeedPanel then ui.FruitPanel else ui.SeedPanel
+
+	start_panel_build(primaryPanel)
+	task.delay(SECONDARY_TAB_PRELOAD_DELAY_SECONDS, function()
+		if currentUi == ui then
+			start_panel_build(secondaryPanel)
+		end
+	end)
 end
 
 local function initialize_shop()
@@ -749,7 +840,7 @@ local function initialize_shop()
 		end
 
 		if attempts % SHOP_UI_WARNING_INTERVAL == 0 then
-			warn("[FarmingShop] aguardando SeedShop UI no PlayerGui...")
+			warn("[FarmingShop] aguardando SeedShop/FruitShop UI no PlayerGui...")
 		end
 
 		task.wait(SHOP_UI_DISCOVERY_INTERVAL)

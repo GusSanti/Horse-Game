@@ -6,6 +6,7 @@ local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAME = "MainframeFR"
 local FRAMES_CONTAINER_NAME = "Frames"
 local BUTTON_SUFFIX = "BT"
+local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
 
 if script.Parent:IsA("GuiButton") then
 	button = script.Parent
@@ -15,6 +16,20 @@ end
 
 if not button then
 	return
+end
+
+local function has_true_attribute(instance, attributeName)
+	local current = instance
+
+	while current do
+		if current:GetAttribute(attributeName) == true then
+			return true
+		end
+
+		current = current.Parent
+	end
+
+	return false
 end
 
 local function get_target_frame_name()
@@ -63,6 +78,10 @@ local function find_target_frame()
 end
 
 button.MouseButton1Click:Connect(function()
+	if has_true_attribute(button, IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE) then
+		return
+	end
+
 	local targetFrame = find_target_frame()
 	if not targetFrame then
 		return

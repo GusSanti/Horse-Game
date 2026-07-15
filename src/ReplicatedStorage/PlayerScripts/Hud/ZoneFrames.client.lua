@@ -19,16 +19,18 @@ local UPDATE_INTERVAL = 0.1
 local VERTICAL_PADDING = 6
 
 local ZONE_FRAME_ALIASES = {
-	shop = "SeedShop",
-	shopzone = "SeedShop",
-	seedshop = "SeedShop",
-	seedshopzone = "SeedShop",
-	seedzone = "SeedShop",
+	shop = { "SeedShop", "FruitShop" },
+	shopzone = { "SeedShop", "FruitShop" },
+	seedshop = { "SeedShop", "FruitShop" },
+	seedshopzone = { "SeedShop", "FruitShop" },
+	seedzone = { "SeedShop", "FruitShop" },
 }
 
 type ZoneState = {
 	Name: string,
-	Display: GuiObject?,
+	Displays: { GuiObject },
+	PrimaryDisplay: GuiObject?,
+	CurrentDisplayName: string?,
 	Parts: { BasePart },
 	IsInside: boolean,
 }
@@ -149,10 +151,16 @@ local function set_display_visible(instance: GuiObject?, isVisible: boolean)
 	instance.Visible = isVisible
 end
 
-local function resolve_frame_name(zoneName: string): string?
+local function set_displays_visible(instances: { GuiObject }, isVisible: boolean)
+	for _, instance in ipairs(instances) do
+		set_display_visible(instance, isVisible)
+	end
+end
+
+local function resolve_frame_names(zoneName: string): { string }
 	local normalizedName = normalize_key(zoneName)
 	if not normalizedName then
-		return zoneName
+		return { zoneName }
 	end
 
 	local alias = ZONE_FRAME_ALIASES[normalizedName]
@@ -160,30 +168,71 @@ local function resolve_frame_name(zoneName: string): string?
 		return alias
 	end
 
-	return zoneName
+	return { zoneName }
 end
 
-local function find_zone_display(framesContainer: Instance?, zoneName: string): GuiObject?
-	if not framesContainer then
-		return nil
+local function push_display(list: { GuiObject }, instance: GuiObject?)
+	if not instance then
+		return
 	end
 
-	local frameName = resolve_frame_name(zoneName)
-	if not frameName then
-		return nil
+	for _, existing in ipairs(list) do
+		if existing == instance then
+			return
+		end
 	end
 
-	local directDisplay = framesContainer:FindFirstChild(frameName)
-	if directDisplay and directDisplay:IsA("GuiObject") then
-		return directDisplay :: GuiObject
-	end
+	list[#list + 1] = instance
+end
 
-	local nestedDisplay = framesContainer:FindFirstChild(frameName, true)
-	if nestedDisplay and nestedDisplay:IsA("GuiObject") then
-		return nestedDisplay :: GuiObject
+local function get_zone_key(zoneName: string): string
+	return normalize_key(zoneName) or zoneName
+end
+
+local function find_visible_display_name(displays: { GuiObject }): string?
+	for _, display in ipairs(displays) do
+		if get_display_visible(display) then
+			return display.Name
+		end
 	end
 
 	return nil
+end
+
+local function find_display_by_name(displays: { GuiObject }, displayName: string?): GuiObject?
+	if not displayName then
+		return nil
+	end
+
+	for _, display in ipairs(displays) do
+		if display.Name == displayName then
+			return display
+		end
+	end
+
+	return nil
+end
+
+local function find_zone_displays(framesContainer: Instance?, zoneName: string): { GuiObject }
+	if not framesContainer then
+		return {}
+	end
+
+	local displays = {}
+
+	for _, frameName in ipairs(resolve_frame_names(zoneName)) do
+		local directDisplay = framesContainer:FindFirstChild(frameName)
+		if directDisplay and directDisplay:IsA("GuiObject") then
+			push_display(displays, directDisplay :: GuiObject)
+		end
+
+		local nestedDisplay = framesContainer:FindFirstChild(frameName, true)
+		if nestedDisplay and nestedDisplay:IsA("GuiObject") then
+			push_display(displays, nestedDisplay :: GuiObject)
+		end
+	end
+
+	return displays
 end
 
 local function collect_zone_parts(container: Instance): { BasePart }
@@ -203,7 +252,7 @@ local function collect_zone_parts(container: Instance): { BasePart }
 	return parts
 end
 
-local function build_zone_states(framesContainer: Instance?, zonesFolder: Instance): { ZoneState }
+local function build_zone_states(framesContainer: Instance?, zonesFolder: Instance, previousZoneStatesByKey): { ZoneState }
 	local zoneStates = {}
 
 	for _, child in ipairs(zonesFolder:GetChildren()) do
@@ -212,16 +261,32 @@ local function build_zone_states(framesContainer: Instance?, zonesFolder: Instan
 			continue
 		end
 
-		local display = find_zone_display(framesContainer, child.Name)
-		if display then
-			set_display_visible(display, false)
+		local displays = find_zone_displays(framesContainer, child.Name)
+		local previousState = previousZoneStatesByKey[get_zone_key(child.Name)]
+		local currentDisplayName = find_visible_display_name(displays)
+		local restoredDisplayName = currentDisplayName
+
+		if previousState and previousState.IsInside then
+			restoredDisplayName = restoredDisplayName or previousState.CurrentDisplayName
+
+			local restoredDisplay = find_display_by_name(displays, restoredDisplayName)
+			if restoredDisplay then
+				set_displays_visible(displays, false)
+				set_display_visible(restoredDisplay, true)
+				restoredDisplayName = restoredDisplay.Name
+			end
+		else
+			set_displays_visible(displays, false)
+			restoredDisplayName = nil
 		end
 
 		zoneStates[#zoneStates + 1] = {
 			Name = child.Name,
-			Display = display,
+			Displays = displays,
+			PrimaryDisplay = displays[1],
+			CurrentDisplayName = restoredDisplayName,
 			Parts = parts,
-			IsInside = false,
+			IsInside = previousState and previousState.IsInside or false,
 		}
 	end
 
@@ -230,9 +295,7 @@ end
 
 local function hide_all_displays(zoneStates: { ZoneState })
 	for _, zoneState in ipairs(zoneStates) do
-		if zoneState.Display then
-			set_display_visible(zoneState.Display, false)
-		end
+		set_displays_visible(zoneState.Displays, false)
 	end
 end
 
@@ -279,8 +342,14 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 
 	local function refresh_zones()
 		framesContainer = find_frames_container(find_main_container(uiRoot))
-		hide_all_displays(zoneStates)
-		zoneStates = build_zone_states(framesContainer, zonesFolder)
+		local previousZoneStatesByKey = {}
+
+		for _, zoneState in ipairs(zoneStates) do
+			zoneState.CurrentDisplayName = zoneState.CurrentDisplayName or find_visible_display_name(zoneState.Displays)
+			previousZoneStatesByKey[get_zone_key(zoneState.Name)] = zoneState
+		end
+
+		zoneStates = build_zone_states(framesContainer, zonesFolder, previousZoneStatesByKey)
 	end
 
 	local function update_zones()
@@ -310,15 +379,25 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 			local wasInside = zoneState.IsInside
 			zoneState.IsInside = isInside
 
-			if isInside and not wasInside and zoneState.Display and not enteredDisplay then
-				enteredDisplay = zoneState.Display
-			elseif not isInside and wasInside and zoneState.Display then
-				set_display_visible(zoneState.Display, false)
+			if isInside and not wasInside and zoneState.PrimaryDisplay and not enteredDisplay then
+				enteredDisplay = zoneState.PrimaryDisplay
+			elseif not isInside and wasInside then
+				set_displays_visible(zoneState.Displays, false)
+				zoneState.CurrentDisplayName = nil
+			elseif isInside then
+				zoneState.CurrentDisplayName = find_visible_display_name(zoneState.Displays) or zoneState.CurrentDisplayName
 			end
 		end
 
 		if enteredDisplay then
 			show_target_frame(framesContainer, enteredDisplay)
+
+			for _, zoneState in ipairs(zoneStates) do
+				if zoneState.PrimaryDisplay == enteredDisplay then
+					zoneState.CurrentDisplayName = enteredDisplay.Name
+					break
+				end
+			end
 		end
 	end
 

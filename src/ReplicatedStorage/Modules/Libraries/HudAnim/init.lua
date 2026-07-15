@@ -29,6 +29,8 @@ local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAME = "MainframeFR"
 local HUD_ROOT_NAME = "HUDFR"
 local FRAMES_CONTAINER_NAME = "Frames"
+local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
+local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
 
 local DEFAULTS = {
 	hover_scale = 0.08,
@@ -53,8 +55,26 @@ local function apply_defaults(inst: GuiObject): ()
 	end
 end
 
+local function has_true_attribute(instance: Instance?, attributeName: string): boolean
+	local current = instance
+
+	while current do
+		if current:GetAttribute(attributeName) == true then
+			return true
+		end
+
+		current = current.Parent
+	end
+
+	return false
+end
+
 local function wants_hover(g: GuiObject): boolean
 	if not g.Visible then
+		return false
+	end
+
+	if g:GetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE) == true then
 		return false
 	end
 
@@ -318,6 +338,10 @@ local function bind_open_button(button: GuiButton): ()
 	end
 
 	open_connections[button] = button.Activated:Connect(function()
+		if has_true_attribute(button, IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE) then
+			return
+		end
+
 		local target = find_open_target(button)
 		if not target then
 			return
@@ -341,6 +365,10 @@ local function bind_exit_button(button: GuiButton): ()
 	end
 
 	exit_connections[button] = button.Activated:Connect(function()
+		if has_true_attribute(button, IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE) then
+			return
+		end
+
 		local target = find_exit_target(button)
 		if not target then
 			return
@@ -528,6 +556,10 @@ function HudAnim.bind(inst: GuiObject): ()
 
 	inst:GetPropertyChangedSignal("Visible"):Connect(function()
 		if not inst:GetAttribute("UIOpen") then
+			return
+		end
+
+		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
 			return
 		end
 

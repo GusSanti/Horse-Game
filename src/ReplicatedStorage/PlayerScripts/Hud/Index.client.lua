@@ -56,6 +56,9 @@ local DETAILS_CAMERA_CONFIG = {
 local currentUi = nil
 local currentTemplateSource = nil
 local renderQueued = false
+local renderDirty = true
+local renderGeneration = 0
+local viewportPopulationInProgress = false
 local selectedCatalogId = nil
 local orderedCatalogIds = nil
 local activeEntriesByCatalogId = {}
@@ -174,6 +177,20 @@ local function set_gui_visible(instance, isVisible)
 	elseif instance:IsA("LayerCollector") then
 		instance.Enabled = isVisible
 	end
+end
+
+local function is_gui_visible(instance)
+	local current = instance
+	while current do
+		if current:IsA("GuiObject") and not current.Visible then
+			return false
+		end
+		if current:IsA("LayerCollector") and not current.Enabled then
+			return false
+		end
+		current = current.Parent
+	end
+	return true
 end
 
 local function create_click_target(card)
@@ -733,6 +750,14 @@ local function render_index()
 	if not currentUi or not currentTemplateSource then
 		return
 	end
+	if not is_gui_visible(currentUi.Root) then
+		renderDirty = true
+		return
+	end
+
+	renderDirty = false
+	renderGeneration += 1
+	local generation = renderGeneration
 
 	cardTrove:Clean()
 	clear_dictionary(activeEntriesByCatalogId)
@@ -743,6 +768,7 @@ local function render_index()
 	end
 
 	local entries = get_entry_data()
+	local pendingViewports = {}
 
 	for layoutOrder, entry in ipairs(entries) do
 		local card = currentTemplateSource:Clone()
@@ -762,7 +788,11 @@ local function render_index()
 		end
 
 		if viewportFrame then
-			populate_horse_viewport(viewportFrame, entry.CatalogId, entry.IsUnlocked, GRID_CAMERA_CONFIG, "grid")
+			pendingViewports[#pendingViewports + 1] = {
+				Card = card,
+				Entry = entry,
+				ViewportFrame = viewportFrame,
+			}
 		end
 
 		activeEntriesByCatalogId[entry.CatalogId] = entry
@@ -780,9 +810,39 @@ local function render_index()
 	apply_selection()
 	update_canvas_size()
 	task.defer(update_canvas_size)
+	viewportPopulationInProgress = #pendingViewports > 0
+
+	task.spawn(function()
+		for _, pending in ipairs(pendingViewports) do
+			if generation ~= renderGeneration
+				or not currentUi
+				or not is_gui_visible(currentUi.Root)
+				or pending.Card.Parent ~= currentUi.GridContainer
+			then
+				return
+			end
+
+			populate_horse_viewport(
+				pending.ViewportFrame,
+				pending.Entry.CatalogId,
+				pending.Entry.IsUnlocked,
+				GRID_CAMERA_CONFIG,
+				"grid"
+			)
+			RunService.Heartbeat:Wait()
+		end
+
+		if generation == renderGeneration then
+			viewportPopulationInProgress = false
+		end
+	end)
 end
 
 queue_render = function()
+	renderDirty = true
+	if not currentUi or not is_gui_visible(currentUi.Root) then
+		return
+	end
 	if renderQueued then
 		return
 	end
@@ -790,7 +850,9 @@ queue_render = function()
 	renderQueued = true
 	task.defer(function()
 		renderQueued = false
-		render_index()
+		if renderDirty then
+			render_index()
+		end
 	end)
 end
 
@@ -854,6 +916,9 @@ local function find_index_ui()
 end
 
 local function destroy_ui_binding()
+	renderGeneration += 1
+	renderDirty = true
+	viewportPopulationInProgress = false
 	cardTrove:Clean()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
@@ -909,6 +974,20 @@ local function bind_ui(ui)
 			task.defer(try_bind_ui)
 		end
 	end)
+
+	if ui.Root:IsA("GuiObject") then
+		uiTrove:Connect(ui.Root:GetPropertyChangedSignal("Visible"), function()
+			if ui.Root.Visible then
+				if renderDirty then
+					queue_render()
+				end
+			elseif viewportPopulationInProgress then
+				renderGeneration += 1
+				viewportPopulationInProgress = false
+				renderDirty = true
+			end
+		end)
+	end
 
 	queue_render()
 end

@@ -1,6 +1,7 @@
 -- SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 -- CONSTANTS
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -101,6 +102,9 @@ local currentTemplateSource = nil
 local activeCategoryId = "Utility"
 local selectedItemId = nil
 local renderQueued = false
+local renderDirty = true
+local renderGeneration = 0
+local viewportPopulationInProgress = false
 local liveGroupsQueued = false
 local previewCache = {}
 local activeEntriesByItemId = {}
@@ -209,6 +213,20 @@ local function set_gui_visible(instance, isVisible)
     elseif instance:IsA("LayerCollector") then
         instance.Enabled = isVisible
     end
+end
+
+local function is_gui_visible(instance)
+    local current = instance
+    while current do
+        if current:IsA("GuiObject") and not current.Visible then
+            return false
+        end
+        if current:IsA("LayerCollector") and not current.Enabled then
+            return false
+        end
+        current = current.Parent
+    end
+    return true
 end
 
 local function set_button_enabled(button, isEnabled)
@@ -895,13 +913,19 @@ local function configure_card(card, entry, layoutOrder)
     if nameLabel then nameLabel.Text = entry.DisplayName end
     if amountLabel then amountLabel.Text = ("x%d"):format(entry.Count) end
 
-    if viewportFrame then
-        render_viewport(viewportFrame, entry, GRID_VIEWPORT_CONFIG, "grid")
-    end
+    return viewportFrame
 end
 
 local function render_inventory()
     if not currentUi or not currentTemplateSource then return end
+    if not is_gui_visible(currentUi.Root) then
+        renderDirty = true
+        return
+    end
+
+    renderDirty = false
+    renderGeneration += 1
+    local generation = renderGeneration
 
     cardTrove:Clean()
     clear_dictionary(activeEntriesByItemId)
@@ -912,11 +936,12 @@ local function render_inventory()
     end
 
     local entries = build_category_entries(activeCategoryId)
+    local pendingViewports = {}
     for layoutOrder, entry in ipairs(entries) do
         local card = currentTemplateSource:Clone()
         local clickTarget = create_click_target(card)
 
-        configure_card(card, entry, layoutOrder)
+        local viewportFrame = configure_card(card, entry, layoutOrder)
         card.Parent = currentUi.GridContainer
         cardTrove:Add(card)
 
@@ -929,19 +954,52 @@ local function render_inventory()
                 apply_selection()
             end)
         end
+
+        if viewportFrame then
+            pendingViewports[#pendingViewports + 1] = {
+                Card = card,
+                Entry = entry,
+                ViewportFrame = viewportFrame,
+            }
+        end
     end
 
     lastRenderedCategoryId = activeCategoryId
     apply_selection()
     update_grid_layout()
+
+    viewportPopulationInProgress = #pendingViewports > 0
+
+    task.spawn(function()
+        for _, pending in ipairs(pendingViewports) do
+            if generation ~= renderGeneration
+                or not currentUi
+                or not is_gui_visible(currentUi.Root)
+                or pending.Card.Parent ~= currentUi.GridContainer
+            then
+                return
+            end
+
+            render_viewport(pending.ViewportFrame, pending.Entry, GRID_VIEWPORT_CONFIG, "grid")
+            RunService.Heartbeat:Wait()
+        end
+
+        if generation == renderGeneration then
+            viewportPopulationInProgress = false
+        end
+    end)
 end
 
 queue_render = function()
+    renderDirty = true
+    if not currentUi or not is_gui_visible(currentUi.Root) then return end
     if renderQueued then return end
     renderQueued = true
     task.defer(function()
         renderQueued = false
-        render_inventory()
+        if renderDirty then
+            render_inventory()
+        end
     end)
 end
 
@@ -1065,6 +1123,9 @@ local function find_inventory_ui()
 end
 
 local function destroy_ui_binding()
+    renderGeneration += 1
+    renderDirty = true
+    viewportPopulationInProgress = false
     cardTrove:Clean()
     uiTrove:Destroy()
     uiTrove = Trove.new()
@@ -1147,6 +1208,20 @@ local function bind_ui(ui)
             task.defer(try_bind_ui)
         end
     end)
+
+    if ui.Root:IsA("GuiObject") then
+        uiTrove:Connect(ui.Root:GetPropertyChangedSignal("Visible"), function()
+            if ui.Root.Visible then
+                if renderDirty then
+                    queue_render()
+                end
+            elseif viewportPopulationInProgress then
+                renderGeneration += 1
+                viewportPopulationInProgress = false
+                renderDirty = true
+            end
+        end)
+    end
 
     queue_render()
 end

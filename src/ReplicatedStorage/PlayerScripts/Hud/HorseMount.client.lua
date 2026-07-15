@@ -18,13 +18,10 @@ local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
 local Net = require(Libraries:WaitForChild("Net"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseMountCamera = require(HudModules:WaitForChild("HorseMountCamera"))
-local HorseMountUi = require(HudModules:WaitForChild("HorseMountUi"))
 
 local localPlayer = Players.LocalPlayer
-local playerGui = localPlayer:WaitForChild("PlayerGui")
 local plotValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName)
 
-local BUTTON_TEXT = "Montar"
 local MOUNT_ROOT_NAME = "HorseMountRoot"
 local MOUNT_SEAT_NAME = "HorseMountSeat"
 local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
@@ -37,14 +34,9 @@ local VISUAL_HORSE_ATTRIBUTE = ToolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE = ToolDictionary.HorseIdAttribute
 
 local requestInFlight = false
-local panelOpen = false
-local horseButtons = {}
-local ui = {}
 local send_mount_input
 local request_dismount
 local sync_mount_state_from_server
-local isTouchDevice = UserInputService.TouchEnabled
-local mobileSprintPressed = false
 local localPrediction = {
 	HorseVisual = nil,
 	MountRoot = nil,
@@ -526,8 +518,7 @@ local function update_local_rider_animation()
 	local inputMagnitude = math.sqrt((moveX * moveX) + (moveZ * moveZ))
 	local moving = (localPrediction.CurrentSpeed or 0) > 0.25
 		or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
-	local sprinting = mobileSprintPressed
-		or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+	local sprinting = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 
 	set_local_rider_mode(moving and sprinting and "Ride" or "Idle")
@@ -703,20 +694,9 @@ end
 
 local function is_sprint_input_active()
 	return mountedState.Active and (
-		mobileSprintPressed
-		or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+		UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 	) or false
-end
-
-local function set_mobile_sprint_pressed(pressed)
-	mobileSprintPressed = pressed == true
-
-	if ui.MobileSprintButton then
-		ui.MobileSprintButton.BackgroundColor3 = mobileSprintPressed
-			and Color3.fromRGB(186, 118, 34)
-			or Color3.fromRGB(131, 82, 25)
-	end
 end
 
 local function reset_local_prediction()
@@ -915,77 +895,6 @@ local function update_camera_restore(deltaTime) cameraController:updateCameraRes
 local function update_camera_transition(deltaTime) cameraController:updateCameraTransition(deltaTime, mountedState, get_character_root_part) end
 local function update_camera_fov(deltaTime) cameraController:updateCameraFov(deltaTime, mountedState, localPrediction, get_prediction_movement, is_sprint_input_active) end
 local function get_running_sensitivity_multiplier() return cameraController:getRunningSensitivityMultiplier(mountedState, localPrediction, get_prediction_movement) end
-local function update_ui_state() HorseMountUi.updateUiState(ui, { mountedState = mountedState, requestInFlight = requestInFlight, panelOpen = panelOpen, isTouchDevice = isTouchDevice }) end
-
-local function render_horse_list()
-	HorseMountUi.renderHorseList(ui, horseButtons, {
-		plotValue = plotValue,
-		dataUtility = DataUtility,
-		onSelectHorse = function(horseEntry)
-			if requestInFlight or mountedState.Active then
-				return
-			end
-
-			requestInFlight = true
-			update_ui_state()
-
-			local cameraYaw = get_control_start_yaw()
-			mountedState.CameraYaw = cameraYaw
-
-			local success, response = pcall(function()
-				return Net.Function.HorseMountAction:Call({
-					Action = "Mount",
-					HorseId = horseEntry.Id,
-					CameraYaw = cameraYaw,
-				})
-			end)
-
-			requestInFlight = false
-
-			if success and response and response.Success and response.State and response.State.Mounted == true then
-				panelOpen = false
-				sync_mount_state_from_server(response.State)
-			else
-				mountedState.TransitionMode = nil
-				clear_transition_root_targets()
-				cancel_camera_transition()
-				restore_camera()
-			end
-
-			update_ui_state()
-		end,
-	})
-end
-
-local function ensure_ui()
-	HorseMountUi.ensureUi(ui, {
-		playerGui = playerGui,
-		onTogglePanelRequested = function()
-			if requestInFlight or mountedState.Active then
-				return
-			end
-
-			panelOpen = not panelOpen
-			if panelOpen then
-				render_horse_list()
-			end
-
-			update_ui_state()
-		end,
-		onSetMobileSprintPressed = function(pressed)
-			if not mountedState.Active then
-				return
-			end
-
-			set_mobile_sprint_pressed(pressed)
-		end,
-		onDismountRequested = function()
-			request_dismount()
-		end,
-	})
-
-	update_ui_state()
-end
 
 send_mount_input = function(forceSend)
 	if not mountedState.Active then
@@ -1033,7 +942,6 @@ sync_mount_state_from_server = function(statePayload)
 	mountedState.HorseName = mounted and statePayload.HorseName or nil
 
 	if mounted then
-		panelOpen = false
 		bind_dismount_action()
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
@@ -1043,7 +951,6 @@ sync_mount_state_from_server = function(statePayload)
 			if previousTransitionMode ~= "Mounting" then
 				mountedState.CameraYaw = get_control_start_yaw()
 			end
-			set_mobile_sprint_pressed(false)
 			reset_local_prediction()
 			prepare_camera_for_mount()
 			send_mount_input(true)
@@ -1053,7 +960,6 @@ sync_mount_state_from_server = function(statePayload)
 	elseif wasMounted then
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
-		set_mobile_sprint_pressed(false)
 		reset_local_prediction()
 		unbind_dismount_action()
 		stop_local_rider_tracks(0.08)
@@ -1077,7 +983,6 @@ sync_mount_state_from_server = function(statePayload)
 		restore_camera()
 	end
 
-	update_ui_state()
 end
 
 request_dismount = function()
@@ -1087,7 +992,6 @@ request_dismount = function()
 
 	requestInFlight = true
 	unbind_dismount_action()
-	update_ui_state()
 
 	local success, response = pcall(function()
 		return Net.Function.HorseMountAction:Call({
@@ -1098,7 +1002,6 @@ request_dismount = function()
 	requestInFlight = false
 
 	if success and response and response.Success then
-		update_ui_state()
 	else
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
@@ -1106,23 +1009,8 @@ request_dismount = function()
 		if mountedState.Active then
 			bind_dismount_action()
 		end
-		update_ui_state()
 	end
 end
-
-ensure_ui()
-
-DataUtility.client.bind("Horses.Owned", function()
-	if panelOpen then
-		render_horse_list()
-	end
-end)
-
-DataUtility.client.bind("Horses.OrderedIds", function()
-	if panelOpen then
-		render_horse_list()
-	end
-end)
 
 localPlayer.CharacterRemoving:Connect(function()
 	clear_local_rider_animation_state()
@@ -1187,7 +1075,6 @@ Net.Event.HorseMountState:Connect(function(payload)
 				payload.SettleDuration or HorseMountConfig.DismountSettleDuration or 0.12,
 				payload.TargetCFrame
 			)
-			update_ui_state()
 		end
 	elseif payload.Kind == "Unmounted" then
 		sync_mount_state_from_server({
