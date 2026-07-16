@@ -16,15 +16,18 @@ local Net = require(Libraries:WaitForChild("Net"))
 local RaceConfig = require(GameData:WaitForChild("RaceConfig"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local HorseRaceVisuals = require(HudModules:WaitForChild("HorseRaceVisuals"))
+local Notifications = require(HudModules:WaitForChild("Notifications"))
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local CONTROL_ACTION_NAME = "HorseRaceLockControls"
+local RACE_INVITE_NOTIFICATION_ID = "HorseRaceInvite"
 local requestInFlight = false
 local rowFrames = {}
 local horseButtons = {}
 local selectedHorseId = nil
+local lastInviteCountdownSecond = nil
 local previousCameraType = nil
 local previousCameraSubject = nil
 local update_visibility
@@ -35,7 +38,6 @@ local state = {
 	RoundId = nil,
 	InviteDeadline = 0,
 	ResultDeadline = 0,
-	InviteDismissed = false,
 	LocalJoined = false,
 	LocalWatchingRace = false,
 	HorseOptions = {},
@@ -144,6 +146,10 @@ local function create_button(parent, name, props)
 end
 
 local function format_countdown(seconds) local clamped = math.max(0, math.floor(seconds + 0.999)); return ("%02d:%02d"):format(math.floor(clamped / 60), clamped % 60) end
+
+local function hide_race_invite_notification()
+	Notifications.HideDialogue(RACE_INVITE_NOTIFICATION_ID)
+end
 
 local STATUS_DISPLAY_NAMES = {
 	Happiness = "Happiness",
@@ -262,11 +268,11 @@ local function lock_camera(cameraCFrame, moving)
 end
 
 local function reset_state()
+	hide_race_invite_notification()
 	state.Phase = "Idle"
 	state.RoundId = nil
 	state.InviteDeadline = 0
 	state.ResultDeadline = 0
-	state.InviteDismissed = false
 	state.LocalJoined = false
 	state.LocalWatchingRace = false
 	state.HorseOptions = {}
@@ -471,7 +477,6 @@ local function submit_leave_request()
 		state.LocalWatchingRace = false
 		if os.clock() < state.InviteDeadline then
 			state.Phase = "Invite"
-			state.InviteDismissed = false
 		else
 			state.Phase = "Idle"
 		end
@@ -502,9 +507,9 @@ local function submit_join_request(horseId)
 	end
 
 	if response.Success then
+		hide_race_invite_notification()
 		state.LocalJoined = true
 		state.Phase = "Queue"
-		state.InviteDismissed = true
 		state.NoticeText = ""
 		ui.SelectFrame.Visible = false
 		if response.CameraCFrame then
@@ -531,13 +536,81 @@ local function submit_join_request(horseId)
 		selectedHorseId = response.HorseId or selectedHorseId
 		refresh_horse_options()
 		ui.SelectFrame.Visible = true
-		state.InviteDismissed = true
 	elseif response.Code == "InviteExpired" or response.Code == "InviteClosed" or response.Code == "NoActiveRound" then
 		reset_state()
 		destroy_existing_rows()
 		update_visibility()
 		update_dynamic_text()
 	end
+end
+
+local function open_race_invitation()
+	if #state.HorseOptions <= 1 then
+		local onlyHorse = state.HorseOptions[1]
+		if onlyHorse and onlyHorse.CanRace == false then
+			selectedHorseId = onlyHorse.Id
+			refresh_horse_options()
+			ui.SelectFrame.Visible = true
+			return
+		end
+
+		submit_join_request(onlyHorse and onlyHorse.Id or nil)
+		return
+	end
+
+	ui.SelectFrame.Visible = true
+end
+
+local function get_race_invite_details(): string
+	return ("Race registration is open. Closes in %s."):format(format_countdown(state.InviteDeadline - os.clock()))
+end
+
+local function get_race_invite_accept_text(): string
+	if #state.HorseOptions > 1 then
+		return "Choose horse"
+	end
+
+	local onlyHorse = state.HorseOptions[1]
+	if onlyHorse and onlyHorse.CanRace == false then
+		return "Care for horse"
+	end
+
+	return "Join"
+end
+
+local function show_race_invite_notification()
+	if state.Phase ~= "Invite" or not state.RoundId or os.clock() >= state.InviteDeadline then
+		return
+	end
+
+	lastInviteCountdownSecond = math.ceil(math.max(0, state.InviteDeadline - os.clock()))
+
+	Notifications.ShowDialogue({
+		id = RACE_INVITE_NOTIFICATION_ID,
+		title = "Race available",
+		details = get_race_invite_details(),
+		acceptText = get_race_invite_accept_text(),
+		denyText = "Later",
+		hideTasks = true,
+		onAccept = open_race_invitation,
+	})
+end
+
+local function update_race_invite_countdown()
+	if state.Phase ~= "Invite" or not Notifications.IsDialogueActive(RACE_INVITE_NOTIFICATION_ID) then
+		return
+	end
+
+	local remainingSeconds = math.ceil(math.max(0, state.InviteDeadline - os.clock()))
+	if remainingSeconds == lastInviteCountdownSecond then
+		return
+	end
+
+	lastInviteCountdownSecond = remainingSeconds
+	Notifications.UpdateDialogue(RACE_INVITE_NOTIFICATION_ID, {
+		details = get_race_invite_details(),
+		acceptText = get_race_invite_accept_text(),
+	})
 end
 
 local function build_ui()
@@ -547,24 +620,6 @@ local function build_ui()
 		IgnoreGuiInset = true,
 		Parent = playerGui,
 	})
-
-	local commandBar = create_instance("Frame", {
-		Name = "CommandBar",
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 18),
-		Size = UDim2.fromOffset(520, 92),
-		Parent = screenGui,
-	})
-	apply_panel_style(commandBar, Color3.fromRGB(115, 224, 170))
-
-	local inviteFrame = create_instance("Frame", {
-		Name = "InviteFrame",
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 122),
-		Size = UDim2.fromOffset(360, 184),
-		Parent = screenGui,
-	})
-	apply_panel_style(inviteFrame, Color3.fromRGB(233, 182, 96))
 
 	local selectFrame = create_instance("Frame", {
 		Name = "SelectFrame",
@@ -594,101 +649,9 @@ local function build_ui()
 	apply_panel_style(resultFrame, Color3.fromRGB(233, 182, 96))
 
 	ui.ScreenGui = screenGui
-	ui.CommandBar = commandBar
-	ui.InviteFrame = inviteFrame
 	ui.SelectFrame = selectFrame
 	ui.BoardFrame = boardFrame
 	ui.ResultFrame = resultFrame
-
-	ui.CommandTitle = create_label(commandBar, "Title", {
-		Size = UDim2.new(0.55, 0, 0, 18),
-		Position = UDim2.new(0, 0, 0, 0),
-		Text = "Race",
-		TextSize = 15,
-	})
-
-	ui.CommandCountdown = create_label(commandBar, "Countdown", {
-		Size = UDim2.new(0, 120, 0, 20),
-		Position = UDim2.new(1, -120, 0, 0),
-		Text = "00:00",
-		TextSize = 17,
-		TextXAlignment = Enum.TextXAlignment.Right,
-	})
-
-	ui.CommandStatus = create_label(commandBar, "Status", {
-		Size = UDim2.new(1, -220, 0, 30),
-		Position = UDim2.new(0, 0, 0, 24),
-		Text = "Waiting for the next race.",
-		TextSize = 20,
-	})
-
-	ui.CommandMeta = create_label(commandBar, "Meta", {
-		Size = UDim2.new(1, -220, 0, 18),
-		Position = UDim2.new(0, 0, 0, 56),
-		Text = "",
-		TextSize = 13,
-		TextColor3 = Color3.fromRGB(164, 173, 184),
-	})
-
-	ui.CommandHint = create_label(commandBar, "Hint", {
-		Size = UDim2.new(1, -220, 0, 18),
-		Position = UDim2.new(0, 0, 0, 84),
-		Text = "",
-		TextSize = 13,
-		TextColor3 = Color3.fromRGB(110, 118, 129),
-	})
-	ui.CommandHint.Visible = false
-
-	ui.CommandAction = create_button(commandBar, "Action", {
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, 0, 1, 0),
-		Size = UDim2.fromOffset(150, 36),
-		Text = "Join",
-	})
-
-	ui.InviteTitle = create_label(inviteFrame, "InviteTitle", {
-		Size = UDim2.new(1, 0, 0, 24),
-		Position = UDim2.new(0, 0, 0, 0),
-		Text = "> race available",
-		TextSize = 18,
-	})
-
-	ui.InviteBody = create_label(inviteFrame, "InviteBody", {
-		Size = UDim2.new(1, 0, 0, 66),
-		Position = UDim2.new(0, 0, 0, 34),
-		TextWrapped = true,
-		TextYAlignment = Enum.TextYAlignment.Top,
-		Text = "Race registration is open.",
-		TextSize = 18,
-	})
-
-	ui.InviteCountdown = create_label(inviteFrame, "InviteCountdown", {
-		Size = UDim2.new(1, 0, 0, 20),
-		Position = UDim2.new(0, 0, 0, 112),
-		Text = "Closes in 00:20",
-		TextSize = 15,
-	})
-
-	ui.InviteMeta = create_label(inviteFrame, "InviteMeta", {
-		Size = UDim2.new(1, 0, 0, 18),
-		Position = UDim2.new(0, 0, 0, 136),
-		Text = "",
-		TextSize = 13,
-		TextColor3 = Color3.fromRGB(164, 173, 184),
-	})
-
-	ui.InviteJoin = create_button(inviteFrame, "InviteJoin", {
-		Position = UDim2.new(0, 0, 1, -44),
-		Size = UDim2.fromOffset(174, 40),
-		Text = "Join",
-	})
-
-	ui.InviteClose = create_button(inviteFrame, "InviteClose", {
-		BackgroundColor3 = Color3.fromRGB(54, 61, 68),
-		Position = UDim2.new(1, -174, 1, -44),
-		Size = UDim2.fromOffset(160, 40),
-		Text = "Close",
-	})
 
 	ui.SelectTitle = create_label(selectFrame, "SelectTitle", {
 		Size = UDim2.new(1, 0, 0, 22),
@@ -777,60 +740,9 @@ local function build_ui()
 		TextYAlignment = Enum.TextYAlignment.Center,
 	})
 
-	ui.CommandAction.MouseButton1Click:Connect(function()
-		if requestInFlight then
-			return
-		end
-
-		if state.LocalJoined and state.Phase == "Queue" then
-			submit_leave_request()
-			return
-		end
-
-		if #state.HorseOptions <= 1 then
-			local onlyHorse = state.HorseOptions[1]
-			if onlyHorse and onlyHorse.CanRace == false then
-				selectedHorseId = onlyHorse.Id
-				refresh_horse_options()
-				ui.SelectFrame.Visible = true
-				state.InviteDismissed = true
-				return
-			end
-
-			submit_join_request(onlyHorse and onlyHorse.Id or nil)
-			return
-		end
-
-		ui.SelectFrame.Visible = true
-		state.InviteDismissed = true
-	end)
-
-	ui.InviteJoin.MouseButton1Click:Connect(function()
-		if #state.HorseOptions <= 1 then
-			local onlyHorse = state.HorseOptions[1]
-			if onlyHorse and onlyHorse.CanRace == false then
-				selectedHorseId = onlyHorse.Id
-				refresh_horse_options()
-				ui.SelectFrame.Visible = true
-				state.InviteDismissed = true
-				return
-			end
-
-			submit_join_request(onlyHorse and onlyHorse.Id or nil)
-		else
-			ui.SelectFrame.Visible = true
-			state.InviteDismissed = true
-		end
-	end)
-
-	ui.InviteClose.MouseButton1Click:Connect(function()
-		state.InviteDismissed = true
-	end)
-
 	ui.SelectCancel.MouseButton1Click:Connect(function()
 		ui.SelectFrame.Visible = false
 		if not state.LocalJoined then
-			state.InviteDismissed = false
 		end
 	end)
 
@@ -842,8 +754,6 @@ local function build_ui()
 		submit_join_request(selectedHorseId)
 	end)
 
-	ui.CommandBar.Visible = false
-	ui.InviteFrame.Visible = false
 	ui.SelectFrame.Visible = false
 	ui.BoardFrame.Visible = false
 	ui.ResultFrame.Visible = false
@@ -853,10 +763,7 @@ update_visibility = function()
 	local now = os.clock()
 	local inviteActive = state.RoundId ~= nil and now < state.InviteDeadline and state.Phase ~= "Race"
 	local hasResult = state.Result ~= nil and now < state.ResultDeadline
-	local shouldShowBar = inviteActive or state.LocalJoined or state.LocalWatchingRace or hasResult
 
-	ui.CommandBar.Visible = shouldShowBar
-	ui.InviteFrame.Visible = false
 	ui.BoardFrame.Visible = (state.LocalJoined or state.LocalWatchingRace or hasResult) and #state.Entries > 0
 	ui.ResultFrame.Visible = hasResult
 
@@ -866,66 +773,9 @@ end
 
 update_dynamic_text = function()
 	local now = os.clock()
-	local localEntry = find_local_entry()
-	local participantCount = #state.Entries
-	local inviteRemaining = math.max(0, state.InviteDeadline - now)
 	local resultRemaining = math.max(0, state.ResultDeadline - now)
-	local inviteHorse = state.HorseOptions[1]
-	local inviteHorseReady = inviteHorse and inviteHorse.CanRace ~= false
 	local inviteNotice = state.NoticeText
 
-	if state.Phase == "Race" then
-		ui.CommandTitle.Text = "Race"
-		ui.CommandStatus.Text = localEntry
-			and ("%s is racing"):format(localEntry.HorseName or "Horse")
-			or "Race in progress."
-		ui.CommandMeta.Text = ("%d racers  |  %d studs"):format(participantCount, RaceConfig.RaceDistance)
-		ui.CommandCountdown.Text = "LIVE"
-		ui.CommandAction.Visible = false
-	elseif state.Phase == "Queue" then
-		ui.CommandTitle.Text = "Queue"
-		ui.CommandStatus.Text = localEntry
-			and ("%s is ready at the gate"):format(localEntry.HorseName or "Horse")
-			or "Waiting for the start."
-		ui.CommandMeta.Text = ("%d/%d queued"):format(participantCount, RaceConfig.MaxParticipants)
-		ui.CommandCountdown.Text = format_countdown(inviteRemaining)
-		ui.CommandAction.Visible = inviteRemaining > 0
-		ui.CommandAction.Text = "Leave"
-		set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
-	elseif state.Phase == "Invite" then
-		ui.CommandTitle.Text = "Race Open"
-		ui.CommandStatus.Text = (#state.HorseOptions <= 1)
-			and ((inviteHorse and inviteHorseReady) and "Your horse is ready to race." or "Your horse needs care first.")
-			or "Choose a horse."
-		ui.CommandMeta.Text = inviteNotice ~= ""
-			and inviteNotice
-			or ("%d/%d queued"):format(participantCount, RaceConfig.MaxParticipants)
-		ui.CommandCountdown.Text = format_countdown(inviteRemaining)
-		ui.CommandAction.Visible = true
-		if #state.HorseOptions <= 1 then
-			ui.CommandAction.Text = inviteHorseReady and "Join" or "View horse"
-			set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
-		else
-			ui.CommandAction.Text = "Select"
-			set_button_enabled(ui.CommandAction, true, Color3.fromRGB(35, 103, 77))
-		end
-	elseif state.Result and resultRemaining > 0 then
-		ui.CommandTitle.Text = "Results"
-		ui.CommandStatus.Text = ui.ResultLabel.Text
-		ui.CommandMeta.Text = ("Closes in %s"):format(format_countdown(resultRemaining))
-		ui.CommandCountdown.Text = format_countdown(resultRemaining)
-		ui.CommandAction.Visible = false
-	else
-		ui.CommandTitle.Text = "Race"
-		ui.CommandStatus.Text = "Waiting for the next race."
-		ui.CommandMeta.Text = ""
-		ui.CommandCountdown.Text = "00:00"
-		ui.CommandAction.Visible = false
-	end
-
-	ui.InviteCountdown.Text = ("Closes in %s"):format(format_countdown(inviteRemaining))
-	ui.InviteMeta.Text = inviteNotice
-	ui.InviteBody.Text = "Race registration is open."
 	ui.SelectMeta.Text = inviteNotice ~= ""
 		and inviteNotice
 		or "Only horses above 50% can race."
@@ -948,7 +798,6 @@ local function handle_invite(payload)
 	state.InviteDeadline = os.clock() + math.max(0, payload.SecondsRemaining or 0)
 	state.HorseOptions = payload.HorseOptions or {}
 	state.Entries = payload.Entries or state.Entries
-	state.InviteDismissed = false
 	state.LocalJoined = false
 	state.LocalWatchingRace = false
 	state.Result = nil
@@ -959,6 +808,7 @@ local function handle_invite(payload)
 	sync_race_visuals()
 	update_visibility()
 	update_dynamic_text()
+	show_race_invite_notification()
 end
 
 local function handle_queue_update(payload)
@@ -976,7 +826,6 @@ local function handle_queue_update(payload)
 
 	if state.LocalJoined then
 		state.Phase = "Queue"
-		state.InviteDismissed = true
 		if payload.CameraCFrame and not state.CameraLocked then
 			lock_camera(payload.CameraCFrame, false)
 		end
@@ -1004,9 +853,9 @@ local function handle_race_started(payload)
 	state.LocalJoined = state.LocalWatchingRace
 	state.CameraSpeed = payload.CameraSpeed or RaceConfig.CameraSpeed
 	state.CameraDistance = payload.Distance or RaceConfig.RaceDistance
-	state.InviteDismissed = true
 	state.NoticeText = ""
 	ui.SelectFrame.Visible = false
+	hide_race_invite_notification()
 
 	if state.LocalWatchingRace and payload.CameraCFrame then
 		lock_camera(payload.CameraCFrame, true)
@@ -1063,6 +912,7 @@ local function handle_result(payload)
 	state.LocalWatchingRace = find_local_entry() ~= nil or (payload.Winner and payload.Winner.UserId == localPlayer.UserId)
 	state.CameraMoving = false
 	state.NoticeText = ""
+	hide_race_invite_notification()
 
 	refresh_leaderboard()
 	sync_race_visuals()
@@ -1141,11 +991,12 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	end
 
 	if state.Phase == "Invite" and os.clock() >= state.InviteDeadline and not state.LocalJoined then
+		hide_race_invite_notification()
 		state.Phase = "Idle"
-		state.InviteDismissed = false
 		sync_race_visuals()
 	end
 
+	update_race_invite_countdown()
 	update_visibility()
 	update_dynamic_text()
 end)

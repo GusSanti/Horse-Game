@@ -19,6 +19,9 @@ local UPDATE_INTERVAL = 0.1
 local VERTICAL_PADDING = 6
 
 local ZONE_FRAME_ALIASES = {
+	craft = { "Cooking" },
+	craftzone = { "Cooking" },
+	cooking = { "Cooking" },
 	shop = { "SeedShop", "FruitShop" },
 	shopzone = { "SeedShop", "FruitShop" },
 	seedshop = { "SeedShop", "FruitShop" },

@@ -664,6 +664,116 @@ local function destroy_instances(instances)
 	end
 end
 
+local function is_rear_hoof_part(part)
+	local partName = string.lower(part.Name)
+	return string.find(partName, "hind", 1, true) ~= nil
+		or string.find(partName, "rear", 1, true) ~= nil
+		or string.find(partName, "back", 1, true) ~= nil
+		or partName == "leg_3"
+		or partName == "leg_4"
+end
+
+local function get_rear_hoof_parts(horseVisual)
+	local pivot = horseVisual:GetPivot()
+	local candidates = {}
+	local rearDirection = 1
+
+	for _, part in ipairs(get_visual_base_parts(horseVisual)) do
+		if string.find(string.lower(part.Name), "tail", 1, true) then
+			local tailPosition = pivot:PointToObjectSpace(part.Position)
+			if math.abs(tailPosition.Z) > 0.01 then
+				rearDirection = math.sign(tailPosition.Z)
+			end
+			break
+		end
+	end
+
+	for _, part in ipairs(get_visual_base_parts(horseVisual)) do
+		local partName = string.lower(part.Name)
+		if partName ~= MOUNT_ROOT_NAME:lower()
+			and partName ~= MOUNT_SEAT_NAME:lower()
+			and not string.find(partName, "tail", 1, true)
+			and not string.find(partName, "mane", 1, true)
+			and not string.find(partName, "body", 1, true)
+			and not string.find(partName, "chest", 1, true)
+			and not string.find(partName, "neck", 1, true)
+			and not string.find(partName, "head", 1, true)
+			and not string.find(partName, "root", 1, true)
+		then
+			local localPosition = pivot:PointToObjectSpace(part.Position)
+			local nameBonus = is_rear_hoof_part(part) and 100 or 0
+			candidates[#candidates + 1] = {
+				Part = part,
+				Score = nameBonus + (localPosition.Z * rearDirection * 8) - localPosition.Y,
+			}
+		end
+	end
+
+	table.sort(candidates, function(a, b)
+		return a.Score > b.Score
+	end)
+
+	local hooves = {}
+	for index = 1, math.min(2, #candidates) do
+		hooves[#hooves + 1] = candidates[index].Part
+	end
+
+	return hooves
+end
+
+local function create_horse_run_dust(horseVisual)
+	local resources = {}
+	local emitters = {}
+	local texture = HorseMountConfig.HorseRunDustTexture
+
+	if type(texture) ~= "string" or texture == "" then
+		return resources, emitters
+	end
+
+	for _, hoof in ipairs(get_rear_hoof_parts(horseVisual)) do
+		local attachment = Instance.new("Attachment")
+		attachment.Name = "HorseRunDustAttachment"
+		attachment.Position = Vector3.new(0, -(hoof.Size.Y * 0.45), 0)
+		attachment.Parent = hoof
+
+		local emitter = Instance.new("ParticleEmitter")
+		emitter.Name = "HorseRunDust"
+		emitter.Texture = texture
+		emitter.Enabled = false
+		emitter.Rate = HorseMountConfig.HorseRunDustRate or 12
+		emitter.Lifetime = NumberRange.new(0.35, 0.65)
+		emitter.Speed = NumberRange.new(0.8, 1.7)
+		emitter.Drag = 3
+		emitter.Acceleration = Vector3.new(0, 3, 0)
+		emitter.EmissionDirection = Enum.NormalId.Top
+		emitter.SpreadAngle = Vector2.new(24, 24)
+		emitter.LightInfluence = 0
+		emitter.Color = ColorSequence.new(Color3.fromRGB(184, 178, 168), Color3.fromRGB(224, 220, 214))
+		emitter.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.45),
+			NumberSequenceKeypoint.new(1, 1.35),
+		})
+		emitter.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.3),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		emitter.Parent = attachment
+
+		resources[#resources + 1] = attachment
+		emitters[#emitters + 1] = emitter
+	end
+
+	return resources, emitters
+end
+
+local function set_horse_run_dust_enabled(emitters, enabled)
+	for _, emitter in ipairs(emitters or {}) do
+		if emitter and emitter.Parent then
+			emitter.Enabled = enabled == true
+		end
+	end
+end
+
 local function fade_out_horse_visual(mountState, duration)
 	if not mountState or not mountState.HorseState then
 		return
@@ -699,6 +809,7 @@ local function cleanup_mount_horse(mountState)
 		return
 	end
 
+	destroy_instances(mountState.DustResources)
 	restore_horse_state(mountState.HorseVisual, mountState.HorseState)
 	clear_visual_mount_marker(mountState.HorseVisual)
 	destroy_instances({ mountState.RiderWeld })
@@ -740,6 +851,7 @@ local function begin_dismount_transition(player, reason)
 	end
 
 	stop_mount_animations(mountState)
+	set_horse_run_dust_enabled(mountState.DustEmitters, false)
 	destroy_instances({ mountState.RiderWeld })
 
 	if mountState.Character and mountState.Character.Parent and mountState.Humanoid and mountState.Humanoid.Parent then
@@ -959,6 +1071,7 @@ local function update_mount(mountState, deltaTime)
 	update_rider_weld_offset(mountState, deltaTime)
 	apply_mounted_humanoid_pose(mountState)
 	update_mount_animation_state(mountState)
+	set_horse_run_dust_enabled(mountState.DustEmitters, mountState.Sprinting)
 end
 
 local function mount_player(player, payload)
@@ -1185,6 +1298,7 @@ local function mount_player(player, payload)
 		Sprinting = false,
 		LastMoveDirection = spawnRotation.LookVector,
 	}
+	mountState.DustResources, mountState.DustEmitters = create_horse_run_dust(horseVisual)
 
 	debug_mount_log(player, "MountAssembly", {
 		HorsePivot = horseVisual:GetPivot(),

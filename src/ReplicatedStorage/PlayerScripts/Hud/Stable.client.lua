@@ -96,6 +96,7 @@ type HorseCard = {
 	SelectedFrame: GuiObject?,
 	SelectedLabel: TextLabel?,
 	ViewportFrame: ViewportFrame?,
+	ViewportPopulated: boolean,
 	StatRows: {[string]: CardStatRow},
 }
 
@@ -106,6 +107,9 @@ local renderQueued = false
 local renderGeneration = 0
 local stableRenderDirty = false
 local mountRequestInFlight = false
+local viewportPopulationInProgress = false
+
+local populate_visible_stable_viewports
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -286,6 +290,26 @@ local function find_stable_root_instance(): Instance?
 	return framesContainer:FindFirstChild(STABLE_FRAME_NAME, true)
 end
 
+local function close_stable_ui(): ()
+	local root = currentUi and currentUi.Root or find_stable_root_instance()
+	if root and root:IsA("GuiObject") then
+		root.Visible = false
+		return
+	end
+
+	if root and root:IsA("LayerCollector") then
+		root.Enabled = false
+		return
+	end
+
+	local contentRoot = root and find_named_instance(root, { STABLE_CONTENT_NAME }, nil, true)
+	if contentRoot and contentRoot:IsA("GuiObject") then
+		contentRoot.Visible = false
+	elseif contentRoot and contentRoot:IsA("LayerCollector") then
+		contentRoot.Enabled = false
+	end
+end
+
 local function is_ui_visible(instance: Instance?): boolean
 	local current = instance
 
@@ -302,6 +326,20 @@ local function is_ui_visible(instance: Instance?): boolean
 	end
 
 	return true
+end
+
+local function is_card_near_visible_region(scrollingFrame: ScrollingFrame, card: GuiObject): boolean
+	if not card.Parent then
+		return false
+	end
+
+	local padding = math.max(80, scrollingFrame.AbsoluteSize.Y * 0.35)
+	local regionTop = scrollingFrame.AbsolutePosition.Y - padding
+	local regionBottom = scrollingFrame.AbsolutePosition.Y + scrollingFrame.AbsoluteSize.Y + padding
+	local cardTop = card.AbsolutePosition.Y
+	local cardBottom = cardTop + card.AbsoluteSize.Y
+
+	return cardBottom >= regionTop and cardTop <= regionBottom
 end
 
 local function strip_local_scripts(root: Instance): ()
@@ -912,10 +950,6 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 		selectedLabel.Text = "Selected"
 	end
 
-	if viewportFrame then
-		populate_viewport(viewportFrame, stableHorseEntry.HorseId, stableHorseEntry.SlotName)
-	end
-
 	if mountButton then
 		cardTrove:Connect(mountButton.Activated, function()
 			mount_horse_from_stable(stableHorseEntry.HorseId)
@@ -952,8 +986,66 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 		SelectedFrame = selectedFrame,
 		SelectedLabel = selectedLabel,
 		ViewportFrame = viewportFrame,
+		ViewportPopulated = false,
 		StatRows = statRows,
 	}
+end
+
+populate_visible_stable_viewports = function(): ()
+	local ui = currentUi
+	if viewportPopulationInProgress or not ui or not is_ui_visible(ui.Root) then
+		return
+	end
+	if not ui.ListContainer:IsA("ScrollingFrame") then
+		return
+	end
+
+	local scrollingFrame = ui.ListContainer :: ScrollingFrame
+	local hasVisiblePendingViewport = false
+	for _, cardEntry: HorseCard in ipairs(activeCards) do
+		if cardEntry.ViewportFrame
+			and not cardEntry.ViewportPopulated
+			and is_card_near_visible_region(scrollingFrame, cardEntry.Card)
+		then
+			hasVisiblePendingViewport = true
+			break
+		end
+	end
+	if not hasVisiblePendingViewport then
+		return
+	end
+
+	viewportPopulationInProgress = true
+	local generation = renderGeneration
+
+	task.spawn(function()
+		RunService.Heartbeat:Wait()
+
+		while generation == renderGeneration and currentUi == ui and is_ui_visible(ui.Root) do
+			local nextCardEntry: HorseCard? = nil
+			for _, cardEntry: HorseCard in ipairs(activeCards) do
+				if cardEntry.ViewportFrame
+					and not cardEntry.ViewportPopulated
+					and is_card_near_visible_region(scrollingFrame, cardEntry.Card)
+				then
+					nextCardEntry = cardEntry
+					break
+				end
+			end
+
+			if not nextCardEntry then
+				break
+			end
+
+			populate_viewport(nextCardEntry.ViewportFrame :: ViewportFrame, nextCardEntry.HorseId, nextCardEntry.SlotName)
+			nextCardEntry.ViewportPopulated = true
+			RunService.Heartbeat:Wait()
+		end
+
+		if generation == renderGeneration then
+			viewportPopulationInProgress = false
+		end
+	end)
 end
 
 local function refresh_cards(): ()
@@ -1021,7 +1113,10 @@ local function render_stable(): ()
 		update_canvas_size()
 
 		if nextEntryIndex <= #stableHorseEntries then
-			task.defer(render_batch)
+			task.spawn(function()
+			RunService.Heartbeat:Wait()
+			render_batch()
+		end)
 			return
 		end
 
@@ -1031,6 +1126,7 @@ local function render_stable(): ()
 			end
 
 			update_canvas_size()
+			populate_visible_stable_viewports()
 		end)
 	end
 
@@ -1121,6 +1217,7 @@ local function destroy_ui_binding(): ()
 	renderGeneration += 1
 	renderQueued = false
 	stableRenderDirty = false
+	viewportPopulationInProgress = false
 	cardTrove:Clean()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
@@ -1190,6 +1287,10 @@ local function bind_ui(ui: StableUi): ()
 		end
 	end)
 
+	if ui.ListContainer:IsA("ScrollingFrame") then
+		uiTrove:Connect((ui.ListContainer :: ScrollingFrame):GetPropertyChangedSignal("CanvasPosition"), populate_visible_stable_viewports)
+	end
+
 	rebind_plot()
 	queue_render()
 end
@@ -1218,6 +1319,12 @@ end
 
 DataUtility.client.ensure_remotes()
 
+rootTrove:Connect(Net.Event.HorseMountState, function(payload)
+	if type(payload) == "table" and payload.Kind == "Mounting" then
+		close_stable_ui()
+	end
+end)
+
 rootTrove:Connect(playerGui.DescendantAdded, function(instance: Instance)
 	if is_stable_ui_related(instance) or instance:IsA("LayerCollector") then
 		try_bind_ui()
@@ -1239,6 +1346,10 @@ rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 	local ui = currentUi
 	if ui and stableRenderDirty and is_ui_visible(ui.Root) and not renderQueued then
 		refresh_or_render_stable()
+	end
+
+	if ui and is_ui_visible(ui.Root) and not viewportPopulationInProgress then
+		populate_visible_stable_viewports()
 	end
 
 	if not ui or #activeCards == 0 then

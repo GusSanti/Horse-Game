@@ -471,6 +471,21 @@ local function compute_base_speed(horseSummary)
 	return math.clamp(baseSpeed, RaceConfig.MinSpeed + 0.25, RaceConfig.MaxSpeed - 0.25)
 end
 
+local function get_race_condition_segment_bonus(participant)
+	local conditionPercent = math.clamp(tonumber(participant.RaceConditionPercent) or 50, 0, 100)
+	local minimumPercent = math.clamp(tonumber(RaceConfig.RaceConditionMinimumPercent) or 50, 0, 99)
+	local conditionAlpha = math.clamp((conditionPercent - minimumPercent) / (100 - minimumPercent), 0, 1)
+	local minimumChance = math.clamp(tonumber(RaceConfig.RaceConditionFastChanceAtMinimum) or 0, 0, 1)
+	local maximumChance = math.clamp(tonumber(RaceConfig.RaceConditionFastChanceAtMaximum) or minimumChance, minimumChance, 1)
+	local fastSegmentChance = minimumChance + ((maximumChance - minimumChance) * conditionAlpha)
+
+	if math.random() <= fastSegmentChance then
+		return math.max(0, tonumber(RaceConfig.RaceConditionFastSegmentBonus) or 0)
+	end
+
+	return 0
+end
+
 local function compute_target_speed(round, participant)
 	local ranked = get_ranked_participants(round)
 	local rank = #ranked
@@ -489,9 +504,10 @@ local function compute_target_speed(round, participant)
 	local catchupBonus = math.clamp((leaderProgress - participant.Progress) * RaceConfig.CatchupBonusPerStud, 0, RaceConfig.MaxCatchupBonus)
 	local randomSwing = (math.random() * 2 - 1) * RaceConfig.SegmentVariance
 	local finishKick = (RaceConfig.RaceDistance - participant.Progress) <= 40 and RaceConfig.FinishKick or 0
+	local conditionBonus = get_race_condition_segment_bonus(participant)
 
 	return math.clamp(
-		participant.BaseSpeed + rankBias + catchupBonus + randomSwing + finishKick,
+		participant.BaseSpeed + rankBias + catchupBonus + randomSwing + finishKick + conditionBonus,
 		RaceConfig.MinSpeed,
 		RaceConfig.MaxSpeed
 	)
@@ -593,6 +609,7 @@ local function create_participant(round, player, horseSummary)
 		StartRotation = extract_rotation(slotPivot),
 		Progress = 0,
 		BaseSpeed = compute_base_speed(horseSummary),
+		RaceConditionPercent = horseSummary.RaceConditionPercent,
 		SegmentStartProgress = 0,
 		SegmentEndProgress = math.min(RaceConfig.SegmentLength, RaceConfig.RaceDistance),
 		SegmentStartSpeed = 0,

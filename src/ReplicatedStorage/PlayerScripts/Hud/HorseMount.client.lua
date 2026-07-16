@@ -17,6 +17,7 @@ local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
 local Net = require(Libraries:WaitForChild("Net"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local HorseMountCamera = require(HudModules:WaitForChild("HorseMountCamera"))
 
 local localPlayer = Players.LocalPlayer
@@ -26,6 +27,12 @@ local MOUNT_ROOT_NAME = "HorseMountRoot"
 local MOUNT_SEAT_NAME = "HorseMountSeat"
 local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
 local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
+local MOUNT_MOVEMENT_SOUND_NAME = "HorseMovement"
+local MOUNT_MOVEMENT_SOUND_ID = "rbxassetid://108771044697744"
+local MOUNT_MOVEMENT_MIN_SPEED = 0.35
+local MOUNT_MOVEMENT_MIN_PLAYBACK_SPEED = 0.85
+local MOUNT_MOVEMENT_MAX_PLAYBACK_SPEED = 1.4
+local MOUNT_MOVEMENT_VOLUME = 0.45
 local LOCAL_MOUNT_SMOOTHNESS = 26
 local DISMOUNT_ACTION_NAME = "HorseMountDismount"
 
@@ -66,6 +73,7 @@ local lastSentMoveX = 0
 local lastSentMoveZ = 0
 local lastSentCameraYaw = 0
 local lastSentSprinting = false
+local mountMovementSound = nil
 local riderAnimationState = {
 	Character = nil,
 	Humanoid = nil,
@@ -447,6 +455,20 @@ local function play_local_mount_transition(duration, targetCFrame)
 	play_local_track(tracks.HopOn, 0.05, 1, 1)
 	animationState.Mode = "Mounting"
 
+	-- Start the seated idle pose just before the hop-on track finishes so the
+	-- rider never spends a frame in the unanimated fallback pose.
+	task.spawn(function()
+		local idleLeadTime = math.max(HorseMountConfig.MountIdleBlendLeadTime or 0, 0)
+		local waitTime = math.max((duration or HorseMountConfig.MountTransitionDuration or 1.8) - idleLeadTime, 0)
+		if waitTime > 0 then
+			task.wait(waitTime)
+		end
+
+		if transitionToken == animationState.TransitionToken then
+			set_local_rider_mode("Idle")
+		end
+	end)
+
 	if targetCFrame then
 		task.spawn(function()
 			local moveDelay = math.min(0.08, math.max(duration or 0, 0) * 0.12)
@@ -711,6 +733,68 @@ local function reset_local_prediction()
 	localPrediction.GroundOffset = 0
 	localPrediction.Position = nil
 	localPrediction.Movement = nil
+end
+
+local function stop_mount_movement_sound()
+	if mountMovementSound and mountMovementSound.Parent and mountMovementSound.IsPlaying then
+		mountMovementSound:Stop()
+	end
+
+	mountMovementSound = nil
+end
+
+local function get_mount_movement_sound(mountRoot)
+	if not mountRoot then
+		return nil
+	end
+
+	if mountMovementSound and mountMovementSound.Parent == mountRoot then
+		return mountMovementSound
+	end
+
+	stop_mount_movement_sound()
+
+	local existingSound = mountRoot:FindFirstChild(MOUNT_MOVEMENT_SOUND_NAME)
+	if existingSound and existingSound:IsA("Sound") then
+		mountMovementSound = existingSound
+		return mountMovementSound
+	end
+
+	local sound = Instance.new("Sound")
+	sound.Name = MOUNT_MOVEMENT_SOUND_NAME
+	sound.SoundId = MOUNT_MOVEMENT_SOUND_ID
+	sound.Looped = true
+	sound.Volume = MOUNT_MOVEMENT_VOLUME
+	sound.RollOffMinDistance = 8
+	sound.RollOffMaxDistance = 80
+	sound.SoundGroup = SoundUtility.GetSFXSoundGroup()
+	sound.Parent = mountRoot
+	mountMovementSound = sound
+	return sound
+end
+
+local function update_mount_movement_sound()
+	local mountRoot = localPrediction.MountRoot
+	local currentSpeed = localPrediction.CurrentSpeed or 0
+	if not mountedState.Active or mountedState.TransitionMode ~= nil or not mountRoot or currentSpeed <= MOUNT_MOVEMENT_MIN_SPEED then
+		stop_mount_movement_sound()
+		return
+	end
+
+	local sound = get_mount_movement_sound(mountRoot)
+	if not sound then
+		return
+	end
+
+	local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
+	local maximumSpeed = math.max(movement.SprintSpeed or 26, MOUNT_MOVEMENT_MIN_SPEED)
+	local speedAlpha = math.clamp(currentSpeed / maximumSpeed, 0, 1)
+	sound.PlaybackSpeed = MOUNT_MOVEMENT_MIN_PLAYBACK_SPEED
+		+ ((MOUNT_MOVEMENT_MAX_PLAYBACK_SPEED - MOUNT_MOVEMENT_MIN_PLAYBACK_SPEED) * speedAlpha)
+
+	if not sound.IsPlaying then
+		sound:Play()
+	end
 end
 
 local function ensure_local_prediction()
@@ -1100,10 +1184,12 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	update_camera_transition(deltaTime)
 
 	if not mountedState.Active then
+		stop_mount_movement_sound()
 		return
 	end
 
 	if mountedState.TransitionMode == "Dismounting" then
+		stop_mount_movement_sound()
 		return
 	end
 
@@ -1113,6 +1199,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	)
 
 	update_local_mount_prediction(deltaTime)
+	update_mount_movement_sound()
 
 	local rootPart = get_character_root_part()
 	local camera = Workspace.CurrentCamera

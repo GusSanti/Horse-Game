@@ -65,11 +65,15 @@ local function evaluate_race_readiness(horse, now: number?)
 	local lowestPercent = 100
 	local blockedStatus = nil
 	local blockedPercent = 100
+	local totalPercent = 0
+	local statusCount = 0
 
 	for _, statusName: string in ipairs(HorseStatusService.StatusOrder) do
 		local maxValue = math.max(1, tonumber(maxValues[statusName]) or 100)
 		local currentValue = math.clamp(tonumber(statuses and statuses[statusName]) or 0, 0, maxValue)
 		local percent = math.floor(((currentValue / maxValue) * 100) + 0.5)
+		totalPercent += percent
+		statusCount += 1
 
 		if not lowestStatus or percent < lowestPercent then
 			lowestStatus = statusName
@@ -91,6 +95,7 @@ local function evaluate_race_readiness(horse, now: number?)
 		BlockedStatus = blockedStatus,
 		BlockedStatusDisplay = get_status_display_name(blockedStatus),
 		BlockedPercent = blockedPercent,
+		AveragePercent = statusCount > 0 and math.floor((totalPercent / statusCount) + 0.5) or 100,
 	}
 end
 
@@ -568,6 +573,7 @@ local function build_horse_summary(horse, equippedHorseId, now: number?)
 		IsEquipped = horse.Id == equippedHorseId,
 		CanRace = readiness.CanRace,
 		RaceMinPercent = readiness.MinimumPercent,
+		RaceConditionPercent = readiness.AveragePercent,
 		RaceLowestStatus = readiness.LowestStatus,
 		RaceLowestStatusDisplay = readiness.LowestStatusDisplay,
 		RaceLowestPercent = readiness.LowestPercent,

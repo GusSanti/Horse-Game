@@ -15,6 +15,32 @@ local PersistentToolService = require(ServerStorage:WaitForChild("Modules"):Wait
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 local RaceService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("RaceService"))
 
+local function safe_require_module(moduleScript: ModuleScript, moduleName: string)
+	local success, result = pcall(require, moduleScript)
+	if success then
+		return result
+	end
+
+	warn(("[GameBootstrap] failed to require %s: %s"):format(moduleName, tostring(result)))
+	return nil
+end
+
+local function safe_init_service(serviceName: string, service)
+	if not service or type(service.Init) ~= "function" then
+		return
+	end
+
+	local success, errorMessage = pcall(function()
+		service.Init()
+	end)
+
+	if not success then
+		warn(("[GameBootstrap] failed to initialize %s: %s"):format(serviceName, tostring(errorMessage)))
+	end
+end
+
+local CookingService = safe_require_module(ServerStorage:WaitForChild("Modules"):WaitForChild("CookingService"), "CookingService")
+
 local function update_login_data(player: Player): ()
 	local login = DataUtility.server.get(player, "Login")
 	if not login then
@@ -49,6 +75,7 @@ local function bootstrap_player(player: Player): ()
 	end)
 end
 
+safe_init_service("CookingService", CookingService)
 FarmingShopService.Init()
 ConsumableToolService.Init()
 FarmingService.Init()

@@ -124,6 +124,13 @@ local ProfileTemplate = {
 		},
 	},
 
+	Cooking = {
+		ActiveRecipeId = "",
+		StartedAt = 0,
+		ReadyAt = 0,
+		ResultAmount = 0,
+	},
+
 	Arena = {
 		RunsPlayed = 0,
 		RunsCompleted = 0,

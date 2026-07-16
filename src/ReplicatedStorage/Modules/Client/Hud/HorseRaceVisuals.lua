@@ -1,3 +1,9 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local GameData = Modules:WaitForChild("GameData")
+local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
+
 local HorseRaceVisuals = {}
 
 local VISUAL_BLEND_SECONDS = 1
@@ -7,6 +13,85 @@ local VISUAL_MIN_SPEED_BLEND = 0.35
 
 local function extract_rotation(cframe)
 	return CFrame.fromMatrix(Vector3.zero, cframe.XVector, cframe.YVector, cframe.ZVector)
+end
+
+local function ensure_animator(controller)
+	if not controller then
+		return nil
+	end
+
+	local animator = controller:FindFirstChildOfClass("Animator")
+	if animator then
+		return animator
+	end
+
+	if controller:IsA("Humanoid") or controller:IsA("AnimationController") then
+		animator = Instance.new("Animator")
+		animator.Parent = controller
+		return animator
+	end
+
+	return nil
+end
+
+local function get_model_animator(model)
+	local controller = model:FindFirstChildWhichIsA("AnimationController", true)
+	if controller then
+		return ensure_animator(controller)
+	end
+
+	local humanoid = model:FindFirstChildWhichIsA("Humanoid", true)
+	if humanoid then
+		return ensure_animator(humanoid)
+	end
+
+	controller = Instance.new("AnimationController")
+	controller.Name = "HorseRaceAnimationController"
+	controller.Parent = model
+	return ensure_animator(controller)
+end
+
+local function create_run_animation(model)
+	local animationId = HorseMountConfig.HorseRunAnimationId
+	if type(animationId) ~= "string" or animationId == "" then
+		return nil, nil
+	end
+
+	local animator = get_model_animator(model)
+	if not animator then
+		return nil, nil
+	end
+
+	local animation = Instance.new("Animation")
+	animation.AnimationId = animationId
+	local success, track = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+
+	if not success or not track then
+		animation:Destroy()
+		return nil, nil
+	end
+
+	track.Priority = Enum.AnimationPriority.Action
+	track.Looped = true
+	return track, animation
+end
+
+local function set_run_animation_playing(visual, shouldPlay)
+	local track = visual.RunTrack
+	if not track then
+		return
+	end
+
+	if shouldPlay then
+		if not track.IsPlaying then
+			track:Play(HorseMountConfig.HorseAnimationBlendTime or 0.12, 1, 1)
+		end
+		track:AdjustSpeed(1)
+	elseif track.IsPlaying then
+		track:Stop(HorseMountConfig.HorseAnimationBlendTime or 0.12)
+	end
 end
 
 local function find_local_entry(state, localPlayer)
@@ -227,6 +312,7 @@ local function create_race_visual(context, entry, raceFolder, slots, folder)
 
 	local startPivot = context.RaceVisualFactory.GetAlignedSlotPivot(model, slot)
 	model:PivotTo(startPivot)
+	local runTrack, runAnimation = create_run_animation(model)
 
 	return {
 		UserId = entry.UserId,
@@ -250,6 +336,8 @@ local function create_race_visual(context, entry, raceFolder, slots, folder)
 		BlendAlpha = nil,
 		BlendTween = nil,
 		BlendToken = 0,
+		RunTrack = runTrack,
+		RunAnimation = runAnimation,
 	}
 end
 
@@ -316,6 +404,12 @@ function HorseRaceVisuals.destroyRaceVisual(context, userId)
 
 	clear_overlay_tween_state(visual)
 	clear_primary_tween_state(visual)
+	set_run_animation_playing(visual, false)
+
+	if visual.RunAnimation then
+		visual.RunAnimation:Destroy()
+		visual.RunAnimation = nil
+	end
 
 	if visual.Model then
 		visual.Model:Destroy()
@@ -389,6 +483,7 @@ function HorseRaceVisuals.syncRaceVisuals(context)
 
 		if visual then
 			retarget_race_visual(context, visual, entry)
+			set_run_animation_playing(visual, context.state.Phase == "Race")
 
 			if context.state.Phase == "Result" and entry.Finished == true then
 				local progress = get_visual_display_progress(visual)

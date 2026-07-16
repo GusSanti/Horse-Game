@@ -1,6 +1,8 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local localPlayer = Players.LocalPlayer
+local Notifications = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("Notifications"))
 
 local HorseInteractionUi = {}
 
@@ -11,12 +13,6 @@ local CONFIRMATION_FRAME_NAMES = { "ConfirmationFR" }
 local DIALOGUE_FRAME_NAMES = { "DialogueFR" }
 local TASKS_FRAME_NAMES = { "TasksFR" }
 local FEEDING_FRAME_NAMES = { "FeedingFR", "LoadingFR" }
-
-local DIALOGUE_TITLE_NAMES = { "DialogueNameTX" }
-local DIALOGUE_TITLE_SHADOW_NAMES = { "DialogueNameShadowTX" }
-local DIALOGUE_DETAILS_NAMES = { "DetailsTX" }
-local ACCEPT_BUTTON_NAMES = { "Accept" }
-local DENY_BUTTON_NAMES = { "Deny" }
 
 local FEEDING_TEXT_NAMES = { "FeedingHorseTX" }
 local FEEDING_TEXT_SHADOW_NAMES = { "FeedingHorseShadowTX" }
@@ -34,7 +30,6 @@ local STAT_LABELS = {
 }
 
 local cachedRefs = nil
-local buttonConnections = {}
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -62,14 +57,6 @@ local function matches_alias(instance: Instance, aliases: {string}): boolean
 	end
 
 	return false
-end
-
-local function disconnect_buttons(): ()
-	for _, connection in ipairs(buttonConnections) do
-		connection:Disconnect()
-	end
-
-	table.clear(buttonConnections)
 end
 
 local function find_named_instance(root: Instance?, aliases: {string}, className: string?, recursive: boolean?): Instance?
@@ -100,15 +87,6 @@ local function find_text_label(root: Instance?, aliases: {string}): TextLabel?
 	local instance = find_named_instance(root, aliases, "TextLabel")
 	if instance then
 		return instance :: TextLabel
-	end
-
-	return nil
-end
-
-local function find_gui_button(root: Instance?, aliases: {string}): GuiButton?
-	local instance = find_named_instance(root, aliases, "GuiButton")
-	if instance then
-		return instance :: GuiButton
 	end
 
 	return nil
@@ -199,11 +177,6 @@ local function get_refs()
 		Dialogue = dialogue,
 		Tasks = tasks,
 		Feeding = feeding,
-		DialogueTitle = find_text_label(dialogue, DIALOGUE_TITLE_NAMES),
-		DialogueTitleShadow = find_text_label(dialogue, DIALOGUE_TITLE_SHADOW_NAMES),
-		DialogueDetails = find_text_label(dialogue, DIALOGUE_DETAILS_NAMES),
-		AcceptButton = find_gui_button(dialogue, ACCEPT_BUTTON_NAMES),
-		DenyButton = find_gui_button(dialogue, DENY_BUTTON_NAMES),
 		FeedingText = find_text_label(feeding, FEEDING_TEXT_NAMES),
 		FeedingTextShadow = find_text_label(feeding, FEEDING_TEXT_SHADOW_NAMES),
 		TimerText = find_text_label(feeding, TIMER_TEXT_NAMES),
@@ -248,22 +221,6 @@ local function set_text_pair(primary: TextLabel?, shadow: TextLabel?, text: stri
 
 	if shadow then
 		shadow.Text = text
-	end
-end
-
-local function set_button_text(button: GuiButton?, text: string?): ()
-	if not button or type(text) ~= "string" or text == "" then
-		return
-	end
-
-	if button:IsA("TextButton") then
-		button.Text = text
-	end
-
-	for _, descendant in ipairs(button:GetDescendants()) do
-		if descendant:IsA("TextLabel") then
-			descendant.Text = text
-		end
 	end
 end
 
@@ -495,66 +452,21 @@ function HorseInteractionUi.BuildActionLabel(itemDefinition, actionText: string?
 end
 
 function HorseInteractionUi.ShowDialogue(config): boolean
+	config = config or {}
+	config.title = config.title or "Horse Care"
+	config.details = config.details or "This item improves your horse."
+
 	local refs = get_refs()
-	if not refs or not refs.Dialogue then
-		return false
+	if refs then
+		set_visible(refs.Tasks, false)
+		set_visible(refs.Feeding, false)
 	end
 
-	if not refs.AcceptButton or not refs.DenyButton then
-		return false
-	end
-
-	disconnect_buttons()
-	hide_confirmation_root()
-
-	set_visible(refs.Dialogue, true)
-	set_visible(refs.Tasks, false)
-	set_visible(refs.Feeding, false)
-
-	set_text_pair(
-		refs.DialogueTitle,
-		refs.DialogueTitleShadow,
-		config.title or "Horse Care"
-	)
-
-	if refs.DialogueDetails then
-		refs.DialogueDetails.Text = config.details or "This item improves your horse."
-	end
-
-	if refs.AcceptButton then
-		set_button_text(refs.AcceptButton, config.acceptText)
-
-		buttonConnections[#buttonConnections + 1] = refs.AcceptButton.MouseButton1Click:Connect(function()
-			HorseInteractionUi.HideDialogue()
-			if type(config.onAccept) == "function" then
-				config.onAccept()
-			end
-		end)
-	end
-
-	if refs.DenyButton then
-		set_button_text(refs.DenyButton, config.denyText)
-
-		buttonConnections[#buttonConnections + 1] = refs.DenyButton.MouseButton1Click:Connect(function()
-			HorseInteractionUi.HideDialogue()
-			if type(config.onDeny) == "function" then
-				config.onDeny()
-			end
-		end)
-	end
-
-	return true
+	return Notifications.ShowDialogue(config)
 end
 
 function HorseInteractionUi.HideDialogue(): ()
-	local refs = get_refs()
-	if not refs then
-		return
-	end
-
-	disconnect_buttons()
-	hide_confirmation_root()
-	set_visible(refs.Dialogue, false)
+	Notifications.HideDialogue()
 end
 
 function HorseInteractionUi.ShowTask(config): boolean

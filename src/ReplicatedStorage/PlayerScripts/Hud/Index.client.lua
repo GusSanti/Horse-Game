@@ -59,6 +59,7 @@ local renderQueued = false
 local renderDirty = true
 local renderGeneration = 0
 local viewportPopulationInProgress = false
+local pendingViewportEntries = {}
 local selectedCatalogId = nil
 local orderedCatalogIds = nil
 local activeEntriesByCatalogId = {}
@@ -69,6 +70,7 @@ local previewWarmGeneration = 0
 local queue_render
 local try_bind_ui
 local apply_selection
+local populate_visible_viewports
 
 local function normalize_key(value)
 	if type(value) ~= "string" then
@@ -191,6 +193,20 @@ local function is_gui_visible(instance)
 		current = current.Parent
 	end
 	return true
+end
+
+local function is_card_near_visible_region(scrollingFrame, card)
+	if not scrollingFrame or not card or not card.Parent then
+		return false
+	end
+
+	local padding = math.max(80, scrollingFrame.AbsoluteSize.Y * 0.35)
+	local regionTop = scrollingFrame.AbsolutePosition.Y - padding
+	local regionBottom = scrollingFrame.AbsolutePosition.Y + scrollingFrame.AbsoluteSize.Y + padding
+	local cardTop = card.AbsolutePosition.Y
+	local cardBottom = cardTop + card.AbsoluteSize.Y
+
+	return cardBottom >= regionTop and cardTop <= regionBottom
 end
 
 local function create_click_target(card)
@@ -593,25 +609,6 @@ local function populate_horse_viewport(viewportFrame, catalogId, isUnlocked, cam
 	viewportFrame.LightColor = snapshot.LightColor
 end
 
-local function prewarm_detail_snapshots(entries)
-	previewWarmGeneration += 1
-	local generation = previewWarmGeneration
-
-	task.spawn(function()
-		for index, entry in ipairs(entries) do
-			if generation ~= previewWarmGeneration or currentUi == nil then
-				return
-			end
-
-			build_preview_snapshot(entry.CatalogId, entry.IsUnlocked, DETAILS_CAMERA_CONFIG, "details")
-
-			if index < #entries then
-				RunService.Heartbeat:Wait()
-			end
-		end
-	end)
-end
-
 local function set_selected_visual(card, isSelected)
 	local stroke = card:FindFirstChildWhichIsA("UIStroke", true)
 	if not stroke and card:IsA("GuiObject") then
@@ -806,29 +803,56 @@ local function render_index()
 		end
 	end
 
-	prewarm_detail_snapshots(entries)
 	apply_selection()
 	update_canvas_size()
 	task.defer(update_canvas_size)
-	viewportPopulationInProgress = #pendingViewports > 0
+	pendingViewportEntries = pendingViewports
+	populate_visible_viewports()
+end
+
+populate_visible_viewports = function()
+	if viewportPopulationInProgress or not currentUi or not is_gui_visible(currentUi.Root) then
+		return
+	end
+
+	local firstPending = nil
+	for _, pending in ipairs(pendingViewportEntries) do
+		if not pending.Populated and is_card_near_visible_region(currentUi.GridContainer, pending.Card) then
+			firstPending = pending
+			break
+		end
+	end
+	if not firstPending then
+		return
+	end
+
+	viewportPopulationInProgress = true
+	local generation = renderGeneration
 
 	task.spawn(function()
-		for _, pending in ipairs(pendingViewports) do
-			if generation ~= renderGeneration
-				or not currentUi
-				or not is_gui_visible(currentUi.Root)
-				or pending.Card.Parent ~= currentUi.GridContainer
-			then
-				return
+		RunService.Heartbeat:Wait()
+
+		while generation == renderGeneration and currentUi and is_gui_visible(currentUi.Root) do
+			local nextPending = nil
+			for _, pending in ipairs(pendingViewportEntries) do
+				if not pending.Populated and is_card_near_visible_region(currentUi.GridContainer, pending.Card) then
+					nextPending = pending
+					break
+				end
+			end
+
+			if not nextPending then
+				break
 			end
 
 			populate_horse_viewport(
-				pending.ViewportFrame,
-				pending.Entry.CatalogId,
-				pending.Entry.IsUnlocked,
+				nextPending.ViewportFrame,
+				nextPending.Entry.CatalogId,
+				nextPending.Entry.IsUnlocked,
 				GRID_CAMERA_CONFIG,
 				"grid"
 			)
+			nextPending.Populated = true
 			RunService.Heartbeat:Wait()
 		end
 
@@ -923,6 +947,7 @@ local function destroy_ui_binding()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
 	previewWarmGeneration += 1
+	table.clear(pendingViewportEntries)
 	clear_dictionary(activeEntriesByCatalogId)
 	clear_dictionary(activeCardsByCatalogId)
 	currentUi = nil
@@ -962,6 +987,7 @@ local function bind_ui(ui)
 		end
 
 		uiTrove:Connect(scrollingFrame:GetPropertyChangedSignal("AbsoluteSize"), update_canvas_size)
+		uiTrove:Connect(scrollingFrame:GetPropertyChangedSignal("CanvasPosition"), populate_visible_viewports)
 	end
 
 	uiTrove:Connect(ui.Root.AncestryChanged, function(_, parent)
@@ -980,11 +1006,12 @@ local function bind_ui(ui)
 			if ui.Root.Visible then
 				if renderDirty then
 					queue_render()
+				else
+					populate_visible_viewports()
 				end
 			elseif viewportPopulationInProgress then
 				renderGeneration += 1
 				viewportPopulationInProgress = false
-				renderDirty = true
 			end
 		end)
 	end
