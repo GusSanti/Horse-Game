@@ -2,6 +2,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 -- CONSTANTS
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -87,9 +88,269 @@ local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 
 local UPDATE_LOADOUT_REMOTE_NAME = "UpdateInventoryLoadout"
 local DEFAULT_GENERIC_TOOL_DEFINITIONS = InventoryLoadout.GetDefaultGenericToolDefinitions()
+local MAX_HOTBAR_SLOTS = InventoryLoadout.MAX_HOTBAR_SLOTS or 9
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
+
+local FoodHoverTooltip = {}
+do
+    local tooltipGui = nil
+    local tooltipFrame = nil
+    local titleLabel = nil
+    local bodyLabel = nil
+    local activeTarget = nil
+    local positionConnection = nil
+
+    local function format_number(value)
+        local numberValue = tonumber(value) or 0
+        if math.abs(numberValue - math.floor(numberValue + 0.5)) < 0.001 then
+            return tostring(math.floor(numberValue + 0.5))
+        end
+
+        return string.format("%.1f", numberValue)
+    end
+
+    local function format_signed(value)
+        local numberValue = tonumber(value) or 0
+        return numberValue >= 0 and ("+" .. format_number(numberValue)) or format_number(numberValue)
+    end
+
+    local function ensure_tooltip()
+        if tooltipGui and tooltipGui.Parent and tooltipFrame and tooltipFrame.Parent then
+            return tooltipFrame
+        end
+
+        tooltipGui = playerGui:FindFirstChild("FoodHoverTooltipGui")
+        if not tooltipGui then
+            tooltipGui = Instance.new("ScreenGui")
+            tooltipGui.Name = "FoodHoverTooltipGui"
+            tooltipGui.IgnoreGuiInset = true
+            tooltipGui.ResetOnSpawn = false
+            tooltipGui.DisplayOrder = 10000
+            tooltipGui.Parent = playerGui
+        end
+
+        tooltipFrame = tooltipGui:FindFirstChild("Tooltip")
+        if not tooltipFrame then
+            tooltipFrame = Instance.new("Frame")
+            tooltipFrame.Name = "Tooltip"
+            tooltipFrame.BackgroundColor3 = Color3.fromRGB(24, 22, 20)
+            tooltipFrame.BackgroundTransparency = 0.08
+            tooltipFrame.BorderSizePixel = 0
+            tooltipFrame.AutomaticSize = Enum.AutomaticSize.Y
+            tooltipFrame.Size = UDim2.fromOffset(238, 0)
+            tooltipFrame.Visible = false
+            tooltipFrame.ZIndex = 10000
+            tooltipFrame.Parent = tooltipGui
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 6)
+            corner.Parent = tooltipFrame
+
+            local stroke = Instance.new("UIStroke")
+            stroke.Color = Color3.fromRGB(255, 225, 170)
+            stroke.Transparency = 0.28
+            stroke.Thickness = 1
+            stroke.Parent = tooltipFrame
+
+            local padding = Instance.new("UIPadding")
+            padding.PaddingLeft = UDim.new(0, 10)
+            padding.PaddingRight = UDim.new(0, 10)
+            padding.PaddingTop = UDim.new(0, 10)
+            padding.PaddingBottom = UDim.new(0, 10)
+            padding.Parent = tooltipFrame
+
+            local layout = Instance.new("UIListLayout")
+            layout.FillDirection = Enum.FillDirection.Vertical
+            layout.SortOrder = Enum.SortOrder.LayoutOrder
+            layout.Padding = UDim.new(0, 5)
+            layout.Parent = tooltipFrame
+
+            titleLabel = Instance.new("TextLabel")
+            titleLabel.Name = "Title"
+            titleLabel.BackgroundTransparency = 1
+            titleLabel.Font = Enum.Font.GothamBold
+            titleLabel.TextColor3 = Color3.fromRGB(255, 236, 192)
+            titleLabel.TextSize = 15
+            titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+            titleLabel.TextWrapped = true
+            titleLabel.AutomaticSize = Enum.AutomaticSize.Y
+            titleLabel.Size = UDim2.fromScale(1, 0)
+            titleLabel.LayoutOrder = 1
+            titleLabel.ZIndex = 10001
+            titleLabel.Parent = tooltipFrame
+
+            bodyLabel = Instance.new("TextLabel")
+            bodyLabel.Name = "Body"
+            bodyLabel.BackgroundTransparency = 1
+            bodyLabel.Font = Enum.Font.Gotham
+            bodyLabel.TextColor3 = Color3.fromRGB(245, 245, 245)
+            bodyLabel.TextSize = 13
+            bodyLabel.TextXAlignment = Enum.TextXAlignment.Left
+            bodyLabel.TextWrapped = true
+            bodyLabel.AutomaticSize = Enum.AutomaticSize.Y
+            bodyLabel.Size = UDim2.fromScale(1, 0)
+            bodyLabel.LayoutOrder = 2
+            bodyLabel.ZIndex = 10001
+            bodyLabel.Parent = tooltipFrame
+        else
+            titleLabel = tooltipFrame:FindFirstChild("Title")
+            bodyLabel = tooltipFrame:FindFirstChild("Body")
+        end
+
+        return tooltipFrame
+    end
+
+    local function is_target_visible(target)
+        local current = target
+
+        while current do
+            if current:IsA("GuiObject") and not current.Visible then
+                return false
+            end
+
+            if current:IsA("LayerCollector") and not current.Enabled then
+                return false
+            end
+
+            current = current.Parent
+        end
+
+        return target ~= nil and target.Parent ~= nil
+    end
+
+    local function update_position()
+        if not tooltipFrame or not tooltipFrame.Visible then
+            return
+        end
+
+        if activeTarget and not is_target_visible(activeTarget) then
+            FoodHoverTooltip.Hide(activeTarget)
+            return
+        end
+
+        local mousePosition = UserInputService:GetMouseLocation()
+        local viewportSize = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+        local frameSize = tooltipFrame.AbsoluteSize
+        local x = mousePosition.X + 16
+        local y = mousePosition.Y + 18
+
+        if x + frameSize.X + 10 > viewportSize.X then
+            x = mousePosition.X - frameSize.X - 16
+        end
+
+        if y + frameSize.Y + 10 > viewportSize.Y then
+            y = mousePosition.Y - frameSize.Y - 18
+        end
+
+        tooltipFrame.Position = UDim2.fromOffset(math.max(10, x), math.max(10, y))
+    end
+
+    local function build_effect_lines(itemDefinition)
+        local effects = itemDefinition and itemDefinition.Effects or {}
+        local lines = {}
+
+        if itemDefinition and itemDefinition.NeedKey == "Hunger" and effects.NeedGain ~= nil then
+            lines[#lines + 1] = "Fome: +" .. format_number(effects.NeedGain)
+        elseif itemDefinition and itemDefinition.NeedKey and effects.NeedGain ~= nil then
+            lines[#lines + 1] = tostring(itemDefinition.NeedKey) .. ": +" .. format_number(effects.NeedGain)
+        end
+
+        if effects.HealthGain ~= nil then
+            lines[#lines + 1] = "Saude: " .. format_signed(effects.HealthGain)
+        end
+
+        if effects.HappinessGain ~= nil then
+            lines[#lines + 1] = "Felicidade: " .. format_signed(effects.HappinessGain)
+        end
+
+        if effects.FriendshipGain ~= nil then
+            lines[#lines + 1] = "Amizade: " .. format_signed(effects.FriendshipGain)
+        end
+
+        local decayBuff = effects.DecayBuff
+        if type(decayBuff) == "table" and tonumber(decayBuff.Multiplier) then
+            local multiplier = tonumber(decayBuff.Multiplier)
+            if multiplier and multiplier < 1 then
+                local percent = math.max(0, math.floor((1 - multiplier) * 100 + 0.5))
+                local duration = tonumber(decayBuff.DurationMinutes)
+                local suffix = duration and duration > 0 and (" por " .. format_number(duration) .. " min") or ""
+                lines[#lines + 1] = "Queda de fome: -" .. percent .. "%" .. suffix
+            end
+        end
+
+        if effects.MoodText ~= nil and tostring(effects.MoodText) ~= "" then
+            lines[#lines + 1] = "Humor: " .. tostring(effects.MoodText)
+        end
+
+        if #lines == 0 and type(itemDefinition.Description) == "string" and itemDefinition.Description ~= "" then
+            lines[#lines + 1] = itemDefinition.Description
+        end
+
+        return lines
+    end
+
+    function FoodHoverTooltip.HasTooltip(itemDefinition)
+        return type(itemDefinition) == "table" and #build_effect_lines(itemDefinition) > 0
+    end
+
+    function FoodHoverTooltip.Show(source, target)
+        local itemDefinition = type(source) == "function" and source() or source
+        if not FoodHoverTooltip.HasTooltip(itemDefinition) then
+            return
+        end
+
+        local frame = ensure_tooltip()
+        if not frame or not titleLabel or not bodyLabel then
+            return
+        end
+
+        activeTarget = target
+        titleLabel.Text = itemDefinition.DisplayName or itemDefinition.ToolName or itemDefinition.ItemId or "Food"
+        bodyLabel.Text = table.concat(build_effect_lines(itemDefinition), "\n")
+        frame.Visible = true
+        update_position()
+
+        if not positionConnection then
+            positionConnection = RunService.RenderStepped:Connect(update_position)
+        end
+    end
+
+    function FoodHoverTooltip.Hide(target)
+        if target and activeTarget ~= target then
+            return
+        end
+
+        activeTarget = nil
+        if tooltipFrame then
+            tooltipFrame.Visible = false
+        end
+
+        if positionConnection then
+            positionConnection:Disconnect()
+            positionConnection = nil
+        end
+    end
+
+    function FoodHoverTooltip.Bind(target, source, trove)
+        if not target or not target:IsA("GuiObject") then
+            return
+        end
+
+        trove:Connect(target.MouseEnter, function()
+            FoodHoverTooltip.Show(source, target)
+        end)
+        trove:Connect(target.MouseLeave, function()
+            FoodHoverTooltip.Hide(target)
+        end)
+        trove:Connect(target.AncestryChanged, function(_, parent)
+            if not parent then
+                FoodHoverTooltip.Hide(target)
+            end
+        end)
+    end
+end
 
 local rootTrove = Trove.new()
 local uiTrove = Trove.new()
@@ -677,6 +938,7 @@ local function create_item_entry(itemDefinition, farmingDefinition, count)
     return {
         EntryKey = entryKey,
         ItemId = itemId,
+        Definition = itemDefinition or farmingDefinition,
         DisplayName = itemDefinition and itemDefinition.DisplayName or farmingDefinition and farmingDefinition.DisplayName or "",
         Description = get_item_description(itemDefinition, farmingDefinition),
         Count = displayCount,
@@ -780,38 +1042,70 @@ local function build_category_entries(categoryId)
     return entries
 end
 
-local function resolve_tool_entry_key(tool)
+local function resolve_tool_loadout_entry(tool)
     local farmingItemId = normalize_key(tool:GetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE))
-    if farmingItemId and FarmingCatalog.GetItem(farmingItemId) then
-        return get_entry_key_from_item_id(farmingItemId)
+    if farmingItemId then
+        local farmingDefinition = FarmingCatalog.GetItem(farmingItemId)
+        if farmingDefinition then
+            return {
+                EntryKey = get_entry_key_from_item_id(farmingDefinition.ItemId),
+                Kind = "item",
+                Value = farmingDefinition.ItemId,
+            }
+        end
     end
 
     local toolDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
     if toolDefinition then
-        return get_entry_key_from_item_id(toolDefinition.ItemId)
+        return {
+            EntryKey = get_entry_key_from_item_id(toolDefinition.ItemId),
+            Kind = "item",
+            Value = toolDefinition.ItemId,
+        }
     end
 
     local explicitItemId = normalize_key(tool:GetAttribute("ToolItemId"))
         or normalize_key(tool:GetAttribute("ItemId"))
-    if explicitItemId and (ToolItemCatalog.GetItemDefinition(explicitItemId) or FarmingCatalog.GetItem(explicitItemId)) then
-        return get_entry_key_from_item_id(explicitItemId)
+    local explicitDefinition = explicitItemId and (ToolItemCatalog.GetItemDefinition(explicitItemId) or FarmingCatalog.GetItem(explicitItemId))
+    if explicitDefinition then
+        return {
+            EntryKey = get_entry_key_from_item_id(explicitDefinition.ItemId),
+            Kind = "item",
+            Value = explicitDefinition.ItemId,
+        }
     end
 
-    return build_generic_entry_key(tool.Name)
+    local genericToolName = normalize_generic_tool_name(tool.Name)
+    if genericToolName then
+        return {
+            EntryKey = build_generic_entry_key(genericToolName),
+            Kind = "generic",
+            Value = genericToolName,
+        }
+    end
+
+    return nil
 end
 
 local function rebuild_live_groups()
     clear_dictionary(currentLiveGroups)
     local backpack = localPlayer:FindFirstChildOfClass("Backpack")
     local character = localPlayer.Character
+    local order = 0
 
     local function register_tool(tool, isCharacterTool)
-        local entryKey = resolve_tool_entry_key(tool)
+        local loadoutEntry = resolve_tool_loadout_entry(tool)
+        local entryKey = loadoutEntry and loadoutEntry.EntryKey or nil
         if not entryKey then return end
 
+        order += 1
         local group = currentLiveGroups[entryKey]
         if not group then
             group = {
+                EntryKey = entryKey,
+                Kind = loadoutEntry.Kind,
+                Value = loadoutEntry.Value,
+                Order = order,
                 Tools = {},
                 BackpackTools = {},
                 CharacterTools = {},
@@ -847,6 +1141,74 @@ local function queue_live_groups_refresh()
         rebuild_live_groups()
         apply_selection()
     end)
+end
+
+local function get_saved_loadout_values()
+	return DataUtility.client.get(InventoryLoadout.HOTBAR_ITEM_IDS_PATH) or {},
+		DataUtility.client.get(InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH) or {}
+end
+
+local function get_visible_hotbar_entries()
+	rebuild_live_groups()
+
+	local itemIds, genericToolNames = get_saved_loadout_values()
+	local entries = {}
+	local seenKeys = {}
+
+	local function push(kind, value, entryKey)
+		if not entryKey or seenKeys[entryKey] or not currentLiveGroups[entryKey] then
+			return
+		end
+
+		seenKeys[entryKey] = true
+		entries[#entries + 1] = {
+			Kind = kind,
+			Value = value,
+			EntryKey = entryKey,
+		}
+	end
+
+	for _, itemId in ipairs(itemIds) do
+		push("item", itemId, get_entry_key_from_item_id(itemId))
+	end
+
+	for _, toolName in ipairs(genericToolNames) do
+		push("generic", toolName, build_generic_entry_key(toolName))
+	end
+
+	local unorderedEntries = {}
+	for entryKey, group in pairs(currentLiveGroups) do
+		if not seenKeys[entryKey] and group.Kind and group.Value then
+			unorderedEntries[#unorderedEntries + 1] = group
+		end
+	end
+
+	table.sort(unorderedEntries, function(left, right)
+		return (left.Order or math.huge) < (right.Order or math.huge)
+	end)
+
+	for _, group in ipairs(unorderedEntries) do
+		push(group.Kind, group.Value, group.EntryKey)
+	end
+
+	return entries
+end
+
+local function get_hotbar_entries_payload()
+	local entries = {}
+
+	for index, hotbarEntry in ipairs(get_visible_hotbar_entries()) do
+		if index > MAX_HOTBAR_SLOTS then
+			break
+		end
+
+		entries[#entries + 1] = {
+			Kind = hotbarEntry.Kind,
+			Value = hotbarEntry.Value,
+		}
+	end
+
+	return entries
 end
 
 local function render_details(entry)
@@ -948,6 +1310,10 @@ local function render_inventory()
         activeEntriesByItemId[entry.EntryKey] = entry
         activeCardsByItemId[entry.EntryKey] = card
 
+        if activeCategoryId == "Foods" and FoodHoverTooltip.HasTooltip(entry.Definition) then
+            FoodHoverTooltip.Bind(clickTarget or card, entry.Definition, cardTrove)
+        end
+
         if clickTarget then
             cardTrove:Connect(clickTarget.Activated, function()
                 selectedItemId = entry.EntryKey
@@ -1011,12 +1377,15 @@ local function equip_selected_item()
         return
     end
 
+    local payload = {
+        Kind = entry.LoadoutKind,
+        Value = entry.LoadoutValue,
+        Equipped = true,
+        HotbarEntries = get_hotbar_entries_payload(),
+    }
+
     local success, updated = pcall(function()
-        return Net.Function[UPDATE_LOADOUT_REMOTE_NAME]:Call({
-            Kind = entry.LoadoutKind,
-            Value = entry.LoadoutValue,
-            Equipped = true,
-        })
+        return Net.Function[UPDATE_LOADOUT_REMOTE_NAME]:Call(payload)
     end)
     if success and updated ~= false then
         task.defer(queue_live_groups_refresh)
@@ -1101,6 +1470,7 @@ local function get_inventory_ui(inventoryRoot)
         FoodsButton = foodsButton,
         CloseButton = closeButton,
         DetailsRoot = detailsRoot,
+        DetailsDisplayRoot = detailsDisplayRoot,
         DetailsViewport = detailsViewport,
         DetailsNameLabel = detailsNameLabel,
         DetailsNameShadowLabel = detailsNameShadowLabel,
@@ -1169,6 +1539,17 @@ local function bind_ui(ui)
         set_button_text(ui.UnequipButton, UNEQUIP_TEXT_NAMES, UNEQUIP_SHADOW_TEXT_NAMES, "Unequip")
     end
 
+    if ui.DetailsDisplayRoot then
+        FoodHoverTooltip.Bind(ui.DetailsDisplayRoot, function()
+            if activeCategoryId ~= "Foods" or not selectedItemId then
+                return nil
+            end
+
+            local entry = activeEntriesByItemId[selectedItemId]
+            return entry and entry.Definition or nil
+        end, uiTrove)
+    end
+
     render_details(nil)
 
     uiTrove:Connect(ui.UtilityButton.Activated, function() set_active_category("Utility") end)
@@ -1184,6 +1565,17 @@ local function bind_ui(ui)
 
     for _, inventoryPath in ipairs(RELEVANT_INVENTORY_PATHS) do
         uiTrove:Add(DataUtility.client.bind(inventoryPath, queue_render))
+    end
+
+    for _, loadoutPath in ipairs({
+        InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
+        InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH,
+        InventoryLoadout.HOTBAR_INITIALIZED_PATH,
+    }) do
+        uiTrove:Add(DataUtility.client.bind(loadoutPath, function()
+            queue_live_groups_refresh()
+            queue_render()
+        end))
     end
 
     if ui.GridContainer:IsA("ScrollingFrame") then

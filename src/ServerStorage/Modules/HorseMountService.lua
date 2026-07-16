@@ -664,23 +664,43 @@ local function destroy_instances(instances)
 	end
 end
 
-local function is_rear_hoof_part(part)
-	local partName = string.lower(part.Name)
-	return string.find(partName, "hind", 1, true) ~= nil
-		or string.find(partName, "rear", 1, true) ~= nil
-		or string.find(partName, "back", 1, true) ~= nil
-		or partName == "leg_3"
-		or partName == "leg_4"
+local function get_hoof_node_position(node)
+	if node:IsA("BasePart") then
+		return node.Position
+	end
+
+	return node.WorldPosition
 end
 
-local function get_rear_hoof_parts(horseVisual)
+local function get_hoof_node_cframe(node)
+	if node:IsA("BasePart") then
+		return node.CFrame * CFrame.new(0, -(node.Size.Y * 0.45), 0)
+	end
+
+	return node.WorldCFrame
+end
+
+local function get_rear_hoof_nodes(horseVisual)
 	local pivot = horseVisual:GetPivot()
-	local candidates = {}
 	local rearDirection = 1
+	local boneNodes = {}
+	local partNodes = {}
+
+	for _, descendant in ipairs(horseVisual:GetDescendants()) do
+		if descendant:IsA("Bone") then
+			boneNodes[#boneNodes + 1] = descendant
+		end
+	end
 
 	for _, part in ipairs(get_visual_base_parts(horseVisual)) do
-		if string.find(string.lower(part.Name), "tail", 1, true) then
-			local tailPosition = pivot:PointToObjectSpace(part.Position)
+		partNodes[#partNodes + 1] = part
+	end
+
+	local sourceNodes = #boneNodes > 0 and boneNodes or partNodes
+
+	for _, node in ipairs(sourceNodes) do
+		if string.find(string.lower(node.Name), "tail", 1, true) then
+			local tailPosition = pivot:PointToObjectSpace(get_hoof_node_position(node))
 			if math.abs(tailPosition.Z) > 0.01 then
 				rearDirection = math.sign(tailPosition.Z)
 			end
@@ -688,22 +708,31 @@ local function get_rear_hoof_parts(horseVisual)
 		end
 	end
 
-	for _, part in ipairs(get_visual_base_parts(horseVisual)) do
-		local partName = string.lower(part.Name)
-		if partName ~= MOUNT_ROOT_NAME:lower()
-			and partName ~= MOUNT_SEAT_NAME:lower()
-			and not string.find(partName, "tail", 1, true)
-			and not string.find(partName, "mane", 1, true)
-			and not string.find(partName, "body", 1, true)
-			and not string.find(partName, "chest", 1, true)
-			and not string.find(partName, "neck", 1, true)
-			and not string.find(partName, "head", 1, true)
-			and not string.find(partName, "root", 1, true)
+	local candidates = {}
+	for _, node in ipairs(sourceNodes) do
+		local nodeName = string.lower(node.Name)
+		if nodeName ~= MOUNT_ROOT_NAME:lower()
+			and nodeName ~= MOUNT_SEAT_NAME:lower()
+			and not string.find(nodeName, "tail", 1, true)
+			and not string.find(nodeName, "mane", 1, true)
+			and not string.find(nodeName, "body", 1, true)
+			and not string.find(nodeName, "chest", 1, true)
+			and not string.find(nodeName, "neck", 1, true)
+			and not string.find(nodeName, "head", 1, true)
+			and not string.find(nodeName, "root", 1, true)
 		then
-			local localPosition = pivot:PointToObjectSpace(part.Position)
-			local nameBonus = is_rear_hoof_part(part) and 100 or 0
+			local localPosition = pivot:PointToObjectSpace(get_hoof_node_position(node))
+			local isRear = string.find(nodeName, "hind", 1, true)
+				or string.find(nodeName, "rear", 1, true)
+				or string.find(nodeName, "back", 1, true)
+				or nodeName == "leg_3"
+				or nodeName == "leg_4"
+			local isHoof = string.find(nodeName, "hoof", 1, true)
+				or string.find(nodeName, "foot", 1, true)
+				or string.find(nodeName, "leg", 1, true)
+			local nameBonus = (isRear and 1000 or 0) + (isHoof and 500 or 0)
 			candidates[#candidates + 1] = {
-				Part = part,
+				Node = node,
 				Score = nameBonus + (localPosition.Z * rearDirection * 8) - localPosition.Y,
 			}
 		end
@@ -715,7 +744,7 @@ local function get_rear_hoof_parts(horseVisual)
 
 	local hooves = {}
 	for index = 1, math.min(2, #candidates) do
-		hooves[#hooves + 1] = candidates[index].Part
+		hooves[#hooves + 1] = candidates[index].Node
 	end
 
 	return hooves
@@ -724,17 +753,28 @@ end
 local function create_horse_run_dust(horseVisual)
 	local resources = {}
 	local emitters = {}
+	local anchors = {}
 	local texture = HorseMountConfig.HorseRunDustTexture
 
 	if type(texture) ~= "string" or texture == "" then
-		return resources, emitters
+		return resources, emitters, anchors
 	end
 
-	for _, hoof in ipairs(get_rear_hoof_parts(horseVisual)) do
+	for _, hoof in ipairs(get_rear_hoof_nodes(horseVisual)) do
+		local anchor = Instance.new("Part")
+		anchor.Name = "HorseRunDustAnchor"
+		anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+		anchor.Transparency = 1
+		anchor.Anchored = true
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.CanTouch = false
+		anchor.CFrame = get_hoof_node_cframe(hoof)
+		anchor.Parent = horseVisual:IsA("Model") and horseVisual or horseVisual.Parent
+
 		local attachment = Instance.new("Attachment")
 		attachment.Name = "HorseRunDustAttachment"
-		attachment.Position = Vector3.new(0, -(hoof.Size.Y * 0.45), 0)
-		attachment.Parent = hoof
+		attachment.Parent = anchor
 
 		local emitter = Instance.new("ParticleEmitter")
 		emitter.Name = "HorseRunDust"
@@ -759,11 +799,25 @@ local function create_horse_run_dust(horseVisual)
 		})
 		emitter.Parent = attachment
 
-		resources[#resources + 1] = attachment
+		resources[#resources + 1] = anchor
 		emitters[#emitters + 1] = emitter
+		anchors[#anchors + 1] = {
+			Part = anchor,
+			Hoof = hoof,
+		}
 	end
 
-	return resources, emitters
+	return resources, emitters, anchors
+end
+
+local function update_horse_run_dust_anchors(anchors)
+	for _, entry in ipairs(anchors or {}) do
+		local anchor = entry.Part
+		local hoof = entry.Hoof
+		if anchor and anchor.Parent and hoof and hoof.Parent then
+			anchor.CFrame = get_hoof_node_cframe(hoof)
+		end
+	end
 end
 
 local function set_horse_run_dust_enabled(emitters, enabled)
@@ -1071,6 +1125,7 @@ local function update_mount(mountState, deltaTime)
 	update_rider_weld_offset(mountState, deltaTime)
 	apply_mounted_humanoid_pose(mountState)
 	update_mount_animation_state(mountState)
+	update_horse_run_dust_anchors(mountState.DustAnchors)
 	set_horse_run_dust_enabled(mountState.DustEmitters, mountState.Sprinting)
 end
 
@@ -1115,7 +1170,15 @@ local function mount_player(player, payload)
 
 	local horseVisual = find_live_horse_visual(player, horseId)
 	local isTemporaryVisual = false
+	local mountAtHorse = payload and payload.MountAtHorse == true
 	if not horseVisual then
+		if mountAtHorse then
+			return {
+				Success = false,
+				Code = "StableHorseVisualMissing",
+			}
+		end
+
 		local visualError
 		horseVisual, visualError = create_temporary_horse_visual(player, horse)
 		if not horseVisual then
@@ -1126,6 +1189,18 @@ local function mount_player(player, payload)
 		end
 
 		isTemporaryVisual = true
+	end
+
+	local stableHorseRootCFrame = nil
+	if mountAtHorse then
+		stableHorseRootCFrame = horseVisual:GetPivot()
+		local maxPromptDistance = (HorseMountConfig.StableMountPromptMaxActivationDistance or 14) + 2
+		if (rootPart.Position - stableHorseRootCFrame.Position).Magnitude > maxPromptDistance then
+			return {
+				Success = false,
+				Code = "HorseTooFar",
+			}
+		end
 	end
 
 	local baseParts = get_visual_base_parts(horseVisual)
@@ -1147,16 +1222,17 @@ local function mount_player(player, payload)
 	local seatOffset = build_seat_offset(horseVisual)
 	local playerLowestY = get_character_lowest_y(character, rootPart)
 	local requestedCameraYaw = payload and payload.CameraYaw
-	local cameraYaw = is_finite_number(requestedCameraYaw) and requestedCameraYaw or build_angle_y(rootPart.CFrame)
+	local cameraYaw = mountAtHorse and build_angle_y(stableHorseRootCFrame)
+		or (is_finite_number(requestedCameraYaw) and requestedCameraYaw or build_angle_y(rootPart.CFrame))
 	local spawnRotation = CFrame.Angles(0, cameraYaw, 0)
-	local alignmentRootCFrame = CFrame.new(rootPart.Position) * spawnRotation
+	local alignmentRootCFrame = mountAtHorse and stableHorseRootCFrame or CFrame.new(rootPart.Position) * spawnRotation
 	local seatAlignmentOffset = get_horizontal_seat_alignment_offset(seatOffset, spawnRotation)
-	local initialPosition = Vector3.new(
+	local initialPosition = stableHorseRootCFrame and stableHorseRootCFrame.Position or Vector3.new(
 		alignmentRootCFrame.Position.X - seatAlignmentOffset.X,
 		playerLowestY + get_target_ground_offset(groundOffset, nil),
 		alignmentRootCFrame.Position.Z - seatAlignmentOffset.Z
 	)
-	if HorseMountConfig.StickMountedHorseToGround == true then
+	if not mountAtHorse and HorseMountConfig.StickMountedHorseToGround == true then
 		initialPosition = resolve_ground_position(
 			Vector3.new(
 				alignmentRootCFrame.Position.X - seatAlignmentOffset.X,
@@ -1167,7 +1243,7 @@ local function mount_player(player, payload)
 			get_target_ground_offset(groundOffset, nil)
 		)
 	end
-	local initialRootCFrame = CFrame.new(initialPosition) * spawnRotation
+	local initialRootCFrame = stableHorseRootCFrame or (CFrame.new(initialPosition) * spawnRotation)
 	local seatRootCFrame = initialRootCFrame * build_horizontal_seat_offset(seatOffset)
 	local riderRootCFrame = seatRootCFrame * get_target_rider_weld_c0(nil)
 
@@ -1182,7 +1258,9 @@ local function mount_player(player, payload)
 		SeatOffset = seatOffset,
 	})
 
-	horseVisual:PivotTo(initialRootCFrame)
+	if not mountAtHorse then
+		horseVisual:PivotTo(initialRootCFrame)
+	end
 	set_visual_mount_marker(horseVisual, player.UserId)
 	character:PivotTo(build_character_pivot_from_root(character, rootPart, riderRootCFrame))
 	rootPart.AssemblyLinearVelocity = Vector3.zero
@@ -1298,7 +1376,7 @@ local function mount_player(player, payload)
 		Sprinting = false,
 		LastMoveDirection = spawnRotation.LookVector,
 	}
-	mountState.DustResources, mountState.DustEmitters = create_horse_run_dust(horseVisual)
+	mountState.DustResources, mountState.DustEmitters, mountState.DustAnchors = create_horse_run_dust(horseVisual)
 
 	debug_mount_log(player, "MountAssembly", {
 		HorsePivot = horseVisual:GetPivot(),

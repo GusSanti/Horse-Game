@@ -173,7 +173,12 @@ function CookingCatalog.NormalizeKey(value): string?
 end
 
 function CookingCatalog.GetRecipe(recipeId)
-	return recipesById[normalize_key(recipeId)]
+	local normalizedRecipeId = normalize_key(recipeId)
+	if not normalizedRecipeId then
+		return nil
+	end
+
+	return recipesById[normalizedRecipeId]
 end
 
 function CookingCatalog.GetRecipes()

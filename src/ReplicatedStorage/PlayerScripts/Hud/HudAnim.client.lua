@@ -5,8 +5,27 @@ local HudAnim = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
+
+local function has_true_attribute(instance, attributeName)
+	local current = instance
+
+	while current do
+		if current:GetAttribute(attributeName) == true then
+			return true
+		end
+
+		current = current.Parent
+	end
+
+	return false
+end
 
 local function setupInterface(instance)
+	if has_true_attribute(instance, IGNORE_HUD_ANIM_ATTRIBUTE) then
+		return
+	end
+
 	if instance:IsA("ScreenGui") then
 		HudAnim.apply_defaults_to_buttons(instance)
 		HudAnim.bind_all(instance)
@@ -28,4 +47,4 @@ for _, gui in playerGui:GetChildren() do
 	setupInterface(gui)
 end
 
-playerGui.DescendantAdded:Connect(setupInterface)
+playerGui.DescendantAdded:Connect(setupInterface)	

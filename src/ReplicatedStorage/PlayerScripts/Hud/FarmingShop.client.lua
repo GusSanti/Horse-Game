@@ -9,6 +9,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 local FarmingShopViewportCache = require(ClientModules:WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Net = require(Libraries:WaitForChild("Net"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 
@@ -483,12 +484,82 @@ local function refresh_all()
 	refresh_kind("Fruit")
 end
 
+local function disable_hud_anim(instance)
+	if not instance then
+		return
+	end
+
+	instance:SetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE, true)
+
+	if instance:IsA("GuiObject") then
+		instance:SetAttribute("UIAnim", false)
+		instance:SetAttribute("UIOpen", false)
+		instance:SetAttribute("hover_scale", 0)
+		instance:SetAttribute("click_scale", 0)
+		instance:SetAttribute("rotate_hover_deg", 0)
+		instance:SetAttribute("pulse", false)
+	end
+end
+
+local function disable_hud_anim_tree(root)
+	if not root then
+		return
+	end
+
+	disable_hud_anim(root)
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		disable_hud_anim(descendant)
+	end
+
+	pcall(function()
+		if root:IsA("GuiObject") then
+			HudAnim.unbind(root)
+		end
+
+		HudAnim.unbind_all(root)
+	end)
+end
+
+local function bind_panel_open_anim(panel: ShopPanel)
+	panel.Root:SetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE, nil)
+	panel.Root:SetAttribute(IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE, true)
+	panel.Root:SetAttribute("UIOpen", true)
+
+	pcall(function()
+		HudAnim.bind(panel.Root)
+		HudAnim.apply_defaults_to_buttons(panel.Root)
+		HudAnim.bind_all(panel.Root)
+	end)
+end
+
+local function set_panel_visible(panel: ShopPanel, isVisible: boolean, skipAnimation: boolean?)
+	local wasVisible = panel.Root.Visible
+
+	if not skipAnimation then
+		panel.Root:SetAttribute("skip_open", nil)
+		panel.Root:SetAttribute("skip_close", nil)
+	elseif isVisible and not wasVisible then
+		panel.Root:SetAttribute("skip_open", true)
+	elseif not isVisible and wasVisible then
+		panel.Root:SetAttribute("skip_close", true)
+	elseif isVisible and wasVisible then
+		panel.Root:SetAttribute("skip_open", nil)
+		panel.Root:SetAttribute("skip_close", nil)
+	elseif not isVisible and not wasVisible then
+		panel.Root:SetAttribute("skip_close", nil)
+	end
+
+	panel.Root.Visible = isVisible
+end
+
 local function create_card_entry(panel: ShopPanel, itemDefinition): ShopCardEntry
 	local templateMap = panel.TemplateMap or create_template_map(panel.Template)
 	panel.TemplateMap = templateMap
 
 	local card = panel.Template:Clone()
 	card.Name = itemDefinition.ItemId
+	disable_hud_anim_tree(card)
 	card.Visible = true
 	card.LayoutOrder = itemDefinition.SortOrder or 0
 
@@ -550,9 +621,9 @@ local function create_card_entry(panel: ShopPanel, itemDefinition): ShopCardEntr
 end
 
 local function apply_manual_shop_control(panel: ShopPanel)
-	panel.Root:SetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE, true)
-	panel.Root:SetAttribute(IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE, true)
-	panel.Root:SetAttribute("UIOpen", false)
+	bind_panel_open_anim(panel)
+	disable_hud_anim_tree(panel.ScrollingFrame)
+	disable_hud_anim_tree(panel.Template)
 	panel.Template.Visible = false
 end
 
@@ -608,8 +679,8 @@ local function show_tab(kind: string)
 
 	activeTab = kind
 
-	currentUi.SeedPanel.Root.Visible = kind == "Seed"
-	currentUi.FruitPanel.Root.Visible = kind == "Fruit"
+	set_panel_visible(currentUi.SeedPanel, kind == "Seed", true)
+	set_panel_visible(currentUi.FruitPanel, kind == "Fruit", true)
 
 	if currentUi.SeedPanel.RestockButton then
 		currentUi.SeedPanel.RestockButton.Visible = false
@@ -637,8 +708,8 @@ local function hide_shop()
 		return
 	end
 
-	currentUi.SeedPanel.Root.Visible = false
-	currentUi.FruitPanel.Root.Visible = false
+	set_panel_visible(currentUi.SeedPanel, false, false)
+	set_panel_visible(currentUi.FruitPanel, false, false)
 end
 
 local function find_shop_root(framesContainer: Instance?, frameName: string): GuiObject?

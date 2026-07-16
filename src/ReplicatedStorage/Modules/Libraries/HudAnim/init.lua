@@ -74,7 +74,7 @@ local function wants_hover(g: GuiObject): boolean
 		return false
 	end
 
-	if g:GetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE) == true then
+	if has_true_attribute(g, IGNORE_HUD_ANIM_ATTRIBUTE) then
 		return false
 	end
 
@@ -141,6 +141,26 @@ local function safe_play(inst: Instance, key: string): ()
 	end
 
 	SFX.play_for(inst, key)
+end
+
+local function restore_state(inst: GuiObject, st): ()
+	if not inst or not inst.Parent or not st then
+		return
+	end
+
+	pcall(function()
+		inst.Size = st.origSize
+		inst.Position = st.origPos
+		inst.Rotation = st.origRot
+
+		if st.origBg and (inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("Frame")) then
+			inst.BackgroundColor3 = st.origBg
+		end
+
+		if st.origImg and (inst:IsA("ImageLabel") or inst:IsA("ImageButton")) then
+			inst.ImageColor3 = st.origImg
+		end
+	end)
 end
 
 local function get_number_attribute(inst: Instance, attributeName: string, fallback: number): number
@@ -333,6 +353,10 @@ local function bind_open_button(button: GuiButton): ()
 		return
 	end
 
+	if has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE) then
+		return
+	end
+
 	if not is_hud_button(button) or not get_target_frame_name(button) then
 		return
 	end
@@ -361,6 +385,10 @@ end
 
 local function bind_exit_button(button: GuiButton): ()
 	if exit_connections[button] then
+		return
+	end
+
+	if has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE) then
 		return
 	end
 
@@ -396,7 +424,7 @@ end
 
 function HudAnim.apply_defaults_to_buttons(root: Instance, extra: {}?): ()
 	for _, d in root:GetDescendants() do
-		if d:IsA("GuiButton") then
+		if d:IsA("GuiButton") and not has_true_attribute(d, IGNORE_HUD_ANIM_ATTRIBUTE) then
 			d:SetAttribute("UIAnim", true)
 			apply_defaults(d)
 			if extra then
@@ -409,6 +437,19 @@ function HudAnim.apply_defaults_to_buttons(root: Instance, extra: {}?): ()
 end
 
 function HudAnim.bind(inst: GuiObject): ()
+	if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+		if bound[inst] then
+			HudAnim.unbind(inst)
+		elseif inst:IsA("GuiButton") then
+			cleanup_open_button(inst)
+			if inst.Name == EXIT_BUTTON_NAME then
+				cleanup_exit_button(inst)
+			end
+		end
+
+		return
+	end
+
 	if inst:IsA("GuiButton") then
 		if inst.Name == EXIT_BUTTON_NAME then
 			bind_exit_button(inst)
@@ -444,6 +485,10 @@ function HudAnim.bind(inst: GuiObject): ()
 	end
 
 	inst.MouseEnter:Connect(function()
+		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+			return
+		end
+
 		local st = state[inst]
 		if not st then
 			return
@@ -455,6 +500,10 @@ function HudAnim.bind(inst: GuiObject): ()
 	end)
 
 	inst.MouseLeave:Connect(function()
+		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+			return
+		end
+
 		local st = state[inst]
 		if not st then
 			return
@@ -466,6 +515,10 @@ function HudAnim.bind(inst: GuiObject): ()
 	end)
 
 	inst.MouseMoved:Connect(function()
+		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+			return
+		end
+
 		local st = state[inst]
 		if not st then
 			return
@@ -486,6 +539,10 @@ function HudAnim.bind(inst: GuiObject): ()
 
 	if inst:IsA("GuiButton") then
 		inst.MouseButton1Down:Connect(function()
+			if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+				return
+			end
+
 			local st = state[inst]
 			if not st then
 				return
@@ -494,6 +551,10 @@ function HudAnim.bind(inst: GuiObject): ()
 			Click.on_down(inst, st, Utils, SFX)
 		end)
 		inst.MouseButton1Up:Connect(function()
+			if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+				return
+			end
+
 			local st = state[inst]
 			if not st then
 				return
@@ -504,6 +565,10 @@ function HudAnim.bind(inst: GuiObject): ()
 	end
 
 	inst.SelectionGained:Connect(function()
+		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+			return
+		end
+
 		if not wants_hover(inst) then
 			return
 		end
@@ -522,6 +587,10 @@ function HudAnim.bind(inst: GuiObject): ()
 	end)
 
 	inst.SelectionLost:Connect(function()
+		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
+			return
+		end
+
 		if not wants_hover(inst) then
 			return
 		end
@@ -608,6 +677,11 @@ function HudAnim.unbind(inst: GuiObject): ()
 	end
 
 	Pulse.stop(inst, st)
+	restore_state(inst, st)
+
+	task.delay(DEFAULTS.hover_t + DEFAULTS.click_t, function()
+		restore_state(inst, st)
+	end)
 
 	if running_open[inst] then
 		task.cancel(running_open[inst])

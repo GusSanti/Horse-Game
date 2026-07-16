@@ -150,6 +150,10 @@ function Close.bind(inst, state, utils, sfx)
 			if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
 				return
 			end
+			if inst:GetAttribute("skip_close") then
+				inst:SetAttribute("skip_close", nil)
+				return
+			end
 			if closing_deb[inst] then
 				return
 			end

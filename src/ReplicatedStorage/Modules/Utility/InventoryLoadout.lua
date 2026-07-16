@@ -6,6 +6,7 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 
 local InventoryLoadout = {}
 
+InventoryLoadout.MAX_HOTBAR_SLOTS = 9
 InventoryLoadout.HOTBAR_ITEM_IDS_PATH = "SavedTools.HotbarItemIds"
 InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH = "SavedTools.HotbarGenericToolNames"
 InventoryLoadout.HOTBAR_INITIALIZED_PATH = "SavedTools.HotbarLoadoutInitialized"
@@ -54,6 +55,21 @@ local function contains_value(values, targetValue, normalizer)
 	end
 
 	return false
+end
+
+local function copy_normalized_values(values, normalizer)
+	local nextValues = {}
+	local seen = {}
+
+	for _, value in ipairs(values or {}) do
+		local normalizedValue = normalizer(value)
+		if normalizedValue and not seen[normalizedValue] then
+			seen[normalizedValue] = true
+			nextValues[#nextValues + 1] = value
+		end
+	end
+
+	return nextValues
 end
 
 local function set_value_equipped(values, targetValue, isEquipped, normalizer)
@@ -106,6 +122,37 @@ end
 
 function InventoryLoadout.SetGenericToolEquipped(toolNames, toolName, isEquipped)
 	return set_value_equipped(toolNames, toolName, isEquipped, normalize_generic_tool_name)
+end
+
+function InventoryLoadout.CountHotbarSlots(itemIds, genericToolNames)
+	return #copy_normalized_values(itemIds, normalize_item_id)
+		+ #copy_normalized_values(genericToolNames, normalize_generic_tool_name)
+end
+
+function InventoryLoadout.GetLastHotbarEntry(itemIds, genericToolNames)
+	local normalizedGenericToolNames = copy_normalized_values(genericToolNames, normalize_generic_tool_name)
+	if #normalizedGenericToolNames > 0 then
+		return "generic", normalizedGenericToolNames[#normalizedGenericToolNames]
+	end
+
+	local normalizedItemIds = copy_normalized_values(itemIds, normalize_item_id)
+	if #normalizedItemIds > 0 then
+		return "item", normalizedItemIds[#normalizedItemIds]
+	end
+
+	return nil, nil
+end
+
+function InventoryLoadout.RemoveHotbarEntry(itemIds, genericToolNames, kind, value)
+	if kind == "item" then
+		return InventoryLoadout.SetItemEquipped(itemIds, value, false), copy_normalized_values(genericToolNames, normalize_generic_tool_name)
+	end
+
+	if kind == "generic" then
+		return copy_normalized_values(itemIds, normalize_item_id), InventoryLoadout.SetGenericToolEquipped(genericToolNames, value, false)
+	end
+
+	return copy_normalized_values(itemIds, normalize_item_id), copy_normalized_values(genericToolNames, normalize_generic_tool_name)
 end
 
 function InventoryLoadout.IsDefaultItemId(itemId)

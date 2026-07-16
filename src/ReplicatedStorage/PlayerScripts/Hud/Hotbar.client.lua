@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -41,6 +42,13 @@ local VIEWPORT_DISTANCE_MULTIPLIER = 1.55
 local VIEWPORT_MIN_DISTANCE = 1.75
 local VIEWPORT_FOCUS_Y_SCALE = 0.02
 local VIEWPORT_CAMERA_OFFSET_SCALE = Vector3.new(0.08, 0.05, 1.15)
+local MAX_HOTBAR_SLOTS = InventoryLoadout.MAX_HOTBAR_SLOTS or 9
+local SELECTION_SCALE_NAME = "HotbarSelectionScale"
+local SELECTED_SCALE = 1.1
+local SELECTED_POP_SCALE = 1.22
+local SELECTED_POP_TIME = 0.09
+local SELECTED_SETTLE_TIME = 0.14
+local DESELECT_TIME = 0.1
 
 local KEYCODE_TO_SLOT_INDEX = {
 	[Enum.KeyCode.One] = 1,
@@ -72,6 +80,8 @@ local currentGroups = {}
 local previewCache = {}
 local refreshQueued = false
 local stickySelectionKey = nil
+local slotSelectionTweens = {}
+local slotSelectionTokens = {}
 
 local rootTrove = Trove.new()
 local backpackTrove = Trove.new()
@@ -334,6 +344,17 @@ local function set_gui_visible(instance: Instance?, isVisible: boolean)
 end
 
 local function destroy_slot(itemKey: string)
+	local slot = slotInstances[itemKey]
+	if slot then
+		local tween = slotSelectionTweens[slot]
+		if tween then
+			tween:Cancel()
+		end
+
+		slotSelectionTweens[slot] = nil
+		slotSelectionTokens[slot] = nil
+	end
+
 	local slotTrove = slotTroves[itemKey]
 	if slotTrove then
 		slotTrove:Destroy()
@@ -362,15 +383,103 @@ local function set_stroke_selected(stroke: UIStroke, isSelected: boolean)
 	stroke.Transparency = isSelected and 0 or 0.15
 end
 
-local function hide_bind_indicators(slot: GuiObject)
+local function get_selection_scale(slot: GuiObject): UIScale
+	local existingScale = slot:FindFirstChild(SELECTION_SCALE_NAME)
+	if existingScale and existingScale:IsA("UIScale") then
+		return existingScale
+	end
+
+	if existingScale then
+		existingScale:Destroy()
+	end
+
+	local scale = Instance.new("UIScale")
+	scale.Name = SELECTION_SCALE_NAME
+	scale.Scale = 1
+	scale.Parent = slot
+	return scale
+end
+
+local function play_scale_tween(slot: GuiObject, scaleValue: number, duration: number, easingStyle, easingDirection)
+	local scale = get_selection_scale(slot)
+	local currentTween = slotSelectionTweens[slot]
+	if currentTween then
+		currentTween:Cancel()
+	end
+
+	local tween = TweenService:Create(
+		scale,
+		TweenInfo.new(duration, easingStyle or Enum.EasingStyle.Quad, easingDirection or Enum.EasingDirection.Out),
+		{ Scale = scaleValue }
+	)
+
+	slotSelectionTweens[slot] = tween
+	tween.Completed:Connect(function()
+		if slotSelectionTweens[slot] == tween then
+			slotSelectionTweens[slot] = nil
+		end
+	end)
+	tween:Play()
+	return tween
+end
+
+local function set_slot_layer(slot: GuiObject, isSelected: boolean)
+	local baseZIndex = slot:GetAttribute("HotbarBaseZIndex")
+	if type(baseZIndex) ~= "number" then
+		baseZIndex = slot.ZIndex
+		slot:SetAttribute("HotbarBaseZIndex", baseZIndex)
+	end
+
+	slot.ZIndex = isSelected and baseZIndex + 10 or baseZIndex
+end
+
+local function animate_slot_selection(slot: GuiObject, isSelected: boolean)
+	local wasSelected = slot:GetAttribute("HotbarSelected") == true
+	local scale = get_selection_scale(slot)
+
+	if wasSelected == isSelected then
+		local targetScale = isSelected and SELECTED_SCALE or 1
+		if not slotSelectionTweens[slot] and math.abs(scale.Scale - targetScale) > 0.02 then
+			scale.Scale = targetScale
+		end
+		set_slot_layer(slot, isSelected)
+		return
+	end
+
+	slot:SetAttribute("HotbarSelected", isSelected)
+	slotSelectionTokens[slot] = (slotSelectionTokens[slot] or 0) + 1
+	local token = slotSelectionTokens[slot]
+
+	set_slot_layer(slot, isSelected)
+
+	if not isSelected then
+		play_scale_tween(slot, 1, DESELECT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		return
+	end
+
+	task.spawn(function()
+		local popTween = play_scale_tween(slot, SELECTED_POP_SCALE, SELECTED_POP_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		popTween.Completed:Wait()
+
+		if slotSelectionTokens[slot] ~= token or slot:GetAttribute("HotbarSelected") ~= true or not slot.Parent then
+			return
+		end
+
+		play_scale_tween(slot, SELECTED_SCALE, SELECTED_SETTLE_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	end)
+end
+
+local function set_bind_indicator(slot: GuiObject, slotIndex: number)
+	local bindText = tostring(slotIndex)
+
 	for _, descendant in ipairs(slot:GetDescendants()) do
 		if matches_alias(descendant, BIND_INDICATOR_NAMES) then
 			if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
-				descendant.Text = ""
+				descendant.Text = bindText
 			end
 
 			if descendant:IsA("GuiObject") then
-				descendant.Visible = false
+				descendant.Visible = true
 			end
 		end
 	end
@@ -675,6 +784,8 @@ local function set_slot_selected(slot: GuiObject, isSelected: boolean)
 	if stroke then
 		set_stroke_selected(stroke, isSelected)
 	end
+
+	animate_slot_selection(slot, isSelected)
 end
 
 local function get_equipped_group_key(groups): string?
@@ -750,6 +861,13 @@ local function build_groups()
 end
 
 local function compare_groups(left, right)
+	local leftLoadoutOrder = left.LoadoutOrder or math.huge
+	local rightLoadoutOrder = right.LoadoutOrder or math.huge
+
+	if leftLoadoutOrder ~= rightLoadoutOrder then
+		return leftLoadoutOrder < rightLoadoutOrder
+	end
+
 	if left.SortCategory ~= right.SortCategory then
 		return left.SortCategory < right.SortCategory
 	end
@@ -761,10 +879,38 @@ local function compare_groups(left, right)
 	return string.lower(left.DisplayName) < string.lower(right.DisplayName)
 end
 
+local function get_loadout_order_lookup()
+	local lookup = {}
+	local order = 1
+
+	local function push(value)
+		local normalizedValue = normalize_key(value)
+		if not normalizedValue or lookup[normalizedValue] then
+			return
+		end
+
+		lookup[normalizedValue] = order
+		order += 1
+	end
+
+	for _, itemId in ipairs(DataUtility.client.get(InventoryLoadout.HOTBAR_ITEM_IDS_PATH) or {}) do
+		push(itemId)
+	end
+
+	for _, toolName in ipairs(DataUtility.client.get(InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH) or {}) do
+		push(toolName)
+	end
+
+	return lookup
+end
+
 local function get_group_array(groups): { any }
 	local items = {}
+	local loadoutOrderLookup = get_loadout_order_lookup()
 
 	for _, group in pairs(groups) do
+		local normalizedGroupKey = normalize_key(group.Key)
+		group.LoadoutOrder = normalizedGroupKey and loadoutOrderLookup[normalizedGroupKey] or math.huge
 		items[#items + 1] = group
 	end
 
@@ -825,7 +971,7 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 		nameLabel.Text = group.DisplayName
 	end
 
-	hide_bind_indicators(slot)
+	set_bind_indicator(slot, slotIndex)
 
 	local amountLabel = find_text_label(slot, AMOUNT_LABEL_NAMES, true)
 	local showsQuantity = group.ShowsQuantity == true
@@ -900,6 +1046,10 @@ local function rebuild_hotbar()
 
 	local activeKeys = {}
 	for index, group in ipairs(groupArray) do
+		if index > MAX_HOTBAR_SLOTS then
+			break
+		end
+
 		activeKeys[group.Key] = true
 		orderedItemKeys[index] = group.Key
 
@@ -1096,6 +1246,14 @@ for _, inventoryPath in ipairs({
 	"Inventory.Consumables.Medical",
 }) do
 	rootTrove:Add(DataUtility.client.bind(inventoryPath, queue_refresh))
+end
+
+for _, loadoutPath in ipairs({
+	InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
+	InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH,
+	InventoryLoadout.HOTBAR_INITIALIZED_PATH,
+}) do
+	rootTrove:Add(DataUtility.client.bind(loadoutPath, queue_refresh))
 end
 
 if localPlayer.Character then

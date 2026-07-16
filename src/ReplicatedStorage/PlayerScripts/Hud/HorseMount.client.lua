@@ -30,20 +30,25 @@ local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
 local MOUNT_MOVEMENT_SOUND_NAME = "HorseMovement"
 local MOUNT_MOVEMENT_SOUND_ID = "rbxassetid://108771044697744"
 local MOUNT_MOVEMENT_MIN_SPEED = 0.35
-local MOUNT_MOVEMENT_MIN_PLAYBACK_SPEED = 0.85
-local MOUNT_MOVEMENT_MAX_PLAYBACK_SPEED = 1.4
+local MOUNT_WALK_MIN_PLAYBACK_SPEED = 0.62
+local MOUNT_WALK_MAX_PLAYBACK_SPEED = 0.8
+local MOUNT_RUN_PLAYBACK_SPEED = 1
 local MOUNT_MOVEMENT_VOLUME = 0.45
 local LOCAL_MOUNT_SMOOTHNESS = 26
 local DISMOUNT_ACTION_NAME = "HorseMountDismount"
+local STABLE_MOUNT_PROMPT_ATTACHMENT_NAME = "StableMountPromptAttachment"
 
 local HORSE_FOLDER_NAME = ToolDictionary.HorseFolderName
 local VISUAL_HORSE_ATTRIBUTE = ToolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE = ToolDictionary.HorseIdAttribute
+local MOUNTED_USER_ID_ATTRIBUTE = ToolDictionary.MountedUserIdAttribute
 
 local requestInFlight = false
 local send_mount_input
+local request_mount
 local request_dismount
 local sync_mount_state_from_server
+local refresh_stable_mount_prompts
 local localPrediction = {
 	HorseVisual = nil,
 	MountRoot = nil,
@@ -74,6 +79,9 @@ local lastSentMoveZ = 0
 local lastSentCameraYaw = 0
 local lastSentSprinting = false
 local mountMovementSound = nil
+local stableMountPromptAttachments = {}
+local stableMountPromptConnections = {}
+local stableMountPromptCharacterConnections = {}
 local riderAnimationState = {
 	Character = nil,
 	Humanoid = nil,
@@ -654,6 +662,182 @@ local function find_local_horse_visual(horseId)
 	return nil
 end
 
+local function disconnect_stable_mount_prompt_connections()
+	for _, connection in ipairs(stableMountPromptConnections) do
+		connection:Disconnect()
+	end
+
+	table.clear(stableMountPromptConnections)
+end
+
+local function disconnect_stable_mount_prompt_character_connections()
+	for _, connection in ipairs(stableMountPromptCharacterConnections) do
+		connection:Disconnect()
+	end
+
+	table.clear(stableMountPromptCharacterConnections)
+end
+
+local function is_holding_tool()
+	local character = localPlayer.Character
+	if not character then
+		return false
+	end
+
+	return character:FindFirstChildOfClass("Tool") ~= nil
+end
+
+local function clear_stable_mount_prompts()
+	for _, attachment in ipairs(stableMountPromptAttachments) do
+		if attachment and attachment.Parent then
+			attachment:Destroy()
+		end
+	end
+
+	table.clear(stableMountPromptAttachments)
+end
+
+local function get_stable_mount_prompt_parent(horseVisual)
+	if horseVisual:IsA("BasePart") then
+		return horseVisual
+	end
+
+	if horseVisual:IsA("Model") then
+		if horseVisual.PrimaryPart then
+			return horseVisual.PrimaryPart
+		end
+
+		return horseVisual:FindFirstChildWhichIsA("BasePart", true)
+	end
+
+	return nil
+end
+
+local function get_stable_horse_visuals()
+	local plot = plotValue.Value
+	local horseFolder = plot and plot:FindFirstChild(HORSE_FOLDER_NAME)
+	if not horseFolder then
+		return {}
+	end
+
+	local visuals = {}
+	for _, descendant in ipairs(horseFolder:GetDescendants()) do
+		if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true
+			and (descendant:IsA("Model") or descendant:IsA("BasePart"))
+		then
+			visuals[#visuals + 1] = descendant
+		end
+	end
+
+	return visuals
+end
+
+local function get_stable_mount_prompt_position(promptParent)
+	local worldPosition = promptParent.Position + Vector3.new(
+		0,
+		HorseMountConfig.StableMountPromptHeightOffset or 2,
+		0
+	)
+	return promptParent.CFrame:PointToObjectSpace(worldPosition)
+end
+
+refresh_stable_mount_prompts = function()
+	clear_stable_mount_prompts()
+
+	if not localPlayer.Character
+		or mountedState.Active
+		or mountedState.TransitionMode ~= nil
+		or requestInFlight
+		or is_holding_tool()
+	then
+		return
+	end
+
+	for _, horseVisual in ipairs(get_stable_horse_visuals()) do
+		local horseId = horseVisual:GetAttribute(HORSE_ID_ATTRIBUTE)
+		local isMounted = horseVisual:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE) ~= nil
+		local promptParent = get_stable_mount_prompt_parent(horseVisual)
+
+		if not isMounted and promptParent and type(horseId) == "string" and horseId ~= "" then
+			local attachment = Instance.new("Attachment")
+			attachment.Name = STABLE_MOUNT_PROMPT_ATTACHMENT_NAME
+			attachment.Position = get_stable_mount_prompt_position(promptParent)
+			attachment.Parent = promptParent
+
+			local prompt = Instance.new("ProximityPrompt")
+			prompt.Name = "StableMountPrompt"
+			prompt.ActionText = HorseMountConfig.StableMountPromptActionText or "Mount"
+			prompt.ObjectText = HorseMountConfig.StableMountPromptObjectText or "Your Horse"
+			prompt.KeyboardKeyCode = Enum.KeyCode.G
+			prompt.HoldDuration = HorseMountConfig.StableMountPromptHoldDuration or 2
+			prompt.MaxActivationDistance = HorseMountConfig.StableMountPromptMaxActivationDistance or 14
+			prompt.RequiresLineOfSight = false
+			prompt.Style = Enum.ProximityPromptStyle.Default
+			prompt.Parent = attachment
+
+			prompt.Triggered:Connect(function()
+				if request_mount then
+					request_mount(horseId)
+				end
+			end)
+
+			stableMountPromptAttachments[#stableMountPromptAttachments + 1] = attachment
+		end
+	end
+end
+
+local function watch_stable_mount_prompt_horses()
+	disconnect_stable_mount_prompt_connections()
+
+	local plot = plotValue.Value
+	if plot then
+		stableMountPromptConnections[#stableMountPromptConnections + 1] = plot.ChildAdded:Connect(function(child)
+			if child.Name == HORSE_FOLDER_NAME then
+				watch_stable_mount_prompt_horses()
+			end
+		end)
+	end
+
+	local horseFolder = plot and plot:FindFirstChild(HORSE_FOLDER_NAME)
+	if not horseFolder then
+		refresh_stable_mount_prompts()
+		return
+	end
+
+	stableMountPromptConnections[#stableMountPromptConnections + 1] = horseFolder.DescendantAdded:Connect(function(descendant)
+		if descendant:IsA("ProximityPrompt") or descendant.Name == STABLE_MOUNT_PROMPT_ATTACHMENT_NAME then
+			return
+		end
+
+		task.defer(refresh_stable_mount_prompts)
+	end)
+
+	refresh_stable_mount_prompts()
+end
+
+local function watch_stable_mount_prompt_tools(character)
+	disconnect_stable_mount_prompt_character_connections()
+
+	if not character then
+		refresh_stable_mount_prompts()
+		return
+	end
+
+	stableMountPromptCharacterConnections[#stableMountPromptCharacterConnections + 1] = character.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			refresh_stable_mount_prompts()
+		end
+	end)
+
+	stableMountPromptCharacterConnections[#stableMountPromptCharacterConnections + 1] = character.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then
+			refresh_stable_mount_prompts()
+		end
+	end)
+
+	refresh_stable_mount_prompts()
+end
+
 local function get_owned_horse_data(horseId)
 	local horses = DataUtility.client.get("Horses")
 	local ownedHorses = type(horses) == "table" and horses.Owned or nil
@@ -787,10 +971,14 @@ local function update_mount_movement_sound()
 	end
 
 	local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
-	local maximumSpeed = math.max(movement.SprintSpeed or 26, MOUNT_MOVEMENT_MIN_SPEED)
-	local speedAlpha = math.clamp(currentSpeed / maximumSpeed, 0, 1)
-	sound.PlaybackSpeed = MOUNT_MOVEMENT_MIN_PLAYBACK_SPEED
-		+ ((MOUNT_MOVEMENT_MAX_PLAYBACK_SPEED - MOUNT_MOVEMENT_MIN_PLAYBACK_SPEED) * speedAlpha)
+	if is_sprint_input_active() then
+		sound.PlaybackSpeed = MOUNT_RUN_PLAYBACK_SPEED
+	else
+		local walkingSpeed = math.max(movement.WalkSpeed or 14, MOUNT_MOVEMENT_MIN_SPEED)
+		local speedAlpha = math.clamp(currentSpeed / walkingSpeed, 0, 1)
+		sound.PlaybackSpeed = MOUNT_WALK_MIN_PLAYBACK_SPEED
+			+ ((MOUNT_WALK_MAX_PLAYBACK_SPEED - MOUNT_WALK_MIN_PLAYBACK_SPEED) * speedAlpha)
+	end
 
 	if not sound.IsPlaying then
 		sound:Play()
@@ -1067,6 +1255,30 @@ sync_mount_state_from_server = function(statePayload)
 		restore_camera()
 	end
 
+	refresh_stable_mount_prompts()
+end
+
+request_mount = function(horseId)
+	if requestInFlight or mountedState.Active or mountedState.TransitionMode ~= nil or type(horseId) ~= "string" or horseId == "" then
+		return
+	end
+
+	requestInFlight = true
+	clear_stable_mount_prompts()
+
+	local success, response = pcall(function()
+		return Net.Function.HorseMountAction:Call({
+			Action = "Mount",
+			HorseId = horseId,
+			MountAtHorse = true,
+		})
+	end)
+
+	requestInFlight = false
+
+	if not success or not response or response.Success ~= true then
+		refresh_stable_mount_prompts()
+	end
 end
 
 request_dismount = function()
@@ -1097,6 +1309,7 @@ request_dismount = function()
 end
 
 localPlayer.CharacterRemoving:Connect(function()
+	disconnect_stable_mount_prompt_character_connections()
 	clear_local_rider_animation_state()
 	sync_mount_state_from_server({
 		Mounted = false,
@@ -1104,6 +1317,7 @@ localPlayer.CharacterRemoving:Connect(function()
 end)
 
 localPlayer.CharacterAdded:Connect(function()
+	watch_stable_mount_prompt_tools(localPlayer.Character)
 	clear_local_rider_animation_state()
 	task.defer(function()
 		if not mountedState.Active then
@@ -1146,6 +1360,7 @@ Net.Event.HorseMountState:Connect(function(payload)
 			payload.Duration or HorseMountConfig.MountTransitionDuration or 1.8,
 			payload.TargetCFrame
 		)
+		refresh_stable_mount_prompts()
 	elseif payload.Kind == "Mounted" and payload.State then
 		sync_mount_state_from_server(payload.State)
 	elseif payload.Kind == "Dismounting" then
@@ -1166,6 +1381,10 @@ Net.Event.HorseMountState:Connect(function(payload)
 		})
 	end
 end)
+
+plotValue:GetPropertyChangedSignal("Value"):Connect(watch_stable_mount_prompt_horses)
+watch_stable_mount_prompt_horses()
+watch_stable_mount_prompt_tools(localPlayer.Character)
 
 task.spawn(function()
 	local success, response = pcall(function()

@@ -164,14 +164,37 @@ local function sync_player_tools(player)
 	serverModules.PersistentToolService.SyncPlayerTools(player)
 end
 
+local function trim_hotbar_to_max_slots(player)
+	local itemIds = DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH)
+	local toolNames = DataUtility.server.get(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH)
+	local changed = false
+
+	while InventoryLoadout.CountHotbarSlots(itemIds, toolNames) > InventoryLoadout.MAX_HOTBAR_SLOTS do
+		local kind, value = InventoryLoadout.GetLastHotbarEntry(itemIds, toolNames)
+		if not kind then
+			break
+		end
+
+		itemIds, toolNames = InventoryLoadout.RemoveHotbarEntry(itemIds, toolNames, kind, value)
+		changed = true
+	end
+
+	if changed then
+		DataUtility.server.set(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH, itemIds)
+		DataUtility.server.set(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH, toolNames)
+	end
+end
+
 local function ensure_loadout_initialized(player)
 	if DataUtility.server.get(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true then
+		trim_hotbar_to_max_slots(player)
 		return
 	end
 
 	DataUtility.server.set(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH, collect_owned_tool_item_ids(player))
 	DataUtility.server.set(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH, collect_owned_generic_tool_names(player))
 	DataUtility.server.set(player, InventoryLoadout.HOTBAR_INITIALIZED_PATH, true)
+	trim_hotbar_to_max_slots(player)
 end
 
 local function player_has_access_to_item(player, itemDefinition)
@@ -255,7 +278,203 @@ local function player_has_access_to_generic_tool(player, toolName)
 	return false
 end
 
-local function update_item_loadout(player, itemId, isEquipped)
+local function get_accessible_hotbar_entries(player, itemIds, genericToolNames)
+	local entries = {}
+	local seen = {}
+
+	local function push(kind, value, normalizedValue)
+		if not normalizedValue then
+			return
+		end
+
+		local key = ("%s:%s"):format(kind, normalizedValue)
+		if seen[key] then
+			return
+		end
+
+		seen[key] = true
+		entries[#entries + 1] = {
+			Kind = kind,
+			Value = value,
+		}
+	end
+
+	for _, itemId in ipairs(itemIds or {}) do
+		local itemDefinition = resolve_item_definition(itemId)
+		if itemDefinition and player_has_access_to_item(player, itemDefinition) then
+			push("item", itemDefinition.ItemId, InventoryLoadout.NormalizeItemId(itemDefinition.ItemId))
+		end
+	end
+
+	for _, toolName in ipairs(genericToolNames or {}) do
+		local normalizedToolName = InventoryLoadout.NormalizeGenericToolName(toolName)
+		if normalizedToolName and player_has_access_to_generic_tool(player, toolName) then
+			push("generic", toolName, normalizedToolName)
+		end
+	end
+
+	return entries
+end
+
+local function count_accessible_hotbar_slots(player, itemIds, genericToolNames)
+	return #get_accessible_hotbar_entries(player, itemIds, genericToolNames)
+end
+
+local function get_ninth_accessible_hotbar_entry(player, itemIds, genericToolNames)
+	local entries = get_accessible_hotbar_entries(player, itemIds, genericToolNames)
+	return entries[InventoryLoadout.MAX_HOTBAR_SLOTS]
+end
+
+local function can_use_hotbar_entry(player, kind, value)
+	if kind == "item" then
+		local itemDefinition = resolve_item_definition(value)
+		return itemDefinition ~= nil and player_has_access_to_item(player, itemDefinition), itemDefinition and itemDefinition.ItemId or value
+	end
+
+	if kind == "generic" then
+		return player_has_access_to_generic_tool(player, value), value
+	end
+
+	return false, nil
+end
+
+local function split_hotbar_entries(entries)
+	local itemIds = {}
+	local genericToolNames = {}
+
+	for _, entry in ipairs(entries) do
+		if entry.Kind == "item" then
+			itemIds[#itemIds + 1] = entry.Value
+		elseif entry.Kind == "generic" then
+			genericToolNames[#genericToolNames + 1] = entry.Value
+		end
+	end
+
+	return itemIds, genericToolNames
+end
+
+local function save_visible_hotbar_with_target(player, targetKind, targetValue, visibleEntries)
+	if type(visibleEntries) ~= "table" then
+		return false
+	end
+
+	local entries = {}
+	local seen = {}
+
+	local function push(kind, value)
+		local canUse, resolvedValue = can_use_hotbar_entry(player, kind, value)
+		if not canUse or not resolvedValue then
+			return
+		end
+
+		local normalizedValue = if kind == "item"
+			then InventoryLoadout.NormalizeItemId(resolvedValue)
+			else InventoryLoadout.NormalizeGenericToolName(resolvedValue)
+		if not normalizedValue then
+			return
+		end
+
+		local key = ("%s:%s"):format(kind, normalizedValue)
+		if seen[key] then
+			return
+		end
+
+		seen[key] = true
+		entries[#entries + 1] = {
+			Kind = kind,
+			Value = resolvedValue,
+		}
+	end
+
+	for _, entry in ipairs(visibleEntries) do
+		if #entries >= InventoryLoadout.MAX_HOTBAR_SLOTS then
+			break
+		end
+
+		if type(entry) == "table" then
+			push(entry.Kind, entry.Value)
+		end
+	end
+
+	local targetKey = ("%s:%s"):format(
+		targetKind,
+		targetKind == "item"
+			and (InventoryLoadout.NormalizeItemId(targetValue) or "")
+			or (InventoryLoadout.NormalizeGenericToolName(targetValue) or "")
+	)
+
+	if not seen[targetKey] then
+		if #entries >= InventoryLoadout.MAX_HOTBAR_SLOTS then
+			entries[InventoryLoadout.MAX_HOTBAR_SLOTS] = nil
+		end
+
+		push(targetKind, targetValue)
+	end
+
+	if not seen[targetKey] then
+		return false
+	end
+
+	local nextItemIds, nextToolNames = split_hotbar_entries(entries)
+	DataUtility.server.set(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH, nextItemIds)
+	DataUtility.server.set(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH, nextToolNames)
+	sync_player_tools(player)
+	return true
+end
+
+local function remove_replacement_or_last(player, itemIds, genericToolNames, replacementKind, replacementValue)
+	local nextItemIds = itemIds
+	local nextToolNames = genericToolNames
+
+	if replacementKind == "item" or replacementKind == "generic" then
+		local currentVisibleCount = count_accessible_hotbar_slots(player, nextItemIds, nextToolNames)
+		local replacedItemIds, replacedToolNames = InventoryLoadout.RemoveHotbarEntry(
+			nextItemIds,
+			nextToolNames,
+			replacementKind,
+			replacementValue
+		)
+
+		if count_accessible_hotbar_slots(player, replacedItemIds, replacedToolNames) < currentVisibleCount then
+			return replacedItemIds, replacedToolNames
+		end
+	end
+
+	local ninthEntry = get_ninth_accessible_hotbar_entry(player, nextItemIds, nextToolNames)
+	if ninthEntry then
+		return InventoryLoadout.RemoveHotbarEntry(nextItemIds, nextToolNames, ninthEntry.Kind, ninthEntry.Value)
+	end
+
+	return nextItemIds, nextToolNames
+end
+
+local function reserve_hotbar_slot(player, targetKind, targetValue, replacementKind, replacementValue)
+	local itemIds = DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH)
+	local toolNames = DataUtility.server.get(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH)
+
+	local alreadyEquipped = if targetKind == "item"
+		then InventoryLoadout.IsItemEquipped(itemIds, targetValue)
+		else InventoryLoadout.IsGenericToolEquipped(toolNames, targetValue)
+
+	if alreadyEquipped
+		or count_accessible_hotbar_slots(player, itemIds, toolNames) < InventoryLoadout.MAX_HOTBAR_SLOTS
+	then
+		return itemIds, toolNames
+	end
+
+	local nextItemIds, nextToolNames = remove_replacement_or_last(
+		player,
+		itemIds,
+		toolNames,
+		replacementKind,
+		replacementValue
+	)
+	DataUtility.server.set(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH, nextItemIds)
+	DataUtility.server.set(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH, nextToolNames)
+	return nextItemIds, nextToolNames
+end
+
+local function update_item_loadout(player, itemId, isEquipped, replacementKind, replacementValue, visibleEntries)
 	local itemDefinition = resolve_item_definition(itemId)
 	if not itemDefinition then
 		return false, "UnknownItem"
@@ -267,8 +486,21 @@ local function update_item_loadout(player, itemId, isEquipped)
 		return false, "ItemUnavailable"
 	end
 
+	if isEquipped and type(visibleEntries) == "table" then
+		if save_visible_hotbar_with_target(player, "item", itemDefinition.ItemId, visibleEntries) then
+			return true, "Updated"
+		end
+
+		return false, "InvalidHotbarEntries"
+	end
+
+	local itemIds = DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH)
+	if isEquipped then
+		itemIds = select(1, reserve_hotbar_slot(player, "item", itemDefinition.ItemId, replacementKind, replacementValue))
+	end
+
 	local nextItemIds = InventoryLoadout.SetItemEquipped(
-		DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH),
+		itemIds,
 		itemDefinition.ItemId,
 		isEquipped
 	)
@@ -277,7 +509,7 @@ local function update_item_loadout(player, itemId, isEquipped)
 	return true, "Updated"
 end
 
-local function update_generic_loadout(player, toolName, isEquipped)
+local function update_generic_loadout(player, toolName, isEquipped, replacementKind, replacementValue, visibleEntries)
 	local normalizedToolName = InventoryLoadout.NormalizeGenericToolName(toolName)
 	if not normalizedToolName then
 		return false, "UnknownTool"
@@ -289,8 +521,22 @@ local function update_generic_loadout(player, toolName, isEquipped)
 		return false, "ToolUnavailable"
 	end
 
+	if isEquipped and type(visibleEntries) == "table" then
+		if save_visible_hotbar_with_target(player, "generic", toolName, visibleEntries) then
+			return true, "Updated"
+		end
+
+		return false, "InvalidHotbarEntries"
+	end
+
+	local toolNames = DataUtility.server.get(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH)
+	if isEquipped then
+		local _reservedItemIds, reservedToolNames = reserve_hotbar_slot(player, "generic", toolName, replacementKind, replacementValue)
+		toolNames = reservedToolNames
+	end
+
 	local nextToolNames = InventoryLoadout.SetGenericToolEquipped(
-		DataUtility.server.get(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH),
+		toolNames,
 		toolName,
 		isEquipped
 	)
@@ -311,13 +557,16 @@ function InventoryLoadoutService.UpdateLoadout(player, payload)
 
 	local kind = payload.Kind
 	local isEquipped = payload.Equipped == true
+	local replacementKind = payload.ReplaceKind
+	local replacementValue = payload.ReplaceValue
+	local visibleEntries = payload.HotbarEntries
 
 	if kind == "item" then
-		return update_item_loadout(player, payload.Value, isEquipped)
+		return update_item_loadout(player, payload.Value, isEquipped, replacementKind, replacementValue, visibleEntries)
 	end
 
 	if kind == "generic" then
-		return update_generic_loadout(player, payload.Value, isEquipped)
+		return update_generic_loadout(player, payload.Value, isEquipped, replacementKind, replacementValue, visibleEntries)
 	end
 
 	return false, "UnknownKind"
