@@ -433,7 +433,7 @@ local function process_receipt(receiptInfo)
 
 	if recipientUserId == player.UserId then
 		if not can_grant_reward(definition.Reward) then
-			warn(("[RobuxShop] Recompensa nao suportada para o produto %s."):format(definition.Key))
+			warn(("[RobuxShop] Unsupported reward for product %s."):format(definition.Key))
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 	else

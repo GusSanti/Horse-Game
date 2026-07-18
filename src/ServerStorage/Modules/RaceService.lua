@@ -142,7 +142,7 @@ local function warn_missing_track(reason)
 	end
 
 	hasWarnedAboutTrack = true
-	warn(("[RaceService] corrida desativada ate a pista existir em workspace.Race (%s)"):format(reason))
+	warn(("[RaceService] race disabled until the track exists in workspace.Race (%s)"):format(reason))
 end
 
 local function get_live_participants(round)

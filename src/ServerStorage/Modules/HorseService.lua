@@ -33,10 +33,10 @@ local statusDecayLoopStarted = false
 local RACE_MIN_STATUS_PERCENT = 50
 local STATUS_DISPLAY_NAMES = {
 	Happiness = "Felicidade",
-	Hunger = "Fome",
-	Thirst = "Sede",
-	Cleanliness = "Limpeza",
-	Health = "Saude",
+	Hunger = "Hunger",
+	Thirst = "Thirst",
+	Cleanliness = "Cleanliness",
+	Health = "Health",
 }
 
 ------------------//FUNCTIONS

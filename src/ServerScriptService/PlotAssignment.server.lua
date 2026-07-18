@@ -13,7 +13,7 @@ local OWNER_USER_ID_ATTRIBUTE = "OwnerUserId"
 local OWNER_NAME_ATTRIBUTE = "OwnerName"
 local HORSE_FOLDER_NAME = "HorseFolder"
 local SLOT_PROMPT_PART_NAME = "Proximity"
-local SLOT_PROMPT_ACTION_TEXT = "Comprar"
+local SLOT_PROMPT_ACTION_TEXT = "Buy"
 local SLOT_PROMPT_HOLD_DURATION = 0
 
 type PlotData = {
@@ -292,7 +292,7 @@ local function teleport_character_to_plot(player: Player, character: Model): ()
 
 	local rootPart = character:WaitForChild("HumanoidRootPart", 10)
 	if not rootPart then
-		warn("HumanoidRootPart nao encontrado para " .. player.Name)
+		warn("HumanoidRootPart not found for " .. player.Name)
 		return
 	end
 

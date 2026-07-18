@@ -293,7 +293,7 @@ local function initializeSoundSystem(player, humanoid, rootPart)
 			local materialNode = getMaterialSound(materialName)
 
 			if not materialNode then
-				warn("Material não encontrado no Footsteps: " .. materialName .. " - Usando Plastic")
+				warn("Material not found in Footsteps: " .. materialName .. " - using Plastic")
 				materialNode = FootstepsSoundGroup:FindFirstChild("Plastic")
 			end
 

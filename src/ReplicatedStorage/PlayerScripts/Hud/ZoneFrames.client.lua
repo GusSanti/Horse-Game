@@ -488,13 +488,13 @@ end
 local function try_bind_interface()
 	local uiRoot = find_ui_root()
 	if not uiRoot then
-		log_bind_reason("MainUI ainda nao encontrada no PlayerGui")
+		log_bind_reason("MainUI not found in PlayerGui yet")
 		return
 	end
 
 	local zonesFolder = find_zones_folder()
 	if not zonesFolder then
-		log_bind_reason("Pasta Zones ainda nao encontrada no Workspace")
+		log_bind_reason("Zones folder not found in Workspace yet")
 		return
 	end
 
