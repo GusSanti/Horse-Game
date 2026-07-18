@@ -18,8 +18,8 @@ local AdminPanelView = require(HudModules:WaitForChild("AdminPanelView"))
 
 local SCREEN_GUI_NAME = "AdminPanelGui"
 local ITEM_TAB_NAME = "Items"
-local HORSE_TAB_NAME = "Cavalos"
-local CARE_TAB_NAME = "Cuidar"
+local HORSE_TAB_NAME = "Horses"
+local CARE_TAB_NAME = "Care"
 local STUDIO_ACCESS_OVERRIDE = RunService:IsStudio()
 
 local RARITY_STYLES = {
@@ -333,7 +333,7 @@ local function mount_preview_model(horseOption)
 	if not horseOption then
 		update_rarity_badge(nil)
 		if rouletteNameLabel then
-			rouletteNameLabel.Text = "Nenhum cavalo"
+			rouletteNameLabel.Text = "No horse selected"
 		end
 		return
 	end
@@ -403,13 +403,13 @@ update_roulette_button = function()
 		and (canFreeRoll or hasPaidBalance)
 
 	if rouletteState.IsRolling then
-		rouletteRollButton.Text = "Rolando..."
+		rouletteRollButton.Text = "Rolling..."
 	elseif canFreeRoll then
-		rouletteRollButton.Text = "Roletar Gratis"
+		rouletteRollButton.Text = "Roll for Free"
 	elseif hasMidrangeBalance then
-		rouletteRollButton.Text = "Saldo insuficiente"
+		rouletteRollButton.Text = "Insufficient balance"
 	else
-		rouletteRollButton.Text = ("Roletar - %d Horseshoes"):format(rouletteState.Price)
+		rouletteRollButton.Text = ("Roll - %d Horseshoes"):format(rouletteState.Price)
 	end
 
 	rouletteRollButton.Active = enabled
@@ -440,12 +440,12 @@ end
 
 local function apply_roulette_reveal(horseOption, response)
 	local style = get_rarity_style(horseOption and horseOption.Rarity or nil)
-	local headline = "Novo cavalo"
+	local headline = "New horse"
 
 	if response.LostBecauseNoSlot then
-		headline = "Slot cheio, cavalo perdido"
+		headline = "Stable full, horse lost"
 	elseif response.AlreadyOwnedCatalog then
-		headline = "Repetido"
+		headline = "Duplicate"
 	end
 
 	if rouletteRevealLabel then
@@ -499,11 +499,11 @@ local function apply_roulette_reveal(horseOption, response)
 	end
 
 	if response.LostBecauseNoSlot then
-		set_roulette_status("Sua cocheira estava cheia. O cavalo foi perdido.", true)
+		set_roulette_status("Your stable was full. The horse was lost.", true)
 	elseif response.AlreadyOwnedCatalog then
-		set_roulette_status(("Voce tirou %s novamente."):format(horseOption.DisplayName), false)
+		set_roulette_status(("You rolled %s again."):format(horseOption.DisplayName), false)
 	else
-		set_roulette_status(("Voce ganhou %s."):format(horseOption.DisplayName), false)
+		set_roulette_status(("You won %s."):format(horseOption.DisplayName), false)
 	end
 end
 
@@ -512,7 +512,7 @@ local function play_roulette_spin(response)
 	if not finalHorse or #rouletteState.Horses == 0 then
 		rouletteState.IsRolling = false
 		update_roulette_button()
-		set_roulette_status("Nao foi possivel mostrar o resultado da roleta.", true)
+		set_roulette_status("Could not show the roulette result.", true)
 		return
 	end
 
@@ -530,7 +530,7 @@ local function play_roulette_spin(response)
 		rouletteDimmer.Visible = true
 	end
 
-	set_roulette_status("Roleta girando...", false)
+	set_roulette_status("Roulette spinning...", false)
 
 	for stepIndex, delaySeconds in ipairs(SPIN_DELAYS) do
 		if stepIndex == #SPIN_DELAYS then
@@ -575,7 +575,7 @@ local function render_roulette_state(response)
 	end
 
 	if rouletteRuleLabel then
-		rouletteRuleLabel.Text = ("Admin com 0 Horseshoes rola gratis. Custo normal: %d."):format(rouletteState.Price)
+		rouletteRuleLabel.Text = ("Admins with 0 Horseshoes roll for free. Normal cost: %d."):format(rouletteState.Price)
 	end
 
 	refresh_roulette_balance_label()
@@ -603,23 +603,23 @@ fetch_roulette_state = function()
 
 	local rouletteStateRemote = get_roulette_state_remote()
 	if not rouletteStateRemote then
-		set_roulette_status("Remote de roleta nao encontrado no servidor.", true)
+		set_roulette_status("Roulette remote was not found on the server.", true)
 		return
 	end
 
 	local success, response = invoke_remote(rouletteStateRemote)
 	if not success then
-		set_roulette_status("Falha ao falar com o servidor.", true)
+		set_roulette_status("Could not reach the server.", true)
 		return
 	end
 
 	if not response or response.Success ~= true then
-		set_roulette_status("Nao foi possivel carregar a roleta.", true)
+		set_roulette_status("Could not load the roulette.", true)
 		return
 	end
 
 	render_roulette_state(response)
-	set_roulette_status("Roleta pronta.", false)
+	set_roulette_status("Roulette ready.", false)
 end
 
 render_item_list = function()
@@ -629,9 +629,9 @@ render_item_list = function()
 	end)
 
 	if not categoryDefinition then
-		sectionTitleLabel.Text = "Selecione uma categoria"
+		sectionTitleLabel.Text = "Select a category"
 		emptyStateLabel.Visible = true
-		emptyStateLabel.Text = hasAccess and "Escolha uma categoria na coluna da esquerda." or "Acesso de admin necessario."
+		emptyStateLabel.Text = hasAccess and "Choose a category in the left column." or "Admin access is required."
 		getAllButton.Active = false
 		getAllButton.AutoButtonColor = false
 		getAllButton.BackgroundColor3 = Color3.fromRGB(60, 80, 103)
@@ -640,7 +640,7 @@ render_item_list = function()
 
 	sectionTitleLabel.Text = ("%s (%d)"):format(categoryDefinition.Name, categoryDefinition.ItemCount or #categoryDefinition.Items)
 	emptyStateLabel.Visible = #categoryDefinition.Items == 0
-	emptyStateLabel.Text = "Nenhuma tool encontrada nesta categoria."
+	emptyStateLabel.Text = "No tools found in this category."
 
 	getAllButton.Active = hasAccess
 	getAllButton.AutoButtonColor = hasAccess
@@ -678,7 +678,7 @@ render_item_list = function()
 		create("TextLabel", {
 			BackgroundTransparency = 1,
 			Font = Enum.Font.Gotham,
-			Text = itemDefinition.PriceLabel ~= "" and itemDefinition.PriceLabel or "sem preco",
+			Text = itemDefinition.PriceLabel ~= "" and itemDefinition.PriceLabel or "No price",
 			TextColor3 = Color3.fromRGB(182, 197, 217),
 			TextSize = 14,
 			TextXAlignment = Enum.TextXAlignment.Left,
@@ -690,7 +690,7 @@ render_item_list = function()
 		create("TextLabel", {
 			BackgroundTransparency = 1,
 			Font = Enum.Font.Gotham,
-			Text = itemDefinition.ToolTip ~= "" and itemDefinition.ToolTip or "Clique para pegar esta tool.",
+			Text = itemDefinition.ToolTip ~= "" and itemDefinition.ToolTip or "Click to get this tool.",
 			TextColor3 = Color3.fromRGB(164, 178, 198),
 			TextSize = 13,
 			TextTruncate = Enum.TextTruncate.AtEnd,
@@ -722,7 +722,7 @@ render_item_list = function()
 
 		getButton.Activated:Connect(function()
 			if not hasAccess then
-				set_item_status("Voce nao tem permissao para pegar tools.", true)
+				set_item_status("You do not have permission to get tools.", true)
 				return
 			end
 
@@ -733,11 +733,11 @@ render_item_list = function()
 			})
 
 			if not success then
-				set_item_status("Falha ao falar com o servidor.", true)
+				set_item_status("Could not reach the server.", true)
 			elseif response and response.Success then
 				set_item_status(("Tool entregue: %s"):format(response.ItemName or itemDefinition.Name), false)
 			else
-				set_item_status("Nao foi possivel entregar a tool.", true)
+				set_item_status("Could not grant the tool.", true)
 			end
 		end)
 	end
@@ -805,7 +805,7 @@ fetch_catalog = function()
 		return
 	end
 
-	set_item_status("Carregando categorias...", false)
+	set_item_status("Loading categories...", false)
 
 	local success, response = invoke_remote(get_catalog_remote())
 	if not success then
@@ -813,7 +813,7 @@ fetch_catalog = function()
 		selectedCategoryName = nil
 		render_category_list()
 		render_item_list()
-		set_item_status("Falha ao falar com o servidor.", true)
+		set_item_status("Could not reach the server.", true)
 		return
 	end
 
@@ -822,7 +822,7 @@ fetch_catalog = function()
 		selectedCategoryName = nil
 		render_category_list()
 		render_item_list()
-		set_item_status("Nao foi possivel carregar as categorias.", true)
+		set_item_status("Could not load the categories.", true)
 		return
 	end
 
@@ -834,7 +834,7 @@ fetch_catalog = function()
 
 	render_category_list()
 	render_item_list()
-	set_item_status("Categorias carregadas.", false)
+	set_item_status("Categories loaded.", false)
 end
 
 local function update_tab_button_visual(button, selected)
@@ -882,11 +882,11 @@ set_active_tab = function(tabName)
 
 	if subtitleLabel then
 		if onItems then
-			subtitleLabel.Text = "Pegue tools do ReplicatedStorage.Assets.Items por categoria."
+			subtitleLabel.Text = "Get tools from ReplicatedStorage.Assets.Items by category."
 		elseif onHorses then
-			subtitleLabel.Text = "Roletagem visual de cavalos usando a mesma pool do starter."
+			subtitleLabel.Text = "Visual horse roulette using the same starter pool."
 		else
-			subtitleLabel.Text = "Restaure o cavalo atualmente equipado."
+			subtitleLabel.Text = "Restore the currently equipped horse."
 		end
 	end
 
@@ -899,7 +899,7 @@ set_active_tab = function(tabName)
 	elseif onHorses then
 		fetch_roulette_state()
 	else
-		set_care_status("Pronto para restaurar o cavalo equipado.", false)
+		set_care_status("Ready to restore the equipped horse.", false)
 	end
 end
 
@@ -908,23 +908,23 @@ local function refresh_access_state()
 	adminRank = localPlayer:GetAttribute("AdminRank") or 0
 
 	if rankValueLabel then
-		rankValueLabel.Text = ("Rank atual: %d"):format(adminRank)
+		rankValueLabel.Text = ("Current rank: %d"):format(adminRank)
 	end
 
 	if accessValueLabel then
-		accessValueLabel.Text = hasAccess and "Acesso: Liberado" or "Acesso: Bloqueado"
+		accessValueLabel.Text = hasAccess and "Access: Granted" or "Access: Denied"
 		accessValueLabel.TextColor3 = hasAccess and Color3.fromRGB(149, 232, 174) or Color3.fromRGB(255, 157, 157)
 	end
 
 	if hintLabel then
 		if hasAccess then
 			hintLabel.Text = STUDIO_ACCESS_OVERRIDE
-				and "Acesso liberado no Studio. Pressione M para os items e H para a roleta."
-				or "Pressione M para os items e H para a roleta de cavalos."
+				and "Studio access granted. Press M for items and H for the roulette."
+				or "Press M for items and H for the horse roulette."
 		else
 			local minimumRank = localPlayer:GetAttribute("AdminMinimumRank") or 250
 			local groupId = localPlayer:GetAttribute("AdminGroupId") or 1071228359
-			hintLabel.Text = ("Requer rank %d+ no grupo %d."):format(minimumRank, groupId)
+			hintLabel.Text = ("Requires rank %d+ in group %d."):format(minimumRank, groupId)
 		end
 	end
 
@@ -976,11 +976,11 @@ local function build_panel()
 			})
 
 			if not success then
-				set_item_status("Falha ao falar com o servidor.", true)
+				set_item_status("Could not reach the server.", true)
 			elseif response and response.Success then
-				set_item_status(("Categoria entregue: %s (%d tools)"):format(categoryDefinition.Name, response.GrantedCount or 0), false)
+				set_item_status(("Category granted: %s (%d tools)"):format(categoryDefinition.Name, response.GrantedCount or 0), false)
 			else
-				set_item_status("Nao foi possivel entregar a categoria inteira.", true)
+				set_item_status("Could not grant the full category.", true)
 			end
 		end,
 		onRouletteRoll = function()
@@ -990,24 +990,24 @@ local function build_panel()
 
 			local canFreeRoll = rouletteState.FreeWhenZero and rouletteState.Balance == 0
 			if rouletteState.Balance > 0 and rouletteState.Balance < rouletteState.Price then
-				set_roulette_status("Voce precisa ter 500 Horseshoes ou 0 para rolar gratis.", true)
+				set_roulette_status("You need 500 Horseshoes, or 0 for a free roll.", true)
 				return
 			end
 
 			if not canFreeRoll and rouletteState.Balance < rouletteState.Price then
-				set_roulette_status("Saldo insuficiente para a roleta.", true)
+				set_roulette_status("Not enough Horseshoes for the roulette.", true)
 				return
 			end
 
 			local rouletteRollRemote = get_roulette_roll_remote()
 			if not rouletteRollRemote then
-				set_roulette_status("Remote de roleta nao encontrado no servidor.", true)
+				set_roulette_status("Roulette request is unavailable on the server.", true)
 				return
 			end
 
 			local success, response = invoke_remote(rouletteRollRemote)
 			if not success then
-				set_roulette_status("Falha ao falar com o servidor.", true)
+				set_roulette_status("Could not reach the server.", true)
 				return
 			end
 
@@ -1016,9 +1016,9 @@ local function build_panel()
 					rouletteState.Balance = tonumber(response.RemainingHorseshoes) or rouletteState.Balance
 					refresh_roulette_balance_label()
 					update_roulette_button()
-					set_roulette_status("Voce precisa ter 500 Horseshoes ou 0 para rolar gratis.", true)
+					set_roulette_status("You need 500 Horseshoes, or 0 for a free roll.", true)
 				else
-					set_roulette_status("Nao foi possivel concluir a roletagem.", true)
+					set_roulette_status("Could not complete the roulette roll.", true)
 				end
 				return
 			end
@@ -1032,7 +1032,7 @@ local function build_panel()
 
 			local restoreRemote = get_restore_equipped_horse_needs_remote()
 			if not restoreRemote then
-				set_care_status("Remote de cuidado nao encontrado no servidor.", true)
+				set_care_status("Horse care request is unavailable on the server.", true)
 				return
 			end
 
@@ -1040,7 +1040,7 @@ local function build_panel()
 				careRestoreButton.Active = false
 				careRestoreButton.AutoButtonColor = false
 			end
-			set_care_status("Restaurando o cavalo equipado...", false)
+			set_care_status("Restoring the equipped horse...", false)
 
 			local success, response = invoke_remote(restoreRemote)
 			if careRestoreButton then
@@ -1049,11 +1049,11 @@ local function build_panel()
 			end
 
 			if not success then
-				set_care_status("Falha ao falar com o servidor.", true)
+				set_care_status("Could not reach the server.", true)
 			elseif response and response.Success then
-				set_care_status(("%s agora esta em 100%%."):format(response.HorseName or "Cavalo equipado"), false)
+				set_care_status(("%s is now at 100%%."):format(response.HorseName or "Equipped horse"), false)
 			else
-				set_care_status("Nenhum cavalo equipado foi encontrado.", true)
+				set_care_status("No equipped horse was found.", true)
 			end
 		end,
 	})

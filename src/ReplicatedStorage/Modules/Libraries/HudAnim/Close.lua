@@ -65,7 +65,7 @@ local function finish_close(inst, state, hasBlur, t)
 		tween_fov(70, t)
 	end
 
-	-- Restaurar estado
+	-- Restore state
 	if state then
 		if state.origSize then
 			inst.Size = state.origSize
@@ -79,7 +79,7 @@ local function finish_close(inst, state, hasBlur, t)
 		end
 	end
 
-	-- Limpeza segura do debounce
+	-- Safely clear the debounce
 	task.defer(function()
 		closing_deb[inst] = nil
 		inst:SetAttribute("_is_closing", nil)
@@ -158,7 +158,7 @@ function Close.bind(inst, state, utils, sfx)
 				return
 			end
 
-			-- Trava e prepara animacao
+			-- Lock and prepare the animation
 			closing_deb[inst] = true
 			inst:SetAttribute("_is_closing", true)
 			inst:SetAttribute("skip_open", true)

@@ -143,7 +143,7 @@ local function assign_plot(player: Player): PlotData?
 		end
 	end
 
-	warn("Nenhuma plot livre encontrada para " .. player.Name)
+	warn("No free plot found for " .. player.Name)
 	clear_plot_metadata(player)
 
 	return nil

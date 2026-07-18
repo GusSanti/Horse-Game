@@ -896,7 +896,7 @@ local function initialize_shop()
 	end)
 
 	if not dataSuccess then
-		warn("[FarmingShop] falha ao inicializar DataUtility: " .. tostring(dataError))
+		warn("[FarmingShop] failed to initialize DataUtility: " .. tostring(dataError))
 	end
 
 	local attempts = 0

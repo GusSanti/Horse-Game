@@ -24,7 +24,7 @@ ProfileSessionService.SetStore(store)
 local function attach_player_profile(player)
 	local profile = store:StartSessionAsync(tostring(player.UserId))
 	if not profile then
-		warn("Falha ao iniciar sessao do perfil para " .. player.Name)
+		warn("Failed to start profile session for " .. player.Name)
 		return
 	end
 

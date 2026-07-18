@@ -337,7 +337,7 @@ local function update_billboard(entry): ()
 
 	if not displayData then
 		entry.trustLabel.Text = "Confianca: --"
-		entry.bondLabel.Text = "Nivel: --"
+		entry.bondLabel.Text = "Level: --"
 		entry.qualityLabel.Text = "Cuidado: --"
 	else
 		entry.trustLabel.Text = ("Confianca: %s  (%d/%d)"):format(
@@ -347,13 +347,13 @@ local function update_billboard(entry): ()
 		)
 
 		if displayData.XPToNextLevel > 0 then
-			entry.bondLabel.Text = ("Nivel %d  XP %d/%d"):format(
+			entry.bondLabel.Text = ("Level %d  XP %d/%d"):format(
 				displayData.Level,
 				math.floor(displayData.XP + 0.5),
 				displayData.XPToNextLevel
 			)
 		else
-			entry.bondLabel.Text = ("Nivel %d  XP MAX"):format(displayData.Level)
+			entry.bondLabel.Text = ("Level %d  XP MAX"):format(displayData.Level)
 		end
 
 		entry.qualityLabel.Text = ("Cuidado: %s  Streak %d"):format(

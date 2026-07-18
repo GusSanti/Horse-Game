@@ -415,12 +415,12 @@ local function commit_setting(descriptor, value)
 		end)
 
 		if not ok then
-			warn(("[Settings] Falha ao salvar %s: %s"):format(tostring(settingKey), tostring(success)))
+			warn(("[Settings] Failed to save %s: %s"):format(tostring(settingKey), tostring(success)))
 			return
 		end
 
 		if success ~= true then
-			warn(("[Settings] Servidor rejeitou %s: %s"):format(tostring(settingKey), tostring(response)))
+			warn(("[Settings] Server rejected %s: %s"):format(tostring(settingKey), tostring(response)))
 		end
 	end)
 end

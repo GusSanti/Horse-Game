@@ -12,7 +12,7 @@ local function dispatch_profile_message(player: Player, profile, message, proces
 	for _, handler in pairs(messageHandlers) do
 		local success, handled = pcall(handler, player, profile, message, processed)
 		if not success then
-			warn("[ProfileSessionService] Falha ao processar mensagem de perfil.")
+			warn("[ProfileSessionService] Failed to process profile message.")
 		elseif handled == true then
 			return
 		end
@@ -88,7 +88,7 @@ function ProfileSessionService.SendMessageToUserId(userId: number, message)
 	end)
 
 	if not success then
-		warn(("[ProfileSessionService] Falha ao enviar mensagem ao perfil %d."):format(normalizedUserId))
+		warn(("[ProfileSessionService] Failed to send message to profile %d."):format(normalizedUserId))
 		return false
 	end
 

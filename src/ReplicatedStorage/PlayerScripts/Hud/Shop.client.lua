@@ -236,30 +236,30 @@ end
 
 local function format_gift_error_message(code): string
 	if code == "GiftAlreadyPending" then
-		return "Ja existe um presente aguardando confirmacao. Termine ou cancele o anterior."
+		return "A gift is already awaiting confirmation. Finish or cancel it first."
 	end
 
 	if code == "RecipientUnavailable" then
-		return "Esse player nao esta mais disponivel para receber o presente agora."
+		return "That player is no longer available to receive the gift."
 	end
 
 	if code == "InvalidGiftRecipient" then
-		return "Escolha um outro player valido para presentear."
+		return "Choose another valid player to gift."
 	end
 
 	if code == "GiftIntentNotFound" or code == "GiftIntentMissing" then
-		return "O presente expirou antes da confirmacao. Tente novamente."
+		return "The gift expired before confirmation. Try again."
 	end
 
 	if code == "ProfileNotReady" then
-		return "Seu perfil ainda esta carregando. Tente novamente em alguns segundos."
+		return "Your profile is still loading. Try again in a few seconds."
 	end
 
 	if code == "UnsupportedGiftProduct" then
-		return "Esse item ainda nao suporta presente."
+		return "This item cannot be gifted yet."
 	end
 
-	return "Nao foi possivel concluir o presente agora."
+	return "The gift could not be completed right now."
 end
 
 local function destroy_gift_picker()
@@ -396,7 +396,7 @@ local function open_gift_picker(product)
 	subtitleLabel.Position = UDim2.fromOffset(20, 48)
 	subtitleLabel.Size = UDim2.new(1, -40, 0, 20)
 	subtitleLabel.Font = Enum.Font.Gotham
-	subtitleLabel.Text = "Escolha quem vai receber o pack quando a compra for confirmada."
+	subtitleLabel.Text = "Choose who will receive the pack when the purchase is confirmed."
 	subtitleLabel.TextColor3 = Color3.fromRGB(180, 185, 196)
 	subtitleLabel.TextSize = 13
 	subtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -435,7 +435,7 @@ local function open_gift_picker(product)
 	footer.Size = UDim2.new(1, -40, 0, 32)
 	footer.Parent = panel
 
-	local cancelButton = build_overlay_button(footer, "Cancelar", 1)
+	local cancelButton = build_overlay_button(footer, "Cancel", 1)
 	cancelButton.Size = UDim2.new(0.35, 0, 1, 0)
 	cancelButton.Position = UDim2.fromScale(0.65, 0)
 	cancelButton.AnchorPoint = Vector2.new(0, 0)
@@ -465,7 +465,7 @@ local function open_gift_picker(product)
 
 	local players = get_giftable_players()
 	if #players == 0 then
-		set_status("Nao ha outros players no servidor para receber presente agora.", true)
+		set_status("There are no other players in the server to receive a gift.", true)
 	end
 
 	for index, player in ipairs(players) do
@@ -521,7 +521,7 @@ local function open_gift_picker(product)
 					local intentId = activeGiftPrompt and activeGiftPrompt.IntentId or confirmResponse.IntentId
 					activeGiftPrompt = nil
 					cancel_gift_intent(intentId)
-					warn(("[RobuxShop] Falha ao abrir prompt de presente: %s"):format(tostring(promptError)))
+					warn(("[RobuxShop] Failed to open gift prompt: %s"):format(tostring(promptError)))
 				end
 			end)
 		end))

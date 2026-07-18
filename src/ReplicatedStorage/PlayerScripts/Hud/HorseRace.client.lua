@@ -754,9 +754,9 @@ local function get_race_invite_details(): string
 				horse.RaceBlockedStatus or horse.RaceLowestStatus,
 				horse.RaceBlockedStatusDisplay or horse.RaceLowestStatusDisplay
 			)
-			return ("A corrida abriu, mas %s esta doente: %s em %d%%. Cuide dele para chegar a %d%%.")
+			return ("A race is available, but %s is unwell: %s is at %d%%. Care for them to reach %d%%.")
 				:format(
-					horse.Name or horse.DisplayName or "seu cavalo",
+				horse.Name or horse.DisplayName or "your horse",
 					statusName,
 					horse.RaceBlockedPercent or horse.RaceLowestPercent or 0,
 					horse.RaceMinPercent or 50
@@ -768,11 +768,11 @@ local function get_race_invite_details(): string
 end
 
 local function get_race_invite_accept_text(): string
-	return has_race_ready_horse() and "Join" or "Tentar entrar"
+	return has_race_ready_horse() and "Join" or "Try to join"
 end
 
 local function get_race_invite_title(): string
-	return has_race_ready_horse() and "Race available" or "Corrida aberta - cavalo doente"
+	return has_race_ready_horse() and "Race available" or "Race available - horse is unwell"
 end
 
 show_race_invite_notification = function()

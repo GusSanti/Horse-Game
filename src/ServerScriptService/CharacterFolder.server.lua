@@ -46,7 +46,7 @@ end
 ------------------//MAIN FUNCTIONS
 local function on_character_added(player: Player, character: Model): ()
 	if not character or not character.Parent then
-		warn("Character invalido para " .. player.Name)
+		warn("Invalid character for " .. player.Name)
 		return
 	end
 
