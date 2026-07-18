@@ -9,6 +9,7 @@ local NetworkConfig = {
 		RequestItemTool = "RequestItemTool",
 		GetHorseRouletteState = "GetHorseRouletteState",
 		RollHorseRoulette = "RollHorseRoulette",
+		RestoreEquippedHorseNeeds = "RestoreEquippedHorseNeeds",
 	},
 	Horse = {
 		FolderName = "Horse",

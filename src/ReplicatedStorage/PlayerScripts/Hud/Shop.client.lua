@@ -651,6 +651,14 @@ local function request_catalog()
 	end)
 end
 
+local function focus_horseshoes_section()
+	if not currentUi or not currentUi.ScrollingFrame then
+		return
+	end
+
+	currentUi.ScrollingFrame.CanvasPosition = Vector2.new(0, 0)
+end
+
 local function get_shop_ui(shopRoot: GuiObject)
 	local scrollingFrame = find_named_instance(shopRoot, SCROLLING_FRAME_NAMES, "ScrollingFrame", true)
 	if not scrollingFrame then
@@ -724,6 +732,7 @@ local function bind_ui(ui)
 
 	uiTrove:Add(ui.Root:GetPropertyChangedSignal("Visible"):Connect(function()
 		if ui.Root.Visible then
+			focus_horseshoes_section()
 			request_catalog()
 		else
 			destroy_gift_picker()
@@ -741,6 +750,7 @@ local function bind_ui(ui)
 	end))
 
 	render_shop()
+	focus_horseshoes_section()
 	request_catalog()
 end
 

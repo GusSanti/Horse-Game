@@ -1199,14 +1199,13 @@ function HorseService.RecordRaceWin(player, horseId, finishTimeMs, rewardAmount)
 			raceStats.BestRaceTimeMs = finishTimeMs
 		end
 
-		raceStats.TotalRewardsEarned = (raceStats.TotalRewardsEarned or 0) + math.max(0, rewardAmount or 0)
 		DataUtility.server.set(player, "Race", raceStats)
 	end
 
 	return true, build_horse_summary(horse, horses.EquippedHorseId)
 end
 
-function HorseService.RecordRacePlacement(player, horseId, placement, participantCount)
+function HorseService.RecordRacePlacement(player, horseId, placement, participantCount, rewardAmount)
 	local horses, owned = get_owned_horses_state(player)
 	if not horses or not owned or not owned[horseId] then
 		return false, "HorseNotOwned"
@@ -1225,6 +1224,12 @@ function HorseService.RecordRacePlacement(player, horseId, placement, participan
 	owned[horseId] = horse
 	horses.Owned = owned
 	DataUtility.server.set(player, "Horses", horses)
+
+	local raceStats = DataUtility.server.get(player, "Race")
+	if raceStats then
+		raceStats.TotalRewardsEarned = (raceStats.TotalRewardsEarned or 0) + math.max(0, rewardAmount or 0)
+		DataUtility.server.set(player, "Race", raceStats)
+	end
 
 	return true, build_horse_summary(horse, horses.EquippedHorseId, now)
 end

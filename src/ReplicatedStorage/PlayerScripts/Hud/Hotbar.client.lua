@@ -20,13 +20,16 @@ local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local MAIN_UI_NAME = "MainUI"
-local MAINFRAME_NAME = "MainframeFR"
+local MAINFRAME_NAMES = { "MainframeFR", "MainFrameFR" }
 local HUD_ROOT_NAME = "HUDFR"
+local FRAMES_CONTAINER_NAMES = { "Frames" }
+local SHOP_FRAME_NAMES = { "Shop" }
 local HOTBAR_NAME = "BottomFrameFR"
 local TEMPLATE_NAME = "HotkeyBT"
 local MONEY_TAB_NAME = "MoneyTabBG"
 local MONEY_BG_NAME = "MoneyBG"
 local MONEY_CONTAINER_NAME = "Money"
+local MONEY_ADD_BUTTON_NAMES = { "AddBT" }
 local CLICK_LAYER_NAME = "HotbarButton"
 local MONEY_LABEL_NAMES = { "MoneyTX" }
 local MONEY_SHADOW_LABEL_NAMES = { "MoneyShadowTX" }
@@ -35,6 +38,7 @@ local AMOUNT_SHADOW_LABEL_NAMES = { "AmountShadowTX" }
 local NAME_LABEL_NAMES = { "NameItem", "NameTX", "ItemName", "ItemNameTX" }
 local BIND_INDICATOR_NAMES = { "Bind", "BindTX", "KeyBind", "KeyTX", "HotkeyTX" }
 local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
+local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
 
 local VIEWPORT_FIELD_OF_VIEW = 30
 local VIEWPORT_RADIUS_SCALE = 0.42
@@ -87,10 +91,12 @@ local rootTrove = Trove.new()
 local backpackTrove = Trove.new()
 local characterTrove = Trove.new()
 local uiTrove = Trove.new()
+local moneyButtonTrove = Trove.new()
 
 rootTrove:Add(backpackTrove)
 rootTrove:Add(characterTrove)
 rootTrove:Add(uiTrove)
+rootTrove:Add(moneyButtonTrove)
 
 local function normalize_key(value): string?
 	if type(value) ~= "string" then
@@ -167,6 +173,15 @@ local function find_gui_object(root: Instance?, aliases, recursive: boolean?): G
 	local instance = find_named_instance(root, aliases, "GuiObject", recursive)
 	if instance then
 		return instance :: GuiObject
+	end
+
+	return nil
+end
+
+local function find_gui_button(root: Instance?, aliases, recursive: boolean?): GuiButton?
+	local instance = find_named_instance(root, aliases, "GuiButton", recursive)
+	if instance then
+		return instance :: GuiButton
 	end
 
 	return nil
@@ -251,12 +266,16 @@ local function find_main_container(targetUiRoot: Instance?): Instance?
 		return nil
 	end
 
-	local directMain = targetUiRoot:FindFirstChild(MAINFRAME_NAME)
-	if directMain then
-		return directMain
+	return find_named_instance(targetUiRoot, MAINFRAME_NAMES, nil, true)
+end
+
+local function find_frames_container(targetUiRoot: Instance?): Instance?
+	local mainContainer = find_main_container(targetUiRoot)
+	if not mainContainer then
+		return nil
 	end
 
-	return targetUiRoot:FindFirstChild(MAINFRAME_NAME, true)
+	return find_named_instance(mainContainer, FRAMES_CONTAINER_NAMES, nil, true)
 end
 
 local function find_hud_container(mainContainer: Instance?): Instance?
@@ -329,6 +348,48 @@ local function update_money_display()
 	if moneyShadowLabel and moneyShadowLabel.Parent then
 		moneyShadowLabel.Text = text
 	end
+end
+
+local function find_money_add_button(targetHudRoot: Instance?): GuiButton?
+	if not targetHudRoot then
+		return nil
+	end
+
+	local moneyTab = targetHudRoot:FindFirstChild(MONEY_TAB_NAME) or targetHudRoot:FindFirstChild(MONEY_TAB_NAME, true)
+	return find_gui_button(moneyTab, MONEY_ADD_BUTTON_NAMES, true)
+end
+
+local function open_robux_coin_shop()
+	local framesContainer = find_frames_container(find_ui_root())
+	if not framesContainer then
+		return
+	end
+
+	local shopFrame = find_gui_object(framesContainer, SHOP_FRAME_NAMES, false)
+		or find_gui_object(framesContainer, SHOP_FRAME_NAMES, true)
+	if not shopFrame then
+		return
+	end
+
+	for _, child in ipairs(framesContainer:GetChildren()) do
+		if child ~= shopFrame and child:IsA("GuiObject") then
+			child.Visible = false
+		end
+	end
+
+	shopFrame.Visible = true
+end
+
+local function bind_money_add_button(targetHudRoot: Instance?)
+	moneyButtonTrove:Clean()
+
+	local addButton = find_money_add_button(targetHudRoot)
+	if not addButton then
+		return
+	end
+
+	addButton:SetAttribute(IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE, true)
+	moneyButtonTrove:Connect(addButton.Activated, open_robux_coin_shop)
 end
 
 local function set_gui_visible(instance: Instance?, isVisible: boolean)
@@ -1139,6 +1200,7 @@ local function try_bind_hotbar()
 	moneyLabel = nextMoneyLabel
 	moneyShadowLabel = nextMoneyShadowLabel
 	update_money_display()
+	bind_money_add_button(nextHudRoot)
 
 	if not nextUiRoot or not nextHudRoot or not nextHotbar or not nextTemplate then
 		if hotbarFrame then
@@ -1166,13 +1228,14 @@ local function bind_ui_watchers()
 
 	uiTrove:Connect(playerGui.DescendantAdded, function(instance)
 		if instance.Name == MAIN_UI_NAME
-			or instance.Name == MAINFRAME_NAME
+			or matches_alias(instance, MAINFRAME_NAMES)
 			or instance.Name == HUD_ROOT_NAME
 			or instance.Name == HOTBAR_NAME
 			or instance.Name == TEMPLATE_NAME
 			or instance.Name == MONEY_TAB_NAME
 			or instance.Name == MONEY_BG_NAME
 			or instance.Name == MONEY_CONTAINER_NAME
+			or matches_alias(instance, MONEY_ADD_BUTTON_NAMES)
 			or instance.Name == "MoneyTX"
 			or instance.Name == "MoneyShadowTX"
 		then
@@ -1187,13 +1250,14 @@ local function bind_ui_watchers()
 		end
 
 		if instance.Name == MAIN_UI_NAME
-			or instance.Name == MAINFRAME_NAME
+			or matches_alias(instance, MAINFRAME_NAMES)
 			or instance.Name == HUD_ROOT_NAME
 			or instance.Name == HOTBAR_NAME
 			or instance.Name == TEMPLATE_NAME
 			or instance.Name == MONEY_TAB_NAME
 			or instance.Name == MONEY_BG_NAME
 			or instance.Name == MONEY_CONTAINER_NAME
+			or matches_alias(instance, MONEY_ADD_BUTTON_NAMES)
 			or instance.Name == "MoneyTX"
 			or instance.Name == "MoneyShadowTX"
 		then

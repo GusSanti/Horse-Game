@@ -11,8 +11,10 @@ local Utility = Modules:WaitForChild("Utility")
 
 local Net = require(Libraries:WaitForChild("Net"))
 local RaceConfig = require(GameData:WaitForChild("RaceConfig"))
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+local InventoryService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("InventoryServer"))
 local RaceStateEvent = Net.Event.RaceState
 local RaceActionFunction = Net.Function.RaceAction
 
@@ -201,6 +203,39 @@ local function build_entries_payload(round)
 	return entries
 end
 
+local function get_placement_reward(placement)
+	local configuredReward = RaceConfig.PlacementRewards and RaceConfig.PlacementRewards[placement]
+		or RaceConfig.ParticipationReward
+	local items = {}
+
+	for _, itemReward in ipairs(configuredReward and configuredReward.Items or {}) do
+		local amount = math.max(0, math.floor(tonumber(itemReward.Amount) or 0))
+		if amount > 0 and ToolItemCatalog.GetItemDefinition(itemReward.ItemId) then
+			items[#items + 1] = {
+				ItemId = itemReward.ItemId,
+				Amount = amount,
+			}
+		end
+	end
+
+	return {
+		Horseshoes = math.max(0, math.floor(tonumber(configuredReward and configuredReward.Horseshoes) or 0)),
+		Items = items,
+	}
+end
+
+local function grant_placement_reward(participant, reward)
+	local horseshoes = reward.Horseshoes or 0
+	if horseshoes > 0 then
+		local currentHorseshoes = DataUtility.server.get(participant.Player, "Currencies.Horseshoes") or 0
+		DataUtility.server.set(participant.Player, "Currencies.Horseshoes", currentHorseshoes + horseshoes)
+	end
+
+	for _, itemReward in ipairs(reward.Items or {}) do
+		InventoryService.AddItemCount(participant.Player, itemReward.ItemId, itemReward.Amount)
+	end
+end
+
 local function broadcast_state(payload)
 	RaceStateEvent:FireAll(payload)
 end
@@ -244,23 +279,23 @@ local function create_part(parent, name, size, color, cframe)
 	return part
 end
 
-local function create_intro_tag(adornee, horseName, playerName)
+local function create_intro_tag(adornee, player)
 	if not adornee or (not adornee:IsA("BasePart") and not adornee:IsA("Attachment")) then
 		return
 	end
 
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "RaceTag"
-	billboard.Size = UDim2.fromOffset(170, 42)
-	billboard.StudsOffset = Vector3.new(0, 4.75, 0)
+	billboard.Size = UDim2.fromOffset(144, 46)
+	billboard.StudsOffset = Vector3.new(0, 6.7, 0)
 	billboard.AlwaysOnTop = true
 	billboard.MaxDistance = 220
 	billboard.Adornee = adornee
 
 	local holder = Instance.new("Frame")
 	holder.Name = "Holder"
-	holder.BackgroundColor3 = Color3.fromRGB(18, 20, 24)
-	holder.BackgroundTransparency = 0.15
+	holder.BackgroundColor3 = Color3.fromRGB(37, 28, 20)
+	holder.BackgroundTransparency = 0.08
 	holder.BorderSizePixel = 0
 	holder.Size = UDim2.fromScale(1, 1)
 	holder.Parent = billboard
@@ -271,35 +306,47 @@ local function create_intro_tag(adornee, horseName, playerName)
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 1
-	stroke.Color = Color3.fromRGB(115, 224, 170)
+	stroke.Color = Color3.fromRGB(234, 190, 115)
 	stroke.Transparency = 0.2
 	stroke.Parent = holder
 
-	local horseLabel = Instance.new("TextLabel")
-	horseLabel.Name = "HorseName"
-	horseLabel.BackgroundTransparency = 1
-	horseLabel.Size = UDim2.new(1, -12, 0.55, 0)
-	horseLabel.Position = UDim2.new(0, 6, 0, 2)
-	horseLabel.Font = Enum.Font.Code
-	horseLabel.TextSize = 16
-	horseLabel.TextColor3 = Color3.fromRGB(243, 245, 247)
-	horseLabel.TextXAlignment = Enum.TextXAlignment.Left
-	horseLabel.Text = horseName
-	horseLabel.Parent = holder
+	local portrait = Instance.new("ImageLabel")
+	portrait.Name = "PlayerPortrait"
+	portrait.BackgroundColor3 = Color3.fromRGB(91, 68, 48)
+	portrait.BorderSizePixel = 0
+	portrait.Position = UDim2.fromOffset(4, 4)
+	portrait.Size = UDim2.fromOffset(38, 38)
+	portrait.Parent = holder
+
+	local portraitCorner = Instance.new("UICorner")
+	portraitCorner.CornerRadius = UDim.new(1, 0)
+	portraitCorner.Parent = portrait
 
 	local playerLabel = Instance.new("TextLabel")
-	playerLabel.Name = "PlayerName"
+	playerLabel.Name = "ItemNameTX"
 	playerLabel.BackgroundTransparency = 1
-	playerLabel.Size = UDim2.new(1, -12, 0.4, 0)
-	playerLabel.Position = UDim2.new(0, 6, 0.55, -2)
-	playerLabel.Font = Enum.Font.Code
+	playerLabel.Size = UDim2.new(1, -52, 1, 0)
+	playerLabel.Position = UDim2.fromOffset(48, 0)
+	playerLabel.Font = Enum.Font.GothamBold
 	playerLabel.TextSize = 13
-	playerLabel.TextColor3 = Color3.fromRGB(165, 173, 184)
+	playerLabel.TextColor3 = Color3.fromRGB(255, 244, 226)
+	playerLabel.TextTruncate = Enum.TextTruncate.AtEnd
 	playerLabel.TextXAlignment = Enum.TextXAlignment.Left
-	playerLabel.Text = playerName
+	playerLabel.Text = player and player.Name or "Player"
 	playerLabel.Parent = holder
 
 	billboard.Parent = Workspace.Terrain
+	if player then
+		task.spawn(function()
+			local success, image = pcall(function()
+				return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+			end)
+			if success and billboard.Parent then
+				portrait.Image = image
+			end
+		end)
+	end
+
 	return billboard
 end
 
@@ -618,7 +665,7 @@ local function create_participant(round, player, horseSummary)
 		SegmentStartedAt = 0,
 		PartOffsets = capture_part_offsets(model),
 		ActiveTweens = {},
-		IntroTag = create_intro_tag(slot, horseSummary.Name, horseSummary.PlayerName),
+		IntroTag = create_intro_tag(slot, player),
 		IsRemoved = false,
 	}
 
@@ -642,16 +689,25 @@ local function finish_round(round, winnerParticipant)
 	end
 
 	local finishTimeMs = math.floor((os.clock() - round.RaceStartedAt) * 1000 + 0.5)
-	local winnerReward = RaceConfig.WinnerReward
-	local currentHorseshoes = DataUtility.server.get(winnerParticipant.Player, "Currencies.Horseshoes") or 0
-	DataUtility.server.set(winnerParticipant.Player, "Currencies.Horseshoes", currentHorseshoes + winnerReward)
-	HorseService.RecordRaceWin(winnerParticipant.Player, winnerParticipant.HorseId, finishTimeMs, winnerReward)
-
 	local rankedParticipants = get_ranked_participants(round)
 	local rankedParticipantCount = #rankedParticipants
+	local rewardsByUserId = {}
 	for placement, participant in ipairs(rankedParticipants) do
-		HorseService.RecordRacePlacement(participant.Player, participant.HorseId, placement, rankedParticipantCount)
+		local reward = get_placement_reward(placement)
+		grant_placement_reward(participant, reward)
+		rewardsByUserId[participant.Player.UserId] = reward
+		HorseService.RecordRacePlacement(participant.Player, participant.HorseId, placement, rankedParticipantCount, reward.Horseshoes)
+
+		if participant == winnerParticipant then
+			HorseService.RecordRaceWin(participant.Player, participant.HorseId, finishTimeMs, reward.Horseshoes)
+		end
 	end
+
+	local resultEntries = build_entries_payload(round)
+	for _, entry in ipairs(resultEntries) do
+		entry.Reward = rewardsByUserId[entry.UserId]
+	end
+	local winnerReward = rewardsByUserId[winnerParticipant.Player.UserId] or get_placement_reward(1)
 
 	broadcast_state({
 		Kind = "Result",
@@ -664,9 +720,11 @@ local function finish_round(round, winnerParticipant)
 			HorseName = winnerParticipant.HorseSummary.Name,
 			SlotIndex = winnerParticipant.SlotIndex,
 			FinishTimeMs = finishTimeMs,
-			Reward = winnerReward,
+			Reward = winnerReward.Horseshoes,
+			Items = winnerReward.Items,
 		},
-		Entries = build_entries_payload(round),
+		Entries = resultEntries,
+		RewardsByUserId = rewardsByUserId,
 	})
 
 	task.delay(RaceConfig.ResultDuration, function()

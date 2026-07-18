@@ -19,6 +19,7 @@ local AdminPanelView = require(HudModules:WaitForChild("AdminPanelView"))
 local SCREEN_GUI_NAME = "AdminPanelGui"
 local ITEM_TAB_NAME = "Items"
 local HORSE_TAB_NAME = "Cavalos"
+local CARE_TAB_NAME = "Cuidar"
 local STUDIO_ACCESS_OVERRIDE = RunService:IsStudio()
 
 local RARITY_STYLES = {
@@ -110,6 +111,10 @@ local function get_roulette_roll_remote()
 	return get_admin_remote(NetworkConfig.Admin.RollHorseRoulette)
 end
 
+local function get_restore_equipped_horse_needs_remote()
+	return get_admin_remote(NetworkConfig.Admin.RestoreEquippedHorseNeeds)
+end
+
 local hasAccess = false
 local adminRank = 0
 local selectedTabName = ITEM_TAB_NAME
@@ -142,8 +147,10 @@ local subtitleLabel
 local refreshButton
 local itemTabButton
 local horseTabButton
+local careTabButton
 local itemsContentFrame
 local horseContentFrame
+local careContentFrame
 local categoryListFrame
 local itemListFrame
 local itemListLayout
@@ -168,6 +175,8 @@ local rouletteRevealLabel
 local rouletteRevealScale
 local rouletteCardScale
 local rouletteCardStroke
+local careStatusLabel
+local careRestoreButton
 
 local render_category_list
 local render_item_list
@@ -210,6 +219,10 @@ end
 
 local function set_roulette_status(message, isError)
 	set_status(rouletteStatusLabel, message, isError)
+end
+
+local function set_care_status(message, isError)
+	set_status(careStatusLabel, message, isError)
 end
 
 local function invoke_remote(remote, ...)
@@ -834,16 +847,25 @@ local function update_tab_button_visual(button, selected)
 end
 
 set_active_tab = function(tabName)
-	selectedTabName = ITEM_TAB_NAME
+	if tabName ~= ITEM_TAB_NAME and tabName ~= HORSE_TAB_NAME and tabName ~= CARE_TAB_NAME then
+		tabName = ITEM_TAB_NAME
+	end
+	selectedTabName = tabName
 
 	local onItems = selectedTabName == ITEM_TAB_NAME
+	local onHorses = selectedTabName == HORSE_TAB_NAME
+	local onCare = selectedTabName == CARE_TAB_NAME
 
 	if itemsContentFrame then
 		itemsContentFrame.Visible = onItems
 	end
 
 	if horseContentFrame then
-		horseContentFrame.Visible = not onItems
+		horseContentFrame.Visible = onHorses
+	end
+
+	if careContentFrame then
+		careContentFrame.Visible = onCare
 	end
 
 	if refreshButton then
@@ -851,16 +873,21 @@ set_active_tab = function(tabName)
 	end
 
 	update_tab_button_visual(itemTabButton, onItems)
-	update_tab_button_visual(horseTabButton, not onItems)
+	update_tab_button_visual(horseTabButton, onHorses)
+	update_tab_button_visual(careTabButton, onCare)
 
 	if titleLabel then
-		titleLabel.Text = onItems and "Admin Item Browser" or "Admin Horse Roulette"
+		titleLabel.Text = onItems and "Admin Item Browser" or (onHorses and "Admin Horse Roulette" or "Admin Horse Care")
 	end
 
 	if subtitleLabel then
-		subtitleLabel.Text = onItems
-			and "Pegue tools do ReplicatedStorage.Assets.Items por categoria."
-			or "Roletagem visual de cavalos usando a mesma pool do starter."
+		if onItems then
+			subtitleLabel.Text = "Pegue tools do ReplicatedStorage.Assets.Items por categoria."
+		elseif onHorses then
+			subtitleLabel.Text = "Roletagem visual de cavalos usando a mesma pool do starter."
+		else
+			subtitleLabel.Text = "Restaure o cavalo atualmente equipado."
+		end
 	end
 
 	if not hasAccess then
@@ -869,8 +896,10 @@ set_active_tab = function(tabName)
 
 	if onItems then
 		fetch_catalog()
-	else
+	elseif onHorses then
 		fetch_roulette_state()
+	else
+		set_care_status("Pronto para restaurar o cavalo equipado.", false)
 	end
 end
 
@@ -904,6 +933,11 @@ local function refresh_access_state()
 	end
 
 	update_roulette_button()
+	if careRestoreButton then
+		careRestoreButton.Active = hasAccess
+		careRestoreButton.AutoButtonColor = hasAccess
+		careRestoreButton.BackgroundColor3 = hasAccess and Color3.fromRGB(72, 142, 92) or Color3.fromRGB(86, 93, 104)
+	end
 	if screenGui then
 		set_active_tab(selectedTabName)
 	end
@@ -927,6 +961,7 @@ local function build_panel()
 		screenGuiName = SCREEN_GUI_NAME,
 		itemTabName = ITEM_TAB_NAME,
 		horseTabName = HORSE_TAB_NAME,
+		careTabName = CARE_TAB_NAME,
 		fetchCatalog = fetch_catalog,
 		setActiveTab = set_active_tab,
 		onRequestSelectedCategory = function()
@@ -990,6 +1025,37 @@ local function build_panel()
 
 			task.spawn(play_roulette_spin, response)
 		end,
+		onRestoreEquippedHorse = function()
+			if not hasAccess then
+				return
+			end
+
+			local restoreRemote = get_restore_equipped_horse_needs_remote()
+			if not restoreRemote then
+				set_care_status("Remote de cuidado nao encontrado no servidor.", true)
+				return
+			end
+
+			if careRestoreButton then
+				careRestoreButton.Active = false
+				careRestoreButton.AutoButtonColor = false
+			end
+			set_care_status("Restaurando o cavalo equipado...", false)
+
+			local success, response = invoke_remote(restoreRemote)
+			if careRestoreButton then
+				careRestoreButton.Active = hasAccess
+				careRestoreButton.AutoButtonColor = hasAccess
+			end
+
+			if not success then
+				set_care_status("Falha ao falar com o servidor.", true)
+			elseif response and response.Success then
+				set_care_status(("%s agora esta em 100%%."):format(response.HorseName or "Cavalo equipado"), false)
+			else
+				set_care_status("Nenhum cavalo equipado foi encontrado.", true)
+			end
+		end,
 	})
 
 	screenGui = refs.ScreenGui
@@ -1000,8 +1066,10 @@ local function build_panel()
 	refreshButton = refs.RefreshButton
 	itemTabButton = refs.ItemTabButton
 	horseTabButton = refs.HorseTabButton
+	careTabButton = refs.CareTabButton
 	itemsContentFrame = refs.ItemsContentFrame
 	horseContentFrame = refs.HorseContentFrame
+	careContentFrame = refs.CareContentFrame
 	categoryListFrame = refs.CategoryListFrame
 	itemListFrame = refs.ItemListFrame
 	itemListLayout = refs.ItemListLayout
@@ -1026,6 +1094,8 @@ local function build_panel()
 	rouletteRevealScale = refs.RouletteRevealScale
 	rouletteCardScale = refs.RouletteCardScale
 	rouletteCardStroke = refs.RouletteCardStroke
+	careStatusLabel = refs.CareStatusLabel
+	careRestoreButton = refs.CareRestoreButton
 end
 build_panel()
 refresh_access_state()

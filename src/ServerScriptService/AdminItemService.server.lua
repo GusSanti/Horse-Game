@@ -3,9 +3,13 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
+local Services = Modules:WaitForChild("Services")
+local Utility = Modules:WaitForChild("Utility")
 
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
+local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local AdminAccessService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("AdminAccessService"))
 local HorseRouletteService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseRouletteService"))
 
@@ -153,6 +157,7 @@ local getCatalogRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin
 local requestItemRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.RequestItemTool)
 local getHorseRouletteStateRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.GetHorseRouletteState)
 local rollHorseRouletteRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.RollHorseRoulette)
+local restoreEquippedHorseNeedsRemote = ensure_remote_function(adminFolder, NetworkConfig.Admin.RestoreEquippedHorseNeeds)
 
 getCatalogRemote.OnServerInvoke = function(player)
 	local hasAccess = AdminAccessService.HasAccess(player)
@@ -279,4 +284,46 @@ rollHorseRouletteRemote.OnServerInvoke = function(player)
 	end
 
 	return HorseRouletteService.Roll(player)
+end
+
+restoreEquippedHorseNeedsRemote.OnServerInvoke = function(player)
+	local hasAccess = AdminAccessService.HasAccess(player)
+	if not hasAccess then
+		return {
+			Success = false,
+			Code = "AccessDenied",
+		}
+	end
+
+	local horses = DataUtility.server.get(player, "Horses")
+	local equippedHorseId = horses and horses.EquippedHorseId or nil
+	local horse = equippedHorseId and horses and horses.Owned and horses.Owned[equippedHorseId] or nil
+	if not horse then
+		return {
+			Success = false,
+			Code = "EquippedHorseNotFound",
+		}
+	end
+
+	local now = os.time()
+	HorseStatusService.NormalizeHorse(horse, now)
+	local needs = horse.Needs
+	needs.Modifiers = {}
+	needs.ActiveEffects = {}
+
+	for _, statusName in ipairs(HorseStatusService.StatusOrder) do
+		needs.Values[statusName] = math.max(1, tonumber(needs.Max[statusName]) or 100)
+	end
+
+	needs.LastUpdatedAt = now
+	DataUtility.server.set(player, "Horses", horses)
+
+	return {
+		Success = true,
+		HorseId = equippedHorseId,
+		HorseName = (type(horse.Nickname) == "string" and horse.Nickname ~= "" and horse.Nickname)
+			or horse.DisplayName
+			or horse.CatalogId
+			or equippedHorseId,
+	}
 end

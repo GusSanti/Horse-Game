@@ -25,10 +25,38 @@ local RaceConfig = {
 	RaceConditionFastChanceAtMaximum = 0.75,
 	RaceConditionFastSegmentBonus = 1.35,
 	CameraSpeed = 24.25,
-	StatusBroadcastInterval = 0.15,
+	StatusBroadcastInterval = 0.35,
 	ResultDuration = 6,
 	IntroTagDuration = 3.5,
-	WinnerReward = 125,
+	PlacementRewards = {
+		[1] = {
+			Horseshoes = 125,
+			Items = {
+				{ ItemId = "oat_crunch", Amount = 2 },
+				{ ItemId = "recovery_tonic", Amount = 1 },
+			},
+		},
+		[2] = {
+			Horseshoes = 85,
+			Items = {
+				{ ItemId = "carrot_bunch", Amount = 2 },
+				{ ItemId = "cool_stream", Amount = 1 },
+			},
+		},
+		[3] = {
+			Horseshoes = 55,
+			Items = {
+				{ ItemId = "apple_treat", Amount = 2 },
+				{ ItemId = "fresh_bucket", Amount = 1 },
+			},
+		},
+	},
+	ParticipationReward = {
+		Horseshoes = 25,
+		Items = {
+			{ ItemId = "hay_bale", Amount = 1 },
+		},
+	},
 	MaxParticipants = 8,
 }
 

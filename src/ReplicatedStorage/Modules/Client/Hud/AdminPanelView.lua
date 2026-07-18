@@ -202,6 +202,28 @@ function AdminPanelView.build(context)
 		context.setActiveTab(context.horseTabName)
 	end)
 
+	local careTabButton = create("TextButton", {
+		Name = "CareTab",
+		BackgroundColor3 = Color3.fromRGB(39, 53, 71),
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		Position = UDim2.fromOffset(128, 0),
+		Size = UDim2.fromOffset(126, 38),
+		Text = "Cuidar",
+		TextColor3 = Color3.fromRGB(189, 202, 219),
+		TextSize = 14,
+		Parent = tabBar,
+	})
+
+	create("UICorner", {
+		CornerRadius = UDim.new(0, 12),
+		Parent = careTabButton,
+	})
+
+	careTabButton.Activated:Connect(function()
+		context.setActiveTab(context.careTabName)
+	end)
+
 	local itemsContentFrame = create("Frame", {
 		Name = "ItemsContent",
 		BackgroundTransparency = 1,
@@ -701,6 +723,95 @@ function AdminPanelView.build(context)
 		Parent = rouletteShell,
 	})
 
+	local careContentFrame = create("Frame", {
+		Name = "CareContent",
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(22, 132),
+		Size = UDim2.new(1, -44, 1, -154),
+		Visible = false,
+		Parent = rootFrame,
+	})
+
+	local careCard = create("Frame", {
+		Name = "CareCard",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.fromRGB(27, 36, 48),
+		BorderSizePixel = 0,
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(560, 310),
+		Parent = careContentFrame,
+	})
+
+	create("UICorner", {
+		CornerRadius = UDim.new(0, 18),
+		Parent = careCard,
+	})
+
+	create("UIStroke", {
+		Color = Color3.fromRGB(111, 183, 133),
+		Thickness = 1.5,
+		Transparency = 0.15,
+		Parent = careCard,
+	})
+
+	create("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		Text = "Cuidar cavalo equipado",
+		TextColor3 = Color3.fromRGB(239, 248, 241),
+		TextSize = 25,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.fromOffset(24, 42),
+		Size = UDim2.new(1, -48, 0, 30),
+		Parent = careCard,
+	})
+
+	create("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		Text = "Restaura Fome, Sede, Limpeza, Saude e Felicidade para 100%.",
+		TextColor3 = Color3.fromRGB(192, 213, 199),
+		TextSize = 15,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.fromOffset(50, 92),
+		Size = UDim2.new(1, -100, 0, 48),
+		Parent = careCard,
+	})
+
+	local careRestoreButton = create("TextButton", {
+		Name = "RestoreEquippedHorseButton",
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundColor3 = Color3.fromRGB(72, 142, 92),
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		Text = "Deixar em 100%",
+		TextColor3 = Color3.fromRGB(247, 255, 248),
+		TextSize = 18,
+		Position = UDim2.new(0.5, 0, 0, 166),
+		Size = UDim2.fromOffset(270, 54),
+		Parent = careCard,
+	})
+
+	create("UICorner", {
+		CornerRadius = UDim.new(0, 14),
+		Parent = careRestoreButton,
+	})
+
+	careRestoreButton.Activated:Connect(context.onRestoreEquippedHorse)
+
+	local careStatusLabel = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		Text = "Pronto para restaurar o cavalo equipado.",
+		TextColor3 = Color3.fromRGB(175, 228, 187),
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.fromOffset(24, 244),
+		Size = UDim2.new(1, -48, 0, 20),
+		Parent = careCard,
+	})
+
 	return {
 		ScreenGui = screenGui,
 		Overlay = overlay,
@@ -710,8 +821,10 @@ function AdminPanelView.build(context)
 		RefreshButton = refreshButton,
 		ItemTabButton = itemTabButton,
 		HorseTabButton = horseTabButton,
+		CareTabButton = careTabButton,
 		ItemsContentFrame = itemsContentFrame,
 		HorseContentFrame = horseContentFrame,
+		CareContentFrame = careContentFrame,
 		CategoryListFrame = categoryListFrame,
 		ItemListFrame = itemListFrame,
 		ItemListLayout = itemListLayout,
@@ -736,6 +849,8 @@ function AdminPanelView.build(context)
 		RouletteRevealScale = rouletteRevealScale,
 		RouletteCardScale = rouletteCardScale,
 		RouletteCardStroke = rouletteCardStroke,
+		CareStatusLabel = careStatusLabel,
+		CareRestoreButton = careRestoreButton,
 	}
 end
 

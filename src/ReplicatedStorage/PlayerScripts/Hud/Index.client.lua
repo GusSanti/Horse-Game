@@ -34,23 +34,32 @@ local DETAILS_NAME_NAMES = { "ItemTX", "ItemNameTX", "ItemName" }
 local DETAILS_TEXT_NAMES = { "DetailsTX", "DetailTX", "DescriptionTX" }
 local DETAILS_DISPLAY_NAMES = { "ItemDisplayBG" }
 local DETAILS_IMAGE_NAMES = { "HorseImage" }
+local FACE_PART_PATTERNS = { "head", "face", "neck", "mane", "nose", "muzzle", "ear", "eye", "jaw" }
+local TAIL_PART_PATTERNS = { "tail", "rear", "hind", "rump" }
+local CARD_RENDER_BATCH_SIZE = 1
+local CARD_RENDER_FRAME_DELAY = 1
+local VIEWPORT_POPULATION_FRAME_DELAY = 2
+local VIEWPORT_VISIBILITY_PADDING_PX = 48
+local VIEWPORT_VISIBILITY_PADDING_SCALE = 0.18
 
 local GRID_CAMERA_CONFIG = {
-	FieldOfView = 31,
-	FocusYOffsetScale = 0.18,
-	FocusZOffsetScale = -0.28,
-	RadiusScale = 0.5,
-	DistanceMultiplier = 1,
-	CameraOffsetScale = Vector3.new(0.18, 0.08, -0.54),
+	FieldOfView = 24,
+	FocusYOffsetScale = 0.34,
+	FocusZOffsetScale = -0.42,
+	FaceFocusYOffsetScale = 0.04,
+	RadiusScale = 0.52,
+	DistanceMultiplier = 0.84,
+	CameraOffsetScale = Vector3.new(0.34, 0.05, -0.76),
 }
 
 local DETAILS_CAMERA_CONFIG = {
-	FieldOfView = 27,
-	FocusYOffsetScale = 0.2,
-	FocusZOffsetScale = -0.32,
-	RadiusScale = 0.48,
-	DistanceMultiplier = 0.91,
-	CameraOffsetScale = Vector3.new(0.14, 0.07, -0.48),
+	FieldOfView = 22,
+	FocusYOffsetScale = 0.36,
+	FocusZOffsetScale = -0.44,
+	FaceFocusYOffsetScale = 0.03,
+	RadiusScale = 0.54,
+	DistanceMultiplier = 0.8,
+	CameraOffsetScale = Vector3.new(0.38, 0.04, -0.74),
 }
 
 local currentUi = nil
@@ -195,12 +204,18 @@ local function is_gui_visible(instance)
 	return true
 end
 
+local function wait_heartbeats(count)
+	for _ = 1, math.max(1, count or 1) do
+		RunService.Heartbeat:Wait()
+	end
+end
+
 local function is_card_near_visible_region(scrollingFrame, card)
 	if not scrollingFrame or not card or not card.Parent then
 		return false
 	end
 
-	local padding = math.max(80, scrollingFrame.AbsoluteSize.Y * 0.35)
+	local padding = math.max(VIEWPORT_VISIBILITY_PADDING_PX, scrollingFrame.AbsoluteSize.Y * VIEWPORT_VISIBILITY_PADDING_SCALE)
 	local regionTop = scrollingFrame.AbsolutePosition.Y - padding
 	local regionBottom = scrollingFrame.AbsolutePosition.Y + scrollingFrame.AbsoluteSize.Y + padding
 	local cardTop = card.AbsolutePosition.Y
@@ -373,6 +388,11 @@ local function clear_dictionary(dictionary)
 	end
 end
 
+local function is_invisible_helper_part(part)
+	local normalizedName = normalize_key(part.Name)
+	return part.Transparency >= 1 or normalizedName == "root" or normalizedName == "humanoidrootpart"
+end
+
 local function prepare_preview_model(root, silhouetteMode)
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
@@ -382,6 +402,8 @@ local function prepare_preview_model(root, silhouetteMode)
 		elseif silhouetteMode and (descendant:IsA("Decal") or descendant:IsA("Texture") or descendant:IsA("SurfaceAppearance")) then
 			descendant:Destroy()
 		elseif descendant:IsA("BasePart") then
+			local keepInvisible = is_invisible_helper_part(descendant)
+
 			descendant.Anchored = true
 			descendant.CanCollide = false
 			descendant.CanQuery = false
@@ -389,16 +411,17 @@ local function prepare_preview_model(root, silhouetteMode)
 			descendant.CastShadow = false
 			descendant.Material = Enum.Material.SmoothPlastic
 
-			if silhouetteMode then
+			if keepInvisible then
+				descendant.Transparency = 1
+			elseif silhouetteMode then
 				descendant.Color = Color3.fromRGB(10, 10, 10)
 				descendant.Transparency = 0.45
 				descendant.Reflectance = 0
 			else
-				descendant.Transparency = 0
 				descendant.Reflectance = 0
 			end
 
-			if descendant:IsA("MeshPart") and silhouetteMode then
+			if descendant:IsA("MeshPart") and silhouetteMode and not keepInvisible then
 				descendant.TextureID = ""
 			end
 		end
@@ -414,11 +437,11 @@ local function prepare_preview_model(root, silhouetteMode)
 		root.CastShadow = false
 		root.Material = Enum.Material.SmoothPlastic
 
-		if silhouetteMode then
+		if is_invisible_helper_part(root) then
+			root.Transparency = 1
+		elseif silhouetteMode then
 			root.Color = Color3.fromRGB(10, 10, 10)
 			root.Transparency = 0.45
-		else
-			root.Transparency = 0
 		end
 	end
 
@@ -493,6 +516,93 @@ local function get_named_part_positions(root, patterns)
 	return positions
 end
 
+local function get_named_parts(root, patterns)
+	local parts = {}
+
+	local function matches_pattern(instanceName)
+		local normalizedName = normalize_key(instanceName)
+		if not normalizedName then
+			return false
+		end
+
+		for _, pattern in ipairs(patterns) do
+			if string.find(normalizedName, pattern, 1, true) then
+				return true
+			end
+		end
+
+		return false
+	end
+
+	local function push_part(instance)
+		if instance:IsA("BasePart") and matches_pattern(instance.Name) then
+			parts[#parts + 1] = instance
+		end
+	end
+
+	if root:IsA("BasePart") then
+		push_part(root)
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		push_part(descendant)
+	end
+
+	return parts
+end
+
+local function get_part_bounds(parts)
+	if #parts == 0 then
+		return nil, nil
+	end
+
+	local minPoint = nil
+	local maxPoint = nil
+
+	local function include_point(point)
+		if not minPoint then
+			minPoint = point
+			maxPoint = point
+			return
+		end
+
+		minPoint = Vector3.new(
+			math.min(minPoint.X, point.X),
+			math.min(minPoint.Y, point.Y),
+			math.min(minPoint.Z, point.Z)
+		)
+		maxPoint = Vector3.new(
+			math.max(maxPoint.X, point.X),
+			math.max(maxPoint.Y, point.Y),
+			math.max(maxPoint.Z, point.Z)
+		)
+	end
+
+	for _, part in ipairs(parts) do
+		local halfSize = part.Size * 0.5
+
+		for xSign = -1, 1, 2 do
+			for ySign = -1, 1, 2 do
+				for zSign = -1, 1, 2 do
+					include_point(part.CFrame:PointToWorldSpace(Vector3.new(
+						halfSize.X * xSign,
+						halfSize.Y * ySign,
+						halfSize.Z * zSign
+					)))
+				end
+			end
+		end
+	end
+
+	if not minPoint or not maxPoint then
+		return nil, nil
+	end
+
+	local center = (minPoint + maxPoint) * 0.5
+	local size = maxPoint - minPoint
+	return CFrame.new(center), size
+end
+
 local function average_positions(positions)
 	if #positions == 0 then
 		return nil
@@ -562,21 +672,43 @@ local function build_preview_snapshot(catalogId, isUnlocked, cameraConfig, camer
 		return nil
 	end
 
-	local headPoint = average_positions(get_named_part_positions(model, { "head", "face", "neck", "mane", "nose" }))
-	local tailPoint = average_positions(get_named_part_positions(model, { "tail", "rear", "hind" }))
-	local focusPoint = headPoint or (
-		boxCFrame.Position + Vector3.new(
+	local faceBoxCFrame, faceBoxSize = get_part_bounds(get_named_parts(model, FACE_PART_PATTERNS))
+	local headPoint = faceBoxCFrame and faceBoxCFrame.Position
+		or average_positions(get_named_part_positions(model, FACE_PART_PATTERNS))
+	local tailPoint = average_positions(get_named_part_positions(model, TAIL_PART_PATTERNS))
+	local focusPoint = nil
+	local focusBoxSize = nil
+
+	if faceBoxCFrame and faceBoxSize then
+		focusPoint = faceBoxCFrame.Position + Vector3.new(
+			0,
+			faceBoxSize.Y * (cameraConfig.FaceFocusYOffsetScale or 0),
+			0
+		)
+		focusBoxSize = Vector3.new(
+			math.max(faceBoxSize.X, boxSize.X * 0.16),
+			math.max(faceBoxSize.Y, boxSize.Y * 0.34),
+			math.max(faceBoxSize.Z, boxSize.Z * 0.14)
+		)
+	else
+		focusPoint = boxCFrame.Position + Vector3.new(
 			0,
 			boxSize.Y * cameraConfig.FocusYOffsetScale,
 			boxSize.Z * cameraConfig.FocusZOffsetScale
 		)
-	)
+		focusBoxSize = Vector3.new(
+			math.max(boxSize.X * 0.42, 1),
+			math.max(boxSize.Y * 0.48, 1),
+			math.max(boxSize.Z * 0.28, 1)
+		)
+	end
+
 	local forwardVector = if headPoint and tailPoint then (headPoint - tailPoint) else boxCFrame.LookVector
 
 	cachedSnapshot = {
 		ModelTemplate = model,
 		FieldOfView = cameraConfig.FieldOfView,
-		CameraCFrame = get_preview_camera(focusPoint, boxSize, cameraConfig, forwardVector),
+		CameraCFrame = get_preview_camera(focusPoint, focusBoxSize, cameraConfig, forwardVector),
 		Ambient = if isUnlocked then Color3.fromRGB(220, 220, 220) else Color3.fromRGB(150, 150, 150),
 		LightColor = if isUnlocked then Color3.fromRGB(255, 255, 255) else Color3.fromRGB(160, 160, 160),
 	}
@@ -759,55 +891,90 @@ local function render_index()
 	cardTrove:Clean()
 	clear_dictionary(activeEntriesByCatalogId)
 	clear_dictionary(activeCardsByCatalogId)
+	table.clear(pendingViewportEntries)
+	viewportPopulationInProgress = false
 
 	if currentUi.GridContainer:IsA("ScrollingFrame") then
 		currentUi.GridContainer.CanvasPosition = Vector2.zero
 	end
 
 	local entries = get_entry_data()
-	local pendingViewports = {}
+	local nextEntryIndex = 1
 
-	for layoutOrder, entry in ipairs(entries) do
-		local card = currentTemplateSource:Clone()
-		local cardButton = create_click_target(card)
-		local nameLabel = find_text_label(card, ITEM_NAME_NAMES, true)
-		local imageRoot = find_gui_object(card, HORSE_IMAGE_NAMES, true)
-		local viewportFrame = find_viewport_frame(imageRoot or card)
-
-		card.Name = entry.CatalogId
-		card.LayoutOrder = layoutOrder
-		card.Visible = true
-		card.Parent = currentUi.GridContainer
-		cardTrove:Add(card)
-
-		if nameLabel then
-			nameLabel.Text = entry.Definition.DisplayName or entry.CatalogId
+	local function render_batch()
+		if generation ~= renderGeneration then
+			return
 		end
 
-		if viewportFrame then
-			pendingViewports[#pendingViewports + 1] = {
-				Card = card,
-				Entry = entry,
-				ViewportFrame = viewportFrame,
-			}
+		if not currentUi or not currentTemplateSource or not is_gui_visible(currentUi.Root) then
+			renderDirty = true
+			return
 		end
 
-		activeEntriesByCatalogId[entry.CatalogId] = entry
-		activeCardsByCatalogId[entry.CatalogId] = card
+		local batchEnd = math.min(#entries, nextEntryIndex + CARD_RENDER_BATCH_SIZE - 1)
 
-		if cardButton then
-			cardTrove:Add(cardButton.Activated:Connect(function()
-				selectedCatalogId = entry.CatalogId
-				apply_selection()
-			end))
+		for entryIndex = nextEntryIndex, batchEnd do
+			local entry = entries[entryIndex]
+			local card = currentTemplateSource:Clone()
+			local cardButton = create_click_target(card)
+			local nameLabel = find_text_label(card, ITEM_NAME_NAMES, true)
+			local imageRoot = find_gui_object(card, HORSE_IMAGE_NAMES, true)
+			local viewportFrame = find_viewport_frame(imageRoot or card)
+
+			card.Name = entry.CatalogId
+			card.LayoutOrder = entryIndex
+			card.Visible = true
+			card.Parent = currentUi.GridContainer
+			cardTrove:Add(card)
+
+			if nameLabel then
+				nameLabel.Text = entry.Definition.DisplayName or entry.CatalogId
+			end
+
+			if viewportFrame then
+				clear_viewport(viewportFrame)
+				pendingViewportEntries[#pendingViewportEntries + 1] = {
+					Card = card,
+					Entry = entry,
+					ViewportFrame = viewportFrame,
+				}
+			end
+
+			activeEntriesByCatalogId[entry.CatalogId] = entry
+			activeCardsByCatalogId[entry.CatalogId] = card
+
+			if cardButton then
+				cardTrove:Add(cardButton.Activated:Connect(function()
+					selectedCatalogId = entry.CatalogId
+					apply_selection()
+				end))
+			end
 		end
+
+		nextEntryIndex = batchEnd + 1
+		update_canvas_size()
+		populate_visible_viewports()
+
+		if nextEntryIndex <= #entries then
+			task.spawn(function()
+				wait_heartbeats(CARD_RENDER_FRAME_DELAY)
+				render_batch()
+			end)
+			return
+		end
+
+		apply_selection()
+		task.defer(function()
+			if generation ~= renderGeneration then
+				return
+			end
+
+			update_canvas_size()
+			populate_visible_viewports()
+		end)
 	end
 
-	apply_selection()
-	update_canvas_size()
-	task.defer(update_canvas_size)
-	pendingViewportEntries = pendingViewports
-	populate_visible_viewports()
+	render_batch()
 end
 
 populate_visible_viewports = function()
@@ -830,7 +997,7 @@ populate_visible_viewports = function()
 	local generation = renderGeneration
 
 	task.spawn(function()
-		RunService.Heartbeat:Wait()
+		wait_heartbeats(1)
 
 		while generation == renderGeneration and currentUi and is_gui_visible(currentUi.Root) do
 			local nextPending = nil
@@ -853,7 +1020,7 @@ populate_visible_viewports = function()
 				"grid"
 			)
 			nextPending.Populated = true
-			RunService.Heartbeat:Wait()
+			wait_heartbeats(VIEWPORT_POPULATION_FRAME_DELAY)
 		end
 
 		if generation == renderGeneration then

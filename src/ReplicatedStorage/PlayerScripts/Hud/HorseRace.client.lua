@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local ClientModules = Modules:WaitForChild("Client")
@@ -14,6 +15,7 @@ local HudModules = ClientModules:WaitForChild("Hud")
 
 local Net = require(Libraries:WaitForChild("Net"))
 local RaceConfig = require(GameData:WaitForChild("RaceConfig"))
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local HorseRaceVisuals = require(HudModules:WaitForChild("HorseRaceVisuals"))
 local Notifications = require(HudModules:WaitForChild("Notifications"))
@@ -23,15 +25,23 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local CONTROL_ACTION_NAME = "HorseRaceLockControls"
 local RACE_INVITE_NOTIFICATION_ID = "HorseRaceInvite"
+local HORSESHOE_ICON = "rbxassetid://113664849235987"
 local requestInFlight = false
 local rowFrames = {}
-local horseButtons = {}
 local selectedHorseId = nil
 local lastInviteCountdownSecond = nil
 local previousCameraType = nil
 local previousCameraSubject = nil
 local update_visibility
 local update_dynamic_text
+local open_race_invitation
+local show_race_invite_notification
+local leaderboardVisible = true
+local raceStartedAt = nil
+local lastRenderedResult = nil
+local raceUiFocusActive = false
+local hiddenGuiStates = {}
+local hiddenBlurStates = {}
 
 local state = {
 	Phase = "Idle",
@@ -70,81 +80,6 @@ local raceVisualContext = {
 
 local function extract_rotation(cframe) return CFrame.fromMatrix(Vector3.zero, cframe.XVector, cframe.YVector, cframe.ZVector) end
 
-local function create_instance(className, props)
-	local instance = Instance.new(className)
-
-	for key, value in pairs(props) do
-		instance[key] = value
-	end
-
-	return instance
-end
-
-local function apply_panel_style(frame, accentColor)
-	frame.BackgroundColor3 = Color3.fromRGB(17, 20, 24)
-	frame.BorderSizePixel = 0
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 14)
-	corner.Parent = frame
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = accentColor or Color3.fromRGB(113, 224, 170)
-	stroke.Thickness = 1
-	stroke.Transparency = 0.15
-	stroke.Parent = frame
-
-	local padding = Instance.new("UIPadding")
-	padding.PaddingLeft = UDim.new(0, 14)
-	padding.PaddingRight = UDim.new(0, 14)
-	padding.PaddingTop = UDim.new(0, 12)
-	padding.PaddingBottom = UDim.new(0, 12)
-	padding.Parent = frame
-end
-
-local function create_label(parent, name, props)
-	local label = create_instance("TextLabel", {
-		Name = name,
-		BackgroundTransparency = 1,
-		Font = Enum.Font.Code,
-		TextColor3 = Color3.fromRGB(240, 243, 246),
-		TextSize = 16,
-		TextWrapped = false,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextYAlignment = Enum.TextYAlignment.Center,
-		Parent = parent,
-	})
-
-	for key, value in pairs(props) do
-		label[key] = value
-	end
-
-	return label
-end
-
-local function create_button(parent, name, props)
-	local button = create_instance("TextButton", {
-		Name = name,
-		AutoButtonColor = true,
-		BackgroundColor3 = Color3.fromRGB(35, 103, 77),
-		BorderSizePixel = 0,
-		Font = Enum.Font.Code,
-		TextColor3 = Color3.fromRGB(245, 247, 250),
-		TextSize = 16,
-		Parent = parent,
-	})
-
-	for key, value in pairs(props) do
-		button[key] = value
-	end
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent = button
-
-	return button
-end
-
 local function format_countdown(seconds) local clamped = math.max(0, math.floor(seconds + 0.999)); return ("%02d:%02d"):format(math.floor(clamped / 60), clamped % 60) end
 
 local function hide_race_invite_notification()
@@ -168,35 +103,6 @@ local function find_local_entry()
 		if entry.UserId == localPlayer.UserId then return entry end
 	end
 	return nil
-end
-
-local function find_horse_option(horseId)
-	if type(horseId) ~= "string" or horseId == "" then
-		return nil
-	end
-
-	for _, horse in ipairs(state.HorseOptions) do
-		if horse.Id == horseId then
-			return horse
-		end
-	end
-
-	return nil
-end
-
-local function get_selected_horse_option() return find_horse_option(selectedHorseId) end
-
-local function set_button_enabled(button, enabled, enabledColor, disabledColor)
-	if not button then
-		return
-	end
-
-	button.Active = enabled
-	button.AutoButtonColor = enabled
-	button.BackgroundColor3 = enabled
-		and (enabledColor or Color3.fromRGB(35, 103, 77))
-		or (disabledColor or Color3.fromRGB(58, 62, 68))
-	button.TextTransparency = enabled and 0 or 0.18
 end
 
 local function sync_race_visuals() HorseRaceVisuals.syncRaceVisuals(raceVisualContext) end
@@ -282,6 +188,8 @@ local function reset_state()
 	state.CameraSpeed = RaceConfig.CameraSpeed
 	state.CameraDistance = RaceConfig.RaceDistance
 	selectedHorseId = nil
+	raceStartedAt = nil
+	lastRenderedResult = nil
 
 	clear_race_visuals()
 	unlock_camera()
@@ -294,168 +202,425 @@ local function destroy_existing_rows()
 	end
 end
 
-local function destroy_existing_horse_buttons()
-	for horseId, button in pairs(horseButtons) do
-		button:Destroy()
-		horseButtons[horseId] = nil
+local function find_named(root, name, className)
+	if not root then
+		return nil
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant.Name == name and (not className or descendant:IsA(className)) then
+			return descendant
+		end
+	end
+
+	return nil
+end
+
+local function find_all_named(root, name, className)
+	local matches = {}
+	if not root then
+		return matches
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant.Name == name and (not className or descendant:IsA(className)) then
+			matches[#matches + 1] = descendant
+		end
+	end
+
+	return matches
+end
+
+local function set_text(instance, text)
+	if instance and (instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox")) then
+		instance.Text = text
+	end
+end
+
+local function set_visible(instance, visible)
+	if instance and instance:IsA("GuiObject") then
+		instance.Visible = visible
+	end
+end
+
+local function get_ancestor_screen_gui(instance)
+	local current = instance
+	while current do
+		if current:IsA("ScreenGui") then
+			return current
+		end
+		current = current.Parent
+	end
+	return nil
+end
+
+local function set_race_ui_focus(enabled)
+	if raceUiFocusActive == enabled then
+		return
+	end
+	raceUiFocusActive = enabled
+
+	if enabled then
+		local raceScreenGui = get_ancestor_screen_gui(ui.ActionArena)
+		for _, child in ipairs(playerGui:GetChildren()) do
+			if child:IsA("ScreenGui") and child ~= raceScreenGui then
+				hiddenGuiStates[child] = child.Enabled
+				child.Enabled = false
+			end
+		end
+
+		local frames = ui.ActionArena and ui.ActionArena.Parent
+		if frames then
+			for _, child in ipairs(frames:GetChildren()) do
+				if child ~= ui.ActionArena and child:IsA("GuiObject") then
+					hiddenGuiStates[child] = child.Visible
+					child.Visible = false
+				end
+			end
+		end
+
+		if ui.HudRoot and not ui.ActionArena:IsDescendantOf(ui.HudRoot) then
+			hiddenGuiStates[ui.HudRoot] = ui.HudRoot.Visible
+			ui.HudRoot.Visible = false
+		end
+
+		for _, effect in ipairs(Lighting:GetDescendants()) do
+			if effect:IsA("BlurEffect") then
+				hiddenBlurStates[effect] = effect.Enabled
+				effect.Enabled = false
+			end
+		end
+		return
+	end
+
+	for instance, wasVisible in pairs(hiddenGuiStates) do
+		if instance.Parent then
+			if instance:IsA("ScreenGui") then
+				instance.Enabled = wasVisible
+			elseif instance:IsA("GuiObject") then
+				instance.Visible = wasVisible
+			end
+		end
+		hiddenGuiStates[instance] = nil
+	end
+
+	for effect, wasEnabled in pairs(hiddenBlurStates) do
+		if effect.Parent then
+			effect.Enabled = wasEnabled
+		end
+		hiddenBlurStates[effect] = nil
+	end
+end
+
+local function clear_viewport(viewport)
+	if not viewport then
+		return
+	end
+
+	for _, child in ipairs(viewport:GetChildren()) do
+		child:Destroy()
+	end
+	viewport.CurrentCamera = nil
+end
+
+local function render_horse_viewport(viewport, entry)
+	if not viewport or not entry then
+		return
+	end
+
+	clear_viewport(viewport)
+	local model = RaceVisualFactory.CreateRaceModel(entry, nil)
+	if not model then
+		return
+	end
+
+	local worldModel = Instance.new("WorldModel")
+	model.Parent = worldModel
+	worldModel.Parent = viewport
+
+	local boxCFrame, boxSize = model:GetBoundingBox()
+	local focus = boxCFrame.Position + Vector3.new(0, boxSize.Y * 0.1, 0)
+	local distance = math.max(boxSize.X, boxSize.Y, boxSize.Z) * 1.45
+	local camera = Instance.new("Camera")
+	camera.FieldOfView = 32
+	camera.CFrame = CFrame.lookAt(focus + Vector3.new(boxSize.X * 0.28, boxSize.Y * 0.08, distance), focus)
+	camera.Parent = viewport
+	viewport.BackgroundTransparency = 1
+	viewport.CurrentCamera = camera
+end
+
+local function render_player_viewport(viewport, userId)
+	if not viewport then
+		return
+	end
+
+	local player = Players:GetPlayerByUserId(userId)
+	local character = player and player.Character
+	if not character then
+		return
+	end
+
+	local previousArchivable = character.Archivable
+	character.Archivable = true
+	local success, characterClone = pcall(function()
+		return character:Clone()
+	end)
+	character.Archivable = previousArchivable
+	if not success or not characterClone then
+		return
+	end
+
+	clear_viewport(viewport)
+	for _, descendant in ipairs(characterClone:GetDescendants()) do
+		if descendant:IsA("Script") or descendant:IsA("LocalScript") or descendant:IsA("Animator") then
+			descendant:Destroy()
+		elseif descendant:IsA("BasePart") then
+			descendant.Anchored = true
+			descendant.CanCollide = false
+			descendant.CastShadow = false
+		end
+	end
+
+	local worldModel = Instance.new("WorldModel")
+	characterClone.Parent = worldModel
+	worldModel.Parent = viewport
+
+	local boxCFrame, boxSize = characterClone:GetBoundingBox()
+	local boxOffset = characterClone:GetPivot():ToObjectSpace(boxCFrame)
+	characterClone:PivotTo(CFrame.new(0, boxSize.Y * 0.5, 0) * boxOffset:Inverse())
+	boxCFrame, boxSize = characterClone:GetBoundingBox()
+
+	local focus = boxCFrame.Position + Vector3.new(0, boxSize.Y * 0.08, 0)
+	local camera = Instance.new("Camera")
+	camera.FieldOfView = 34
+	camera.CFrame = CFrame.lookAt(focus + Vector3.new(boxSize.X * 0.34, boxSize.Y * 0.08, -math.max(5.8, boxSize.Y * 1.7)), focus)
+	camera.Parent = viewport
+	viewport.BackgroundTransparency = 1
+	viewport.Ambient = Color3.fromRGB(210, 210, 210)
+	viewport.LightColor = Color3.fromRGB(255, 255, 255)
+	viewport.CurrentCamera = camera
+end
+
+local function get_reward_item_source(itemDefinition)
+	local assets = ReplicatedStorage:FindFirstChild("Assets")
+	local itemsFolder = assets and assets:FindFirstChild("Items")
+	if not itemsFolder or not itemDefinition then
+		return nil
+	end
+
+	for _, name in ipairs({ itemDefinition.ItemId, itemDefinition.ToolName, itemDefinition.DisplayName }) do
+		if type(name) == "string" and name ~= "" then
+			local source = itemsFolder:FindFirstChild(name, true)
+			if source then
+				return source
+			end
+		end
+	end
+
+	return nil
+end
+
+local function render_reward_item_viewport(viewport, itemId)
+	if not viewport then
+		return
+	end
+
+	clear_viewport(viewport)
+	local definition = ToolItemCatalog.GetItemDefinition(itemId)
+	local source = get_reward_item_source(definition)
+	if not source then
+		return
+	end
+
+	local sourceClone = source:Clone()
+	for _, descendant in ipairs(sourceClone:GetDescendants()) do
+		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
+			descendant:Destroy()
+		end
+	end
+
+	local model = sourceClone
+	if not model:IsA("Model") then
+		model = Instance.new("Model")
+		model.Name = sourceClone.Name
+		if sourceClone:IsA("BasePart") then
+			sourceClone.Parent = model
+		else
+			for _, child in ipairs(sourceClone:GetChildren()) do
+				child.Parent = model
+			end
+			sourceClone:Destroy()
+		end
+	end
+
+	local hasParts = false
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			hasParts = true
+			descendant.Anchored = true
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+			descendant.CastShadow = false
+		end
+	end
+	if not hasParts then
+		model:Destroy()
+		return
+	end
+
+	model:PivotTo(CFrame.new())
+	local worldModel = Instance.new("WorldModel")
+	model.Parent = worldModel
+	worldModel.Parent = viewport
+
+	local boxCFrame, boxSize = model:GetBoundingBox()
+	local focus = boxCFrame.Position
+	local distance = math.max(2.5, math.max(boxSize.X, boxSize.Y, boxSize.Z) * 1.7)
+	local camera = Instance.new("Camera")
+	camera.FieldOfView = 35
+	camera.CFrame = CFrame.lookAt(focus + Vector3.new(distance * 0.35, distance * 0.2, distance), focus)
+	camera.Parent = viewport
+	viewport.BackgroundTransparency = 1
+	viewport.CurrentCamera = camera
+end
+
+local function get_or_create_reward_text(slot)
+	local textLabel = slot:FindFirstChild("RaceRewardText")
+	if textLabel and textLabel:IsA("TextLabel") then
+		return textLabel
+	end
+
+	textLabel = Instance.new("TextLabel")
+	textLabel.Name = "RaceRewardText"
+	textLabel.AnchorPoint = Vector2.new(0.5, 1)
+	textLabel.BackgroundColor3 = Color3.fromRGB(24, 18, 12)
+	textLabel.BackgroundTransparency = 0.22
+	textLabel.BorderSizePixel = 0
+	textLabel.Font = Enum.Font.GothamBold
+	textLabel.TextColor3 = Color3.fromRGB(255, 244, 214)
+	textLabel.TextScaled = true
+	textLabel.TextWrapped = true
+	textLabel.Position = UDim2.new(0.5, 0, 1, -2)
+	textLabel.Size = UDim2.new(1, -8, 0, 28)
+	textLabel.ZIndex = slot.ZIndex + 10
+	textLabel.Parent = slot
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = textLabel
+	return textLabel
+end
+
+local function get_or_create_reward_icon(slot)
+	local icon = slot:FindFirstChild("RaceRewardIcon")
+	if icon and icon:IsA("ImageLabel") then
+		return icon
+	end
+
+	icon = Instance.new("ImageLabel")
+	icon.Name = "RaceRewardIcon"
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.BackgroundTransparency = 1
+	icon.Image = HORSESHOE_ICON
+	icon.Position = UDim2.new(0.5, 0, 0.43, 0)
+	icon.Size = UDim2.fromOffset(54, 54)
+	icon.ZIndex = slot.ZIndex + 9
+	icon.Parent = slot
+	return icon
+end
+
+local function render_result_rewards(resultPanel, entry)
+	local rewardsRoot = find_named(resultPanel, "Rewards")
+	if not rewardsRoot then
+		return
+	end
+
+	local reward = state.Result
+		and state.Result.RewardsByUserId
+		and state.Result.RewardsByUserId[localPlayer.UserId]
+		or (entry and entry.Reward)
+	local rewards = {
+		{ Text = ("%d Horseshoes"):format(math.max(0, tonumber(reward and reward.Horseshoes) or 0)) },
+	}
+	for _, itemReward in ipairs(reward and reward.Items or {}) do
+		local definition = ToolItemCatalog.GetItemDefinition(itemReward.ItemId)
+		rewards[#rewards + 1] = {
+			ItemId = itemReward.ItemId,
+			Text = ("%s x%d"):format(
+				definition and definition.DisplayName or itemReward.ItemId,
+				math.max(1, math.floor(tonumber(itemReward.Amount) or 1))
+			),
+		}
+	end
+
+	for index, slot in ipairs(find_all_named(rewardsRoot, "ItemDisplayBG", "GuiObject")) do
+		local rewardEntry = rewards[index]
+		set_visible(slot, rewardEntry ~= nil)
+		if rewardEntry then
+			local viewport = find_named(slot, "ViewportFrame", "ViewportFrame")
+			local icon = get_or_create_reward_icon(slot)
+			if rewardEntry.ItemId then
+				icon.Visible = false
+				render_reward_item_viewport(viewport, rewardEntry.ItemId)
+			elseif viewport then
+				icon.Visible = true
+				clear_viewport(viewport)
+			else
+				icon.Visible = true
+			end
+			get_or_create_reward_text(slot).Text = rewardEntry.Text
+		end
 	end
 end
 
 local function refresh_leaderboard()
-	destroy_existing_rows()
-
-	for _, entry in ipairs(state.Entries) do
-		local row = create_instance("Frame", {
-			Name = tostring(entry.UserId),
-			BackgroundColor3 = Color3.fromRGB(23, 27, 31),
-			BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 46),
-			Parent = ui.BoardList,
-		})
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 10)
-		corner.Parent = row
-
-		local title = create_label(row, "Title", {
-			Size = UDim2.new(1, -106, 0.52, 0),
-			Position = UDim2.new(0, 10, 0, 4),
-			Text = ("%d. %s"):format(entry.Rank or 1, entry.PlayerName or "Player"),
-			TextSize = 15,
-		})
-		title.TextColor3 = entry.UserId == localPlayer.UserId
-			and Color3.fromRGB(115, 224, 170)
-			or Color3.fromRGB(240, 243, 246)
-
-		create_label(row, "Horse", {
-			Size = UDim2.new(1, -106, 0.4, 0),
-			Position = UDim2.new(0, 10, 0.55, -2),
-			Text = entry.HorseName or "Horse",
-			TextSize = 13,
-			TextColor3 = Color3.fromRGB(164, 173, 184),
-		})
-
-		create_label(row, "Distance", {
-			Size = UDim2.new(0, 96, 0, 22),
-			Position = UDim2.new(1, -100, 0, 4),
-			Text = ("%.1f / %d"):format(entry.Progress or 0, entry.Distance or RaceConfig.RaceDistance),
-			TextSize = 14,
-			TextXAlignment = Enum.TextXAlignment.Right,
-		})
-
-		local barBack = create_instance("Frame", {
-			Name = "BarBack",
-			BackgroundColor3 = Color3.fromRGB(37, 42, 48),
-			BorderSizePixel = 0,
-			Size = UDim2.new(0, 96, 0, 8),
-			Position = UDim2.new(1, -100, 1, -14),
-			Parent = row,
-		})
-
-		local barCorner = Instance.new("UICorner")
-		barCorner.CornerRadius = UDim.new(1, 0)
-		barCorner.Parent = barBack
-
-		local ratio = math.clamp((entry.Progress or 0) / (entry.Distance or RaceConfig.RaceDistance), 0, 1)
-		local barFill = create_instance("Frame", {
-			Name = "BarFill",
-			BackgroundColor3 = entry.UserId == localPlayer.UserId
-				and Color3.fromRGB(115, 224, 170)
-				or Color3.fromRGB(233, 182, 96),
-			BorderSizePixel = 0,
-			Size = UDim2.new(ratio, 0, 1, 0),
-			Parent = barBack,
-		})
-
-		local barFillCorner = Instance.new("UICorner")
-		barFillCorner.CornerRadius = UDim.new(1, 0)
-		barFillCorner.Parent = barFill
-
-		rowFrames[entry.UserId] = row
+	if not ui.BoardList or not ui.TemplateCraft then
+		return
 	end
-end
 
-local function update_horse_selection_visuals()
-	for horseId, button in pairs(horseButtons) do
-		local horse = find_horse_option(horseId)
-		local selected = horseId == selectedHorseId
-		local canRace = horse and horse.CanRace ~= false
-		button.BackgroundColor3 = selected
-			and (canRace and Color3.fromRGB(52, 122, 94) or Color3.fromRGB(123, 78, 52))
-			or (canRace and Color3.fromRGB(27, 31, 36) or Color3.fromRGB(46, 32, 32))
+	local activeRows = {}
+	for index, entry in ipairs(state.Entries) do
+		local row = rowFrames[entry.UserId]
+		if not row or row.Parent ~= ui.BoardList then
+			row = ui.TemplateCraft:Clone()
+			row.Name = tostring(entry.UserId)
+			row.Visible = true
+			row.Parent = ui.BoardList
+			render_player_viewport(find_named(row, "ViewportFrame", "ViewportFrame"), entry.UserId)
+			rowFrames[entry.UserId] = row
+		end
+
+		row.LayoutOrder = index
+		row.Visible = true
+		set_text(find_named(row, "ItemNameTX"), entry.PlayerName or "Player")
+		set_text(find_named(row, "PositionTX"), tostring(entry.Rank or index))
+		activeRows[entry.UserId] = true
+	end
+
+	for userId, row in pairs(rowFrames) do
+		if not activeRows[userId] then
+			row:Destroy()
+			rowFrames[userId] = nil
+		end
 	end
 end
 
 local function refresh_horse_options()
-	destroy_existing_horse_buttons()
+	selectedHorseId = nil
+	for _, horse in ipairs(state.HorseOptions) do
+		if horse.CanRace ~= false and horse.IsEquipped then
+			selectedHorseId = horse.Id
+			return
+		end
+	end
 
 	for _, horse in ipairs(state.HorseOptions) do
-		local title = horse.Name or horse.DisplayName or horse.Id
-		local canRace = horse.CanRace ~= false
-		local blockedStatusName = get_status_display_name(
-			horse.RaceBlockedStatus or horse.RaceLowestStatus,
-			horse.RaceBlockedStatusDisplay or horse.RaceLowestStatusDisplay
-		)
-		local metaText = canRace
-			and "Ready to race"
-			or ("%s %d%%  |  minimum %d%%"):format(
-				blockedStatusName,
-				horse.RaceBlockedPercent or horse.RaceLowestPercent or 0,
-				horse.RaceMinPercent or 50
-			)
-
-		local button = create_button(ui.SelectList, horse.Id, {
-			BackgroundColor3 = canRace and Color3.fromRGB(27, 31, 36) or Color3.fromRGB(46, 32, 32),
-			Size = UDim2.new(1, 0, 0, 46),
-			Text = "",
-		})
-
-		create_label(button, "HorseName", {
-			Size = UDim2.new(1, -14, 0.52, 0),
-			Position = UDim2.new(0, 8, 0, 4),
-			Text = title .. (horse.IsEquipped and "  [equipped]" or ""),
-			TextSize = 14,
-		})
-
-		create_label(button, "HorseMeta", {
-			Size = UDim2.new(1, -14, 0.36, 0),
-			Position = UDim2.new(0, 8, 0.6, -1),
-			Text = metaText,
-			TextSize = 12,
-			TextColor3 = canRace and Color3.fromRGB(164, 173, 184) or Color3.fromRGB(244, 184, 164),
-		})
-
-		button.MouseButton1Click:Connect(function()
+		if horse.CanRace ~= false then
 			selectedHorseId = horse.Id
-			update_horse_selection_visuals()
-			local selectedHorse = get_selected_horse_option()
-			local selectedCanRace = selectedHorse and selectedHorse.CanRace ~= false
-			set_button_enabled(ui.SelectConfirm, selectedCanRace, Color3.fromRGB(35, 103, 77))
-			ui.SelectConfirm.Text = selectedCanRace and "Join" or "Care first"
-		end)
-
-		horseButtons[horse.Id] = button
-	end
-
-	if not selectedHorseId or not find_horse_option(selectedHorseId) then
-		for _, horse in ipairs(state.HorseOptions) do
-			if horse.CanRace ~= false then
-				selectedHorseId = horse.Id
-				break
-			end
-		end
-
-		if not selectedHorseId and state.HorseOptions[1] then
-			selectedHorseId = state.HorseOptions[1].Id
+			return
 		end
 	end
-
-	update_horse_selection_visuals()
-
-	local selectedHorse = get_selected_horse_option()
-	local selectedCanRace = selectedHorse and selectedHorse.CanRace ~= false
-	set_button_enabled(ui.SelectConfirm, selectedCanRace, Color3.fromRGB(35, 103, 77))
-	ui.SelectConfirm.Text = selectedCanRace and "Join" or "Care first"
 end
 
 local function submit_leave_request()
@@ -511,7 +676,6 @@ local function submit_join_request(horseId)
 		state.LocalJoined = true
 		state.Phase = "Queue"
 		state.NoticeText = ""
-		ui.SelectFrame.Visible = false
 		if response.CameraCFrame then
 			lock_camera(response.CameraCFrame, false)
 		end
@@ -525,7 +689,9 @@ local function submit_join_request(horseId)
 		state.NoticeText = ""
 		state.HorseOptions = response.HorseOptions or state.HorseOptions
 		refresh_horse_options()
-		ui.SelectFrame.Visible = true
+		if selectedHorseId and selectedHorseId ~= horseId then
+			submit_join_request(selectedHorseId)
+		end
 	elseif response.Code == "HorseNeedsTooLow" then
 		state.HorseOptions = response.HorseOptions or state.HorseOptions
 		state.NoticeText = ("%s is at %d%%. It must stay above %d%%."):format(
@@ -535,7 +701,7 @@ local function submit_join_request(horseId)
 		)
 		selectedHorseId = response.HorseId or selectedHorseId
 		refresh_horse_options()
-		ui.SelectFrame.Visible = true
+		show_race_invite_notification()
 	elseif response.Code == "InviteExpired" or response.Code == "InviteClosed" or response.Code == "NoActiveRound" then
 		reset_state()
 		destroy_existing_rows()
@@ -544,41 +710,72 @@ local function submit_join_request(horseId)
 	end
 end
 
-local function open_race_invitation()
-	if #state.HorseOptions <= 1 then
-		local onlyHorse = state.HorseOptions[1]
-		if onlyHorse and onlyHorse.CanRace == false then
-			selectedHorseId = onlyHorse.Id
-			refresh_horse_options()
-			ui.SelectFrame.Visible = true
-			return
+open_race_invitation = function()
+	refresh_horse_options()
+	if not selectedHorseId then
+		for _, horse in ipairs(state.HorseOptions) do
+			if type(horse.Id) == "string" and horse.Id ~= "" then
+				selectedHorseId = horse.Id
+				break
+			end
 		end
-
-		submit_join_request(onlyHorse and onlyHorse.Id or nil)
-		return
 	end
 
-	ui.SelectFrame.Visible = true
+	if selectedHorseId then
+		submit_join_request(selectedHorseId)
+	end
+end
+
+local function get_unavailable_race_horse()
+	for _, horse in ipairs(state.HorseOptions) do
+		if horse.CanRace == false then
+			return horse
+		end
+	end
+
+	return nil
+end
+
+local function has_race_ready_horse()
+	for _, horse in ipairs(state.HorseOptions) do
+		if horse.CanRace ~= false then
+			return true
+		end
+	end
+
+	return false
 end
 
 local function get_race_invite_details(): string
+	if not has_race_ready_horse() then
+		local horse = get_unavailable_race_horse()
+		if horse then
+			local statusName = get_status_display_name(
+				horse.RaceBlockedStatus or horse.RaceLowestStatus,
+				horse.RaceBlockedStatusDisplay or horse.RaceLowestStatusDisplay
+			)
+			return ("A corrida abriu, mas %s esta doente: %s em %d%%. Cuide dele para chegar a %d%%.")
+				:format(
+					horse.Name or horse.DisplayName or "seu cavalo",
+					statusName,
+					horse.RaceBlockedPercent or horse.RaceLowestPercent or 0,
+					horse.RaceMinPercent or 50
+				)
+		end
+	end
+
 	return ("Race registration is open. Closes in %s."):format(format_countdown(state.InviteDeadline - os.clock()))
 end
 
 local function get_race_invite_accept_text(): string
-	if #state.HorseOptions > 1 then
-		return "Choose horse"
-	end
-
-	local onlyHorse = state.HorseOptions[1]
-	if onlyHorse and onlyHorse.CanRace == false then
-		return "Care for horse"
-	end
-
-	return "Join"
+	return has_race_ready_horse() and "Join" or "Tentar entrar"
 end
 
-local function show_race_invite_notification()
+local function get_race_invite_title(): string
+	return has_race_ready_horse() and "Race available" or "Corrida aberta - cavalo doente"
+end
+
+show_race_invite_notification = function()
 	if state.Phase ~= "Invite" or not state.RoundId or os.clock() >= state.InviteDeadline then
 		return
 	end
@@ -587,7 +784,7 @@ local function show_race_invite_notification()
 
 	Notifications.ShowDialogue({
 		id = RACE_INVITE_NOTIFICATION_ID,
-		title = "Race available",
+		title = get_race_invite_title(),
 		details = get_race_invite_details(),
 		acceptText = get_race_invite_accept_text(),
 		denyText = "Later",
@@ -608,188 +805,113 @@ local function update_race_invite_countdown()
 
 	lastInviteCountdownSecond = remainingSeconds
 	Notifications.UpdateDialogue(RACE_INVITE_NOTIFICATION_ID, {
+		title = get_race_invite_title(),
 		details = get_race_invite_details(),
 		acceptText = get_race_invite_accept_text(),
 	})
 end
 
+local function bind_ui()
+	if ui.ActionArena and ui.ActionArena.Parent then
+		return true
+	end
+
+	local mainFrame = playerGui:FindFirstChild("MainframeFR", true) or playerGui:FindFirstChild("MainFrameFR", true)
+	local actionArena = mainFrame and find_named(mainFrame, "ActionArena", "GuiObject")
+	if not actionArena then
+		return false
+	end
+
+	ui.ActionArena = actionArena
+	ui.HudRoot = find_named(mainFrame, "HUDFR", "GuiObject")
+	ui.Leaderboard = find_named(actionArena, "Leaderboard", "GuiObject")
+	ui.BoardList = find_named(ui.Leaderboard, "ListScrollingFrame", "GuiObject")
+	ui.TemplateCraft = ui.BoardList and ui.BoardList:FindFirstChild("TemplateCraft")
+	ui.RankingBT = find_named(actionArena, "RankingBT", "GuiButton")
+	ui.LossImage = find_named(actionArena, "LossImage", "GuiObject")
+	ui.VictoryImage = find_named(actionArena, "VictoryImage", "GuiObject")
+	ui.TimeTX = find_named(actionArena, "TimeTX")
+	ui.TimeShadowTX = find_named(actionArena, "TimeShadowTX")
+
+	if ui.TemplateCraft then
+		ui.TemplateCraft.Visible = false
+	end
+
+	if ui.RankingBT then
+		ui.RankingBT.MouseButton1Click:Connect(function()
+			leaderboardVisible = not leaderboardVisible
+			update_visibility()
+		end)
+	end
+
+	refresh_leaderboard()
+
+	return true
+end
+
+local function format_race_time(seconds)
+	local wholeSeconds = math.max(0, math.floor(seconds))
+	return ("%02d:%02d"):format(math.floor(wholeSeconds / 60), wholeSeconds % 60)
+end
+
+local function get_result_entry()
+	return find_local_entry() or (state.Result and state.Result.Winner)
+end
+
+local function update_result_panel(hasResult)
+	if not hasResult or not state.Result or not state.Result.Winner then
+		set_visible(ui.LossImage, false)
+		set_visible(ui.VictoryImage, false)
+		lastRenderedResult = nil
+		return
+	end
+	if lastRenderedResult == state.Result then
+		return
+	end
+
+	local winner = state.Result.Winner
+	local didWin = winner.UserId == localPlayer.UserId
+	local resultPanel = didWin and ui.VictoryImage or ui.LossImage
+	set_visible(ui.VictoryImage, didWin)
+	set_visible(ui.LossImage, not didWin)
+
+	local entry = get_result_entry()
+	set_text(find_named(resultPanel, "PositionTX"), ("%d%s Place"):format((entry and entry.Rank) or (didWin and 1 or 0), didWin and "st" or "th"))
+	render_result_rewards(resultPanel, entry)
+	lastRenderedResult = state.Result
+end
+
 local function build_ui()
-	local screenGui = create_instance("ScreenGui", {
-		Name = "HorseRaceHud",
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		Parent = playerGui,
-	})
-
-	local selectFrame = create_instance("Frame", {
-		Name = "SelectFrame",
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 122),
-		Size = UDim2.fromOffset(430, 296),
-		Parent = screenGui,
-	})
-	apply_panel_style(selectFrame, Color3.fromRGB(115, 224, 170))
-
-	local boardFrame = create_instance("Frame", {
-		Name = "BoardFrame",
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -18, 0, 122),
-		Size = UDim2.fromOffset(300, 270),
-		Parent = screenGui,
-	})
-	apply_panel_style(boardFrame, Color3.fromRGB(115, 224, 170))
-
-	local resultFrame = create_instance("Frame", {
-		Name = "ResultFrame",
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 122),
-		Size = UDim2.fromOffset(460, 74),
-		Parent = screenGui,
-	})
-	apply_panel_style(resultFrame, Color3.fromRGB(233, 182, 96))
-
-	ui.ScreenGui = screenGui
-	ui.SelectFrame = selectFrame
-	ui.BoardFrame = boardFrame
-	ui.ResultFrame = resultFrame
-
-	ui.SelectTitle = create_label(selectFrame, "SelectTitle", {
-		Size = UDim2.new(1, 0, 0, 22),
-		Position = UDim2.new(0, 0, 0, 0),
-		Text = "Choose a horse",
-		TextSize = 18,
-	})
-
-	ui.SelectMeta = create_label(selectFrame, "SelectMeta", {
-		Size = UDim2.new(1, 0, 0, 18),
-		Position = UDim2.new(0, 0, 0, 28),
-		Text = "Only horses above 50% can race.",
-		TextSize = 13,
-		TextColor3 = Color3.fromRGB(164, 173, 184),
-	})
-
-	ui.SelectList = create_instance("ScrollingFrame", {
-		Name = "SelectList",
-		Active = true,
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Color3.fromRGB(22, 25, 29),
-		BorderSizePixel = 0,
-		CanvasSize = UDim2.new(),
-		Position = UDim2.new(0, 0, 0, 56),
-		ScrollBarThickness = 6,
-		Size = UDim2.new(1, 0, 1, -108),
-		Parent = selectFrame,
-	})
-
-	local selectListCorner = Instance.new("UICorner")
-	selectListCorner.CornerRadius = UDim.new(0, 12)
-	selectListCorner.Parent = ui.SelectList
-
-	local selectLayout = Instance.new("UIListLayout")
-	selectLayout.Padding = UDim.new(0, 8)
-	selectLayout.Parent = ui.SelectList
-
-	ui.SelectConfirm = create_button(selectFrame, "SelectConfirm", {
-		Position = UDim2.new(0, 0, 1, -44),
-		Size = UDim2.fromOffset(156, 40),
-		Text = "Join",
-	})
-
-	ui.SelectCancel = create_button(selectFrame, "SelectCancel", {
-		BackgroundColor3 = Color3.fromRGB(54, 61, 68),
-		Position = UDim2.new(1, -156, 1, -44),
-		Size = UDim2.fromOffset(156, 40),
-		Text = "Back",
-	})
-
-	ui.BoardTitle = create_label(boardFrame, "BoardTitle", {
-		Size = UDim2.new(1, 0, 0, 22),
-		Position = UDim2.new(0, 0, 0, 0),
-		Text = "Leaderboard",
-		TextSize = 17,
-	})
-
-	ui.BoardSubtitle = create_label(boardFrame, "BoardSubtitle", {
-		Size = UDim2.new(1, 0, 0, 16),
-		Position = UDim2.new(0, 0, 0, 24),
-		Text = "",
-		TextSize = 12,
-		TextColor3 = Color3.fromRGB(164, 173, 184),
-	})
-	ui.BoardSubtitle.Visible = false
-
-	ui.BoardList = create_instance("Frame", {
-		Name = "BoardList",
-		BackgroundTransparency = 1,
-		Position = UDim2.new(0, 0, 0, 34),
-		Size = UDim2.new(1, 0, 1, -34),
-		Parent = boardFrame,
-	})
-
-	local boardLayout = Instance.new("UIListLayout")
-	boardLayout.Padding = UDim.new(0, 8)
-	boardLayout.Parent = ui.BoardList
-
-	ui.ResultLabel = create_label(resultFrame, "ResultLabel", {
-		Size = UDim2.new(1, 0, 1, 0),
-		Position = UDim2.new(0, 0, 0, 0),
-		TextWrapped = true,
-		Text = "Race results.",
-		TextSize = 22,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextYAlignment = Enum.TextYAlignment.Center,
-	})
-
-	ui.SelectCancel.MouseButton1Click:Connect(function()
-		ui.SelectFrame.Visible = false
-		if not state.LocalJoined then
-		end
-	end)
-
-	ui.SelectConfirm.MouseButton1Click:Connect(function()
-		if requestInFlight or not selectedHorseId then
-			return
-		end
-
-		submit_join_request(selectedHorseId)
-	end)
-
-	ui.SelectFrame.Visible = false
-	ui.BoardFrame.Visible = false
-	ui.ResultFrame.Visible = false
+	bind_ui()
 end
 
 update_visibility = function()
+	if not bind_ui() then
+		return
+	end
+
 	local now = os.clock()
-	local inviteActive = state.RoundId ~= nil and now < state.InviteDeadline and state.Phase ~= "Race"
 	local hasResult = state.Result ~= nil and now < state.ResultDeadline
-
-	ui.BoardFrame.Visible = (state.LocalJoined or state.LocalWatchingRace or hasResult) and #state.Entries > 0
-	ui.ResultFrame.Visible = hasResult
-
-	local shouldShowSelect = ui.SelectFrame.Visible and inviteActive and not state.LocalJoined
-	ui.SelectFrame.Visible = shouldShowSelect
+	local shouldShowArena = state.LocalJoined or state.LocalWatchingRace or hasResult
+	set_race_ui_focus(shouldShowArena)
+	set_visible(ui.ActionArena, shouldShowArena)
+	set_visible(ui.Leaderboard, shouldShowArena and leaderboardVisible and #state.Entries > 0)
+	update_result_panel(hasResult)
 end
 
 update_dynamic_text = function()
-	local now = os.clock()
-	local resultRemaining = math.max(0, state.ResultDeadline - now)
-	local inviteNotice = state.NoticeText
-
-	ui.SelectMeta.Text = inviteNotice ~= ""
-		and inviteNotice
-		or "Only horses above 50% can race."
-
-	if state.Result and resultRemaining > 0 and state.Result.Winner then
-		local winner = state.Result.Winner
-		ui.ResultLabel.Text = ("%s won with %s in %.2fs and earned %d Horseshoes.")
-			:format(
-				winner.PlayerName or "Player",
-				winner.HorseName or "Horse",
-				(winner.FinishTimeMs or 0) / 1000,
-				winner.Reward or 0
-			)
+	if not bind_ui() then
+		return
 	end
+
+	local elapsed = raceStartedAt and (os.clock() - raceStartedAt) or 0
+	if state.Result and state.Result.Winner then
+		elapsed = (state.Result.Winner.FinishTimeMs or 0) / 1000
+	end
+
+	local displayTime = format_race_time(elapsed)
+	set_text(ui.TimeTX, displayTime)
+	set_text(ui.TimeShadowTX, displayTime)
 end
 
 local function handle_invite(payload)
@@ -854,7 +976,7 @@ local function handle_race_started(payload)
 	state.CameraSpeed = payload.CameraSpeed or RaceConfig.CameraSpeed
 	state.CameraDistance = payload.Distance or RaceConfig.RaceDistance
 	state.NoticeText = ""
-	ui.SelectFrame.Visible = false
+	raceStartedAt = os.clock()
 	hide_race_invite_notification()
 
 	if state.LocalWatchingRace and payload.CameraCFrame then
@@ -927,11 +1049,17 @@ local function handle_reset(payload)
 
 	reset_state()
 	destroy_existing_rows()
-	destroy_existing_horse_buttons()
 	sync_race_visuals()
 	update_visibility()
 	update_dynamic_text()
 end
+
+Lighting.DescendantAdded:Connect(function(effect)
+	if raceUiFocusActive and effect:IsA("BlurEffect") then
+		hiddenBlurStates[effect] = effect.Enabled
+		effect.Enabled = false
+	end
+end)
 
 build_ui()
 update_visibility()
