@@ -245,21 +245,21 @@ local function build_effect_lines(itemDefinition)
 	local lines = {}
 
 	if itemDefinition and itemDefinition.NeedKey == "Hunger" and effects.NeedGain ~= nil then
-		lines[#lines + 1] = "Fome: +" .. format_number(effects.NeedGain)
+		lines[#lines + 1] = "Hunger: +" .. format_number(effects.NeedGain)
 	elseif itemDefinition and itemDefinition.NeedKey and effects.NeedGain ~= nil then
 		lines[#lines + 1] = tostring(itemDefinition.NeedKey) .. ": +" .. format_number(effects.NeedGain)
 	end
 
 	if effects.HealthGain ~= nil then
-		lines[#lines + 1] = "Saude: " .. format_signed(effects.HealthGain)
+		lines[#lines + 1] = "Health: " .. format_signed(effects.HealthGain)
 	end
 
 	if effects.HappinessGain ~= nil then
-		lines[#lines + 1] = "Felicidade: " .. format_signed(effects.HappinessGain)
+		lines[#lines + 1] = "Happiness: " .. format_signed(effects.HappinessGain)
 	end
 
 	if effects.FriendshipGain ~= nil then
-		lines[#lines + 1] = "Amizade: " .. format_signed(effects.FriendshipGain)
+		lines[#lines + 1] = "Friendship: " .. format_signed(effects.FriendshipGain)
 	end
 
 	local decayBuff = effects.DecayBuff
@@ -268,13 +268,13 @@ local function build_effect_lines(itemDefinition)
 		local duration = tonumber(decayBuff.DurationMinutes)
 		if multiplier and multiplier < 1 then
 			local percent = math.max(0, math.floor((1 - multiplier) * 100 + 0.5))
-			local suffix = duration and duration > 0 and (" por " .. format_number(duration) .. " min") or ""
-			lines[#lines + 1] = "Queda de fome: -" .. percent .. "%" .. suffix
+			local suffix = duration and duration > 0 and (" for " .. format_number(duration) .. " min") or ""
+			lines[#lines + 1] = "Hunger decay: -" .. percent .. "%" .. suffix
 		end
 	end
 
 	if effects.MoodText ~= nil and tostring(effects.MoodText) ~= "" then
-		lines[#lines + 1] = "Humor: " .. tostring(effects.MoodText)
+		lines[#lines + 1] = "Mood: " .. tostring(effects.MoodText)
 	end
 
 	if #lines == 0 and type(itemDefinition.EffectsSummary) == "string" and itemDefinition.EffectsSummary ~= "" then
