@@ -6,6 +6,7 @@ local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChi
 local ConsumableToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("ConsumableToolService"))
 local FarmingService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingService"))
 local FarmingShopService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("FarmingShopService"))
+local HorseIndexService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseIndexService"))
 local HorseMountService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseMountService"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local InventoryLoadoutService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("InventoryLoadoutService"))
@@ -77,6 +78,7 @@ end
 
 safe_init_service("CookingService", CookingService)
 FarmingShopService.Init()
+HorseIndexService.Init()
 ConsumableToolService.Init()
 FarmingService.Init()
 PersistentToolService.Init()
