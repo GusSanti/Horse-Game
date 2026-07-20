@@ -19,14 +19,16 @@ local Close = require(script.Close)
 local HudAnim = {}
 local bound = {}
 local state = {}
-local running_open = {} -- Armazena as tasks de abertura
+local running_open = {} 
 local exit_connections = {}
 local open_connections = {}
+local hud_fade_states = {}
+local hud_fade_tweens = {}
 
 local EXIT_BUTTON_NAME = "ExitBT"
 local BUTTON_SUFFIX = "BT"
 local MAIN_UI_NAME = "MainUI"
-local MAINFRAME_NAME = "MainframeFR"
+local MAINFRAME_NAMES = { "MainframeFR", "MainFrameFR" }
 local HUD_ROOT_NAME = "HUDFR"
 local FRAMES_CONTAINER_NAME = "Frames"
 local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
@@ -44,6 +46,7 @@ local DEFAULTS = {
 	open_pop_scale = 0.85,
 	blur = 18,
 	blur_t = 0.5,
+	hud_fade_t = 0.15,
 }
 
 ------------------//FUNCTIONS
@@ -231,12 +234,21 @@ local function find_mainframe(instance: Instance?): Instance?
 		return nil
 	end
 
-	local directMainframe = mainUi:FindFirstChild(MAINFRAME_NAME)
-	if directMainframe then
-		return directMainframe
+	for _, mainframeName in ipairs(MAINFRAME_NAMES) do
+		local directMainframe = mainUi:FindFirstChild(mainframeName)
+		if directMainframe then
+			return directMainframe
+		end
 	end
 
-	return mainUi:FindFirstChild(MAINFRAME_NAME, true)
+	for _, mainframeName in ipairs(MAINFRAME_NAMES) do
+		local nestedMainframe = mainUi:FindFirstChild(mainframeName, true)
+		if nestedMainframe then
+			return nestedMainframe
+		end
+	end
+
+	return nil
 end
 
 local function find_frames_container(instance: Instance?): Instance?
@@ -251,6 +263,233 @@ local function find_frames_container(instance: Instance?): Instance?
 	end
 
 	return mainframe:FindFirstChild(FRAMES_CONTAINER_NAME, true)
+end
+
+local function find_hud_root(instance: Instance?): GuiObject?
+	local mainframe = find_mainframe(instance)
+	if not mainframe then
+		return nil
+	end
+
+	local directHudRoot = mainframe:FindFirstChild(HUD_ROOT_NAME)
+	if directHudRoot and directHudRoot:IsA("GuiObject") then
+		return directHudRoot
+	end
+
+	local nestedHudRoot = mainframe:FindFirstChild(HUD_ROOT_NAME, true)
+	if nestedHudRoot and nestedHudRoot:IsA("GuiObject") then
+		return nestedHudRoot
+	end
+
+	return nil
+end
+
+local function get_top_level_frame_in_container(instance: Instance?, framesContainer: Instance?): GuiObject?
+	local current = instance
+
+	while current and framesContainer and current ~= framesContainer do
+		if current.Parent == framesContainer and current:IsA("GuiObject") then
+			return current
+		end
+
+		current = current.Parent
+	end
+
+	return nil
+end
+
+local function is_open_frame(frame: Instance?): boolean
+	return frame ~= nil
+		and frame:IsA("GuiObject")
+		and frame.Visible
+		and frame:GetAttribute("_is_closing") ~= true
+		and not has_true_attribute(frame, IGNORE_HUD_ANIM_ATTRIBUTE)
+end
+
+local function should_hide_hud_for_frames(instance: Instance?, forcedOpenFrame: GuiObject?): boolean
+	local framesContainer = find_frames_container(instance or forcedOpenFrame)
+	if not framesContainer then
+		return false
+	end
+
+	local forcedTopLevelFrame = get_top_level_frame_in_container(forcedOpenFrame, framesContainer)
+	if forcedTopLevelFrame then
+		return true
+	end
+
+	for _, child in ipairs(framesContainer:GetChildren()) do
+		if is_open_frame(child) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function track_hud_fade_property(records, fadeState, instance: Instance, propertyName: string): ()
+	local success, currentValue = pcall(function()
+		return instance[propertyName]
+	end)
+
+	if not success then
+		return
+	end
+
+	local originals = fadeState.Originals
+	local originalProperties = originals[instance]
+	if not originalProperties then
+		originalProperties = {}
+		originals[instance] = originalProperties
+	end
+
+	if originalProperties[propertyName] == nil then
+		originalProperties[propertyName] = currentValue
+	end
+
+	records[#records + 1] = {
+		Instance = instance,
+		PropertyName = propertyName,
+		Original = originalProperties[propertyName],
+	}
+end
+
+local function collect_hud_fade_records(hudRoot: GuiObject, fadeState)
+	local records = {}
+
+	if hudRoot:IsA("CanvasGroup") then
+		track_hud_fade_property(records, fadeState, hudRoot, "GroupTransparency")
+		return records
+	end
+
+	local function track_instance(instance: Instance): ()
+		if instance:IsA("GuiObject") then
+			track_hud_fade_property(records, fadeState, instance, "BackgroundTransparency")
+		end
+
+		if instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox") then
+			track_hud_fade_property(records, fadeState, instance, "TextTransparency")
+			track_hud_fade_property(records, fadeState, instance, "TextStrokeTransparency")
+		elseif instance:IsA("ImageLabel") or instance:IsA("ImageButton") then
+			track_hud_fade_property(records, fadeState, instance, "ImageTransparency")
+		elseif instance:IsA("UIStroke") then
+			track_hud_fade_property(records, fadeState, instance, "Transparency")
+		end
+	end
+
+	track_instance(hudRoot)
+	for _, descendant in ipairs(hudRoot:GetDescendants()) do
+		track_instance(descendant)
+	end
+
+	return records
+end
+
+local function cancel_hud_fade(hudRoot: GuiObject): ()
+	local tweens = hud_fade_tweens[hudRoot]
+	if not tweens then
+		return
+	end
+
+	for _, tween in ipairs(tweens) do
+		pcall(function()
+			tween:Cancel()
+		end)
+	end
+
+	hud_fade_tweens[hudRoot] = nil
+end
+
+local function set_hud_record_value(record, value): ()
+	local instance = record.Instance
+	if not instance or not instance.Parent then
+		return
+	end
+
+	pcall(function()
+		instance[record.PropertyName] = value
+	end)
+end
+
+local function fade_hud_root(hudRoot: GuiObject?, shouldHide: boolean, duration: number?): ()
+	if not hudRoot or not hudRoot.Parent then
+		return
+	end
+
+	local fadeState = hud_fade_states[hudRoot]
+	if not fadeState then
+		fadeState = {
+			Originals = {},
+			Token = 0,
+			TargetHidden = nil,
+		}
+		hud_fade_states[hudRoot] = fadeState
+	end
+
+	if fadeState.TargetHidden == shouldHide then
+		return
+	end
+
+	fadeState.Token += 1
+	fadeState.TargetHidden = shouldHide
+	local token = fadeState.Token
+	local fadeDuration = math.max(0, duration or DEFAULTS.hud_fade_t)
+	local records = collect_hud_fade_records(hudRoot, fadeState)
+
+	cancel_hud_fade(hudRoot)
+	hudRoot.Visible = true
+
+	if fadeDuration <= 0 then
+		for _, record in ipairs(records) do
+			set_hud_record_value(record, if shouldHide then 1 else record.Original)
+		end
+
+		hudRoot.Visible = not shouldHide
+		return
+	end
+
+	local tweenInfo = TweenInfo.new(fadeDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tweens = {}
+
+	for _, record in ipairs(records) do
+		local instance = record.Instance
+		if instance and instance.Parent then
+			local success, tween = pcall(function()
+				return TweenService:Create(instance, tweenInfo, {
+					[record.PropertyName] = if shouldHide then 1 else record.Original,
+				})
+			end)
+
+			if success and tween then
+				tweens[#tweens + 1] = tween
+				tween:Play()
+			end
+		end
+	end
+
+	hud_fade_tweens[hudRoot] = tweens
+
+	task.delay(fadeDuration, function()
+		if fadeState.Token ~= token or not hudRoot or not hudRoot.Parent then
+			return
+		end
+
+		hud_fade_tweens[hudRoot] = nil
+
+		for _, record in ipairs(records) do
+			set_hud_record_value(record, if shouldHide then 1 else record.Original)
+		end
+
+		hudRoot.Visible = not shouldHide
+	end)
+end
+
+local function sync_hud_visibility_for_frame(instance: Instance?, duration: number?, forcedOpenFrame: GuiObject?): ()
+	local hudRoot = find_hud_root(instance or forcedOpenFrame)
+	if not hudRoot then
+		return
+	end
+
+	fade_hud_root(hudRoot, should_hide_hud_for_frames(instance or hudRoot, forcedOpenFrame), duration)
 end
 
 local function is_hud_button(button: GuiButton): boolean
@@ -313,6 +552,7 @@ local function show_target_frame(target: GuiObject): ()
 	local framesContainer = target.Parent
 	if not framesContainer then
 		target.Visible = true
+		sync_hud_visibility_for_frame(target, get_number_attribute(target, "open_t", DEFAULTS.hud_fade_t), target)
 		return
 	end
 
@@ -323,6 +563,7 @@ local function show_target_frame(target: GuiObject): ()
 	end
 
 	target.Visible = true
+	sync_hud_visibility_for_frame(target, get_number_attribute(target, "open_t", DEFAULTS.hud_fade_t), target)
 end
 
 local function find_exit_target(button: GuiButton): GuiObject?
@@ -403,6 +644,9 @@ local function bind_exit_button(button: GuiButton): ()
 		end
 
 		target.Visible = false
+		task.defer(function()
+			sync_hud_visibility_for_frame(target, get_number_attribute(target, "open_t", DEFAULTS.hud_fade_t))
+		end)
 	end)
 
 	button.AncestryChanged:Connect(function(_, parent)
@@ -617,8 +861,10 @@ function HudAnim.bind(inst: GuiObject): ()
 		end
 
 		running_open[inst] = task.spawn(function()
+			local openTime = get_number_attribute(inst, "open_t", DEFAULTS.open_t)
+			sync_hud_visibility_for_frame(inst, openTime, inst)
 			Open.run(inst, state[inst], Utils, SFX)
-			task.wait(get_number_attribute(inst, "open_t", DEFAULTS.open_t))
+			task.wait(openTime)
 			running_open[inst] = nil
 		end)
 	end
@@ -632,11 +878,21 @@ function HudAnim.bind(inst: GuiObject): ()
 			return
 		end
 
+		if inst:GetAttribute("_is_closing") then
+			task.defer(function()
+				sync_hud_visibility_for_frame(inst, get_number_attribute(inst, "open_t", DEFAULTS.hud_fade_t))
+			end)
+			return
+		end
+
 		if inst.Visible then
 			if inst:GetAttribute("skip_open") then
 				inst:SetAttribute("skip_open", nil)
 				return
 			end
+
+			local openTime = get_number_attribute(inst, "open_t", DEFAULTS.open_t)
+			sync_hud_visibility_for_frame(inst, openTime, inst)
 
 			if running_open[inst] then
 				task.cancel(running_open[inst])
@@ -645,10 +901,14 @@ function HudAnim.bind(inst: GuiObject): ()
 
 			running_open[inst] = task.spawn(function()
 				Open.run(inst, state[inst], Utils, SFX)
-				task.wait(get_number_attribute(inst, "open_t", DEFAULTS.open_t))
+				task.wait(openTime)
 				running_open[inst] = nil
 			end)
 		else
+			task.defer(function()
+				sync_hud_visibility_for_frame(inst, get_number_attribute(inst, "open_t", DEFAULTS.hud_fade_t))
+			end)
+
 			if running_open[inst] then
 				task.cancel(running_open[inst])
 				running_open[inst] = nil
