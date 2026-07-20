@@ -72,7 +72,7 @@ HorseViewportRenderer.Presets = {
 		FocusYOffsetScale = 0.08,
 		FocusZOffsetScale = 0,
 		RadiusScale = 0.6,
-		DistanceMultiplier = 0.82,
+		DistanceMultiplier = 0.92,
 		CameraOffsetScale = Vector3.new(0.42, 0.18, -1),
 	},
 	Race = {
@@ -99,9 +99,11 @@ HorseViewportRenderer.Presets = {
 local catalogTemplateCache = {}
 local sourceTemplateCache = {}
 local snapshotCache = {}
+local preparedCloneCache = {}
 local queuedByViewport = setmetatable({}, { __mode = "k" })
 local renderQueue = {}
 local prewarmQueued = {}
+local sourceVersions = {}
 local workerRunning = false
 local nextJobId = 0
 
@@ -134,7 +136,6 @@ local function remove_runtime_instances(root)
 			or descendant:IsA("BillboardGui")
 			or descendant:IsA("SurfaceGui")
 			or descendant:IsA("ProximityPrompt")
-			or descendant:IsA("Animator")
 		then
 			descendant:Destroy()
 		end
@@ -319,13 +320,15 @@ local function build_camera_cframe(model, config)
 	local boxCFrame, boxSize = model:GetBoundingBox()
 	local faceParts = get_matching_parts(model, FACE_PART_PATTERNS)
 	local tailParts = get_matching_parts(model, TAIL_PART_PATTERNS)
-	local headPoint = average_positions(faceParts)
+	local faceCFrame, faceSize = get_part_bounds(faceParts)
+	local headPoint = if config.FocusMode == "Face" and faceCFrame
+		then faceCFrame.Position
+		else average_positions(faceParts)
 	local tailPoint = average_positions(tailParts)
 	local focusPoint
 	local focusSize = boxSize
 
 	if config.FocusMode == "Face" then
-		local faceCFrame, faceSize = get_part_bounds(faceParts)
 		if faceCFrame and faceSize then
 			focusPoint = faceCFrame.Position + Vector3.new(0, faceSize.Y * (config.FaceFocusYOffsetScale or 0), 0)
 			focusSize = Vector3.new(
@@ -435,7 +438,12 @@ local function apply_snapshot(viewport, snapshot, contentKey)
 	local model = worldModel:FindFirstChildOfClass("Model")
 	if viewport:GetAttribute(CONTENT_KEY_ATTRIBUTE) ~= contentKey or not model then
 		worldModel:ClearAllChildren()
-		local success, clone = pcall(function() return snapshot.ModelTemplate:Clone() end)
+		local clone = preparedCloneCache[contentKey]
+		preparedCloneCache[contentKey] = nil
+		local success = clone ~= nil
+		if not clone then
+			success, clone = pcall(function() return snapshot.ModelTemplate:Clone() end)
+		end
 		if not success or not clone then
 			warn("[HorseViewportRenderer] failed to clone " .. tostring(contentKey) .. ": " .. tostring(clone))
 			HorseViewportRenderer.Clear(viewport)
@@ -537,8 +545,22 @@ local function start_worker()
 			if job then
 				if job.Kind == "Prewarm" then
 					prewarmQueued[job.Key] = nil
-					local template, templateKey = get_catalog_template(job.CatalogId, job.Options)
-					if template then get_snapshot(template, templateKey, job.Config, job.Options) end
+					if job.Source and job.SourceVersion ~= (sourceVersions[tostring(job.SourceKey)] or 0) then
+						continue
+					end
+					local template, templateKey
+					if job.Source then
+						template, templateKey = get_source_template(job.Source, job.SourceKey, job.Options)
+					else
+						template, templateKey = get_catalog_template(job.CatalogId, job.Options)
+					end
+					if template then
+						local snapshot, snapshotKey = get_snapshot(template, templateKey, job.Config, job.Options)
+						if job.Options.PrepareClone == true and not preparedCloneCache[snapshotKey] then
+							local success, clone = pcall(function() return snapshot.ModelTemplate:Clone() end)
+							if success and clone then preparedCloneCache[snapshotKey] = clone end
+						end
+					end
 				elseif job.Viewport
 					and job.Viewport.Parent
 					and queuedByViewport[job.Viewport] == job
@@ -609,7 +631,14 @@ function HorseViewportRenderer.PrewarmCatalogs(catalogIds, configs, options)
 		local catalogId = type(value) == "table" and value.CatalogId or value
 		if type(catalogId) == "string" and catalogId ~= "" then
 			for _, config in ipairs(configs) do
-				local key = table.concat({ catalogId, config_signature(config), tostring(options.Silhouette == true) }, "|")
+				local key = table.concat({
+					"catalog",
+					catalogId,
+					tostring(options.ModelKey or ""),
+					config_signature(config),
+					tostring(options.Silhouette == true),
+					tostring(options.PrepareClone == true),
+				}, "|")
 				if not prewarmQueued[key] then
 					prewarmQueued[key] = true
 					enqueue({
@@ -626,17 +655,58 @@ function HorseViewportRenderer.PrewarmCatalogs(catalogIds, configs, options)
 	end
 end
 
+function HorseViewportRenderer.PrewarmSource(source, sourceKey, configs, options)
+	if not source or sourceKey == nil then return end
+	options = options or {}
+	configs = configs or { HorseViewportRenderer.Presets.Stable }
+	local normalizedSourceKey = tostring(sourceKey)
+	local sourceVersion = sourceVersions[normalizedSourceKey] or 0
+
+	for _, config in ipairs(configs) do
+		local key = table.concat({
+			"source",
+			normalizedSourceKey,
+			config_signature(config),
+			tostring(options.Silhouette == true),
+			tostring(options.PrepareClone == true),
+		}, "|")
+		if not prewarmQueued[key] then
+			prewarmQueued[key] = true
+			enqueue({
+				Kind = "Prewarm",
+				Key = key,
+				Source = source,
+				SourceKey = sourceKey,
+				SourceVersion = sourceVersion,
+				Config = config,
+				Options = options,
+				Priority = options.Priority or 20,
+			})
+		end
+	end
+end
+
 function HorseViewportRenderer.ForgetSource(sourceKey)
-	local prefix = "source|" .. tostring(sourceKey) .. "|"
+	local normalizedSourceKey = tostring(sourceKey)
+	local prefix = "source|" .. normalizedSourceKey .. "|"
+	sourceVersions[normalizedSourceKey] = (sourceVersions[normalizedSourceKey] or 0) + 1
+	for key in pairs(prewarmQueued) do
+		if string.sub(key, 1, #prefix) == prefix then prewarmQueued[key] = nil end
+	end
 	for key, template in pairs(sourceTemplateCache) do
 		if string.sub(key, 1, #prefix) == prefix then
 			template:Destroy()
 			sourceTemplateCache[key] = nil
 			for snapshotKey in pairs(snapshotCache) do
-				if string.sub(snapshotKey, 1, #key) == key then snapshotCache[snapshotKey] = nil end
+				if string.sub(snapshotKey, 1, #key) == key then
+					snapshotCache[snapshotKey] = nil
+					local preparedClone = preparedCloneCache[snapshotKey]
+					if preparedClone then preparedClone:Destroy() end
+					preparedCloneCache[snapshotKey] = nil
+				end
 			end
 		end
 	end
 end
 
-return HorseViewportRenderer
+return HorseViewportRenderer --test

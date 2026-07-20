@@ -110,6 +110,8 @@ local renderGeneration = 0
 local stableRenderDirty = false
 local mountRequestInFlight = false
 local viewportPopulationInProgress = false
+local stablePrewarmScheduled = false
+local prewarmedVisualByHorseId: {[string]: Instance} = {}
 
 local populate_visible_stable_viewports
 
@@ -635,6 +637,67 @@ local function populate_viewport(viewportFrame: ViewportFrame, horseId: string, 
 	)
 end
 
+local function clear_stable_source_prewarms(): ()
+	for horseId: string in pairs(prewarmedVisualByHorseId) do
+		HorseViewportRenderer.ForgetSource("stable:" .. horseId)
+		prewarmedVisualByHorseId[horseId] = nil
+	end
+end
+
+local function prewarm_stable_viewports(): ()
+	stablePrewarmScheduled = false
+	local activeHorseIds: {[string]: boolean} = {}
+
+	for _, stableHorseEntry: StableHorseEntry in ipairs(get_stable_horses()) do
+		local horseId = stableHorseEntry.HorseId
+		local horse = get_owned_horse(horseId)
+		activeHorseIds[horseId] = true
+
+		local liveVisual = find_plot_horse_visual(stableHorseEntry.SlotName, horseId)
+		if liveVisual then
+			local previousVisual = prewarmedVisualByHorseId[horseId]
+			if previousVisual ~= liveVisual then
+				if previousVisual then
+					HorseViewportRenderer.ForgetSource("stable:" .. horseId)
+				end
+				prewarmedVisualByHorseId[horseId] = liveVisual
+				HorseViewportRenderer.PrewarmSource(
+					liveVisual,
+					"stable:" .. horseId,
+					{ HorseViewportRenderer.Presets.Stable },
+					{
+						PrepareClone = true,
+						Priority = 15,
+					}
+				)
+			end
+		elseif type(horse) == "table" then
+			HorseViewportRenderer.PrewarmCatalogs(
+				{ horse.CatalogId or "Default" },
+				{ HorseViewportRenderer.Presets.Stable },
+				{
+					ModelKey = horse.VisualModelName or horse.PlaceholderModelKey,
+					PrepareClone = true,
+					Priority = 15,
+				}
+			)
+		end
+	end
+
+	for horseId: string in pairs(prewarmedVisualByHorseId) do
+		if not activeHorseIds[horseId] then
+			HorseViewportRenderer.ForgetSource("stable:" .. horseId)
+			prewarmedVisualByHorseId[horseId] = nil
+		end
+	end
+end
+
+local function queue_stable_viewport_prewarm(): ()
+	if stablePrewarmScheduled then return end
+	stablePrewarmScheduled = true
+	task.defer(prewarm_stable_viewports)
+end
+
 local function update_canvas_size(): ()
 	local ui = currentUi
 	if not ui then
@@ -1152,12 +1215,19 @@ local function bind_ui(ui: StableUi): ()
 		plotTrove:Connect(plot.DescendantAdded, function(descendant: Instance)
 			if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true or descendant.Name == HORSE_FOLDER_NAME then
 				queue_render()
+				queue_stable_viewport_prewarm()
 			end
 		end)
 
 		plotTrove:Connect(plot.DescendantRemoving, function(descendant: Instance)
 			if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true or descendant.Name == HORSE_FOLDER_NAME then
 				queue_render()
+				local horseId = descendant:GetAttribute(HORSE_ID_ATTRIBUTE)
+				if type(horseId) == "string" and prewarmedVisualByHorseId[horseId] == descendant then
+					HorseViewportRenderer.ForgetSource("stable:" .. horseId)
+					prewarmedVisualByHorseId[horseId] = nil
+				end
+				task.defer(queue_stable_viewport_prewarm)
 			end
 		end)
 	end
@@ -1167,8 +1237,10 @@ local function bind_ui(ui: StableUi): ()
 	uiTrove:Add(DataUtility.client.bind("Horses.Owned", refresh_or_render_stable))
 
 	uiTrove:Connect(plotValue:GetPropertyChangedSignal("Value"), function()
+		clear_stable_source_prewarms()
 		rebind_plot()
 		queue_render()
+		queue_stable_viewport_prewarm()
 	end)
 
 	uiTrove:Connect(ui.Root.AncestryChanged, function(_, parent)
@@ -1194,6 +1266,7 @@ local function bind_ui(ui: StableUi): ()
 
 	rebind_plot()
 	queue_render()
+	queue_stable_viewport_prewarm()
 end
 
 local function is_stable_ui_related(instance: Instance): boolean
@@ -1241,7 +1314,11 @@ rootTrove:Connect(playerGui.DescendantRemoving, function(instance: Instance)
 	end
 end)
 
-rootTrove:Add(DataUtility.client.bind("Horses.Owned", refresh_or_render_stable))
+rootTrove:Add(DataUtility.client.bind("Stable", queue_stable_viewport_prewarm))
+rootTrove:Add(DataUtility.client.bind("Horses.Owned", function()
+	refresh_or_render_stable()
+	queue_stable_viewport_prewarm()
+end))
 
 rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 	local ui = currentUi
@@ -1267,3 +1344,4 @@ rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 end)
 
 try_bind_ui()
+queue_stable_viewport_prewarm()
