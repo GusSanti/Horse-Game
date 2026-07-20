@@ -3,13 +3,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local ClientModules = Modules:WaitForChild("Client")
 local Dictionary = Modules:WaitForChild("Dictionary")
 local GameData = Modules:WaitForChild("GameData")
+local HudModules = ClientModules:WaitForChild("Hud")
 local Libraries = Modules:WaitForChild("Libraries")
 local Services = Modules:WaitForChild("Services")
 local Utility = Modules:WaitForChild("Utility")
 
 local Trove = require(Libraries:WaitForChild("Trove"))
+local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
@@ -17,7 +20,6 @@ local HorseStatusBillboardConfig = require(GameData:WaitForChild("HorseStatusBil
 local HorseBondService = require(Services:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local Net = require(Libraries:WaitForChild("Net"))
 
 local localPlayer: Player = Players.LocalPlayer
@@ -603,135 +605,34 @@ local function find_plot_horse_visual(slotName: string, horseId: string): Instan
 	return nil
 end
 
-local function resolve_horse_model(horseId: string, horse, slotName: string): Instance?
-	local liveVisual = find_plot_horse_visual(slotName, horseId)
-	if liveVisual then
-		return liveVisual:Clone()
-	end
-
-	local definition = nil
-	if type(horse) == "table" then
-		definition = HorseCatalog.GetDefinition(horse.CatalogId)
-	end
-
-	local candidateKeys = {
-		type(horse) == "table" and horse.VisualModelName or nil,
-		type(horse) == "table" and horse.PlaceholderModelKey or nil,
-		type(horse) == "table" and horse.CatalogId or nil,
-		definition and definition.PlaceholderModelKey or nil,
-	}
-
-	for _, candidateKey in ipairs(candidateKeys) do
-		if type(candidateKey) == "string" and candidateKey ~= "" then
-			local model = RaceVisualFactory.FindTemplateModel(candidateKey)
-			if model then
-				return model:Clone()
-			end
-		end
-	end
-
-	return RaceVisualFactory.BuildFallbackHorseModel({
-		HorseId = horseId,
-		Id = horseId,
-		CatalogId = type(horse) == "table" and horse.CatalogId or "Default",
-		PlaceholderModelKey = type(horse) == "table" and horse.PlaceholderModelKey or "",
-	})
-end
-
-local function clear_viewport(viewportFrame: ViewportFrame): ()
-	for _, child: Instance in ipairs(viewportFrame:GetChildren()) do
-		child:Destroy()
-	end
-
-	viewportFrame.CurrentCamera = nil :: any
-end
-
-local function prepare_viewport_model(root: Instance): ()
-	for _, descendant: Instance in ipairs(root:GetDescendants()) do
-		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
-			descendant:Destroy()
-		elseif descendant:IsA("BillboardGui") or descendant:IsA("SurfaceGui") then
-			descendant:Destroy()
-		elseif descendant:IsA("ProximityPrompt") then
-			descendant:Destroy()
-		end
-	end
-
-	if root:IsA("Model") then
-		RaceVisualFactory.PrepareModel(root)
-	elseif root:IsA("BasePart") then
-		root.Anchored = true
-		root.CanCollide = false
-		root.CanQuery = false
-		root.CanTouch = false
-	end
-end
-
-local function get_bounding_box(root: Instance): (CFrame, Vector3)
-	if root:IsA("Model") then
-		return root:GetBoundingBox()
-	end
-
-	if root:IsA("BasePart") then
-		return root.CFrame, root.Size
-	end
-
-	local model = Instance.new("Model")
-	for _, child: Instance in ipairs(root:GetChildren()) do
-		child.Parent = model
-	end
-
-	local boxCFrame, boxSize = model:GetBoundingBox()
-
-	for _, child: Instance in ipairs(model:GetChildren()) do
-		child.Parent = root
-	end
-
-	model:Destroy()
-	return boxCFrame, boxSize
-end
-
 local function populate_viewport(viewportFrame: ViewportFrame, horseId: string, slotName: string): ()
 	local horse = get_owned_horse(horseId)
 	if not horse then
-		clear_viewport(viewportFrame)
+		HorseViewportRenderer.Clear(viewportFrame)
 		return
 	end
 
-	local model = resolve_horse_model(horseId, horse, slotName)
-	if not model then
-		clear_viewport(viewportFrame)
+	local liveVisual = find_plot_horse_visual(slotName, horseId)
+	if liveVisual then
+		HorseViewportRenderer.QueueSource(
+			viewportFrame,
+			liveVisual,
+			"stable:" .. horseId,
+			HorseViewportRenderer.Presets.Stable,
+			{ Priority = 4 }
+		)
 		return
 	end
 
-	clear_viewport(viewportFrame)
-
-	local worldModel = Instance.new("WorldModel")
-	worldModel.Parent = viewportFrame
-
-	prepare_viewport_model(model)
-	model.Parent = worldModel
-
-	local boxCFrame, boxSize = get_bounding_box(model)
-	if not boxCFrame or not boxSize then
-		return
-	end
-
-	local camera = Instance.new("Camera")
-	camera.FieldOfView = 35
-	camera.Parent = viewportFrame
-
-	viewportFrame.CurrentCamera = camera
-	viewportFrame.BackgroundTransparency = 1
-	viewportFrame.Ambient = Color3.fromRGB(220, 220, 220)
-	viewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
-
-	local focusPoint = boxCFrame.Position + Vector3.new(0, boxSize.Y * 0.08, 0)
-	local radius = math.max(boxSize.X, boxSize.Y, boxSize.Z) * 0.6
-	local distance = (radius / math.tan(math.rad(camera.FieldOfView * 0.5)) + radius) * 0.82
-	local offset = Vector3.new(distance * 0.42, distance * 0.18, -distance)
-
-	camera.CFrame = CFrame.lookAt(focusPoint + offset, focusPoint)
+	HorseViewportRenderer.QueueCatalog(
+		viewportFrame,
+		horse.CatalogId or "Default",
+		HorseViewportRenderer.Presets.Stable,
+		{
+			ModelKey = horse.VisualModelName or horse.PlaceholderModelKey,
+			Priority = 4,
+		}
+	)
 end
 
 local function update_canvas_size(): ()

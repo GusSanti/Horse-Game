@@ -12,9 +12,9 @@ local Utility = Modules:WaitForChild("Utility")
 local HudModules = ClientModules:WaitForChild("Hud")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 local AdminPanelView = require(HudModules:WaitForChild("AdminPanelView"))
+local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 
 local SCREEN_GUI_NAME = "AdminPanelGui"
 local ITEM_TAB_NAME = "Items"
@@ -252,54 +252,10 @@ local function find_selected_category()
 end
 
 local function clear_preview_world()
-	if roulettePreview.WorldModel then
-		for _, child in ipairs(roulettePreview.WorldModel:GetChildren()) do
-			child:Destroy()
-		end
-	end
-
+	HorseViewportRenderer.Clear(rouletteViewportFrame)
+	roulettePreview.WorldModel = nil
+	roulettePreview.Camera = nil
 	roulettePreview.Model = nil
-end
-
-local function ensure_preview_scene()
-	if not rouletteViewportFrame then
-		return false
-	end
-
-	if not roulettePreview.WorldModel or roulettePreview.WorldModel.Parent ~= rouletteViewportFrame then
-		local worldModel = rouletteViewportFrame:FindFirstChild("WorldModel")
-		if worldModel and not worldModel:IsA("WorldModel") then
-			worldModel:Destroy()
-			worldModel = nil
-		end
-
-		if not worldModel then
-			worldModel = Instance.new("WorldModel")
-			worldModel.Name = "WorldModel"
-			worldModel.Parent = rouletteViewportFrame
-		end
-
-		roulettePreview.WorldModel = worldModel
-	end
-
-	if not roulettePreview.Camera or roulettePreview.Camera.Parent ~= rouletteViewportFrame then
-		local camera = rouletteViewportFrame:FindFirstChild("PreviewCamera")
-		if camera and not camera:IsA("Camera") then
-			camera:Destroy()
-			camera = nil
-		end
-
-		if not camera then
-			camera = Instance.new("Camera")
-			camera.Name = "PreviewCamera"
-			camera.Parent = rouletteViewportFrame
-		end
-
-		roulettePreview.Camera = camera
-		rouletteViewportFrame.CurrentCamera = camera
-	end
-
-	return true
 end
 
 local function update_rarity_badge(horseOption)
@@ -324,13 +280,12 @@ local function update_rarity_badge(horseOption)
 end
 
 local function mount_preview_model(horseOption)
-	if not ensure_preview_scene() then
+	if not rouletteViewportFrame then
 		return
 	end
 
-	clear_preview_world()
-
 	if not horseOption then
+		clear_preview_world()
 		update_rarity_badge(nil)
 		if rouletteNameLabel then
 			rouletteNameLabel.Text = "No horse selected"
@@ -338,31 +293,37 @@ local function mount_preview_model(horseOption)
 		return
 	end
 
-	local summary = {
-		Id = horseOption.CatalogId,
-		HorseId = horseOption.CatalogId,
-		CatalogId = horseOption.CatalogId,
-		PlaceholderModelKey = horseOption.ModelKey,
-	}
-
-	local model = RaceVisualFactory.CreateRaceModel(summary, nil, roulettePreview.WorldModel)
-	roulettePreview.Model = model
-
-	local boxCFrame, boxSize = model:GetBoundingBox()
-	local offset = model:GetPivot():ToObjectSpace(boxCFrame)
-	local targetBoxCFrame = CFrame.new(0, math.max(2.2, boxSize.Y * 0.5), 0) * CFrame.Angles(0, math.rad(25), 0)
-	model:PivotTo(targetBoxCFrame * offset:Inverse())
-
-	local _, positionedSize = model:GetBoundingBox()
-	roulettePreview.Focus = Vector3.new(0, math.max(2.5, positionedSize.Y * 0.56), 0)
-	roulettePreview.CameraDistance = math.max(12, positionedSize.X * 1.45 + positionedSize.Z + 3.5)
-	roulettePreview.CameraHeight = math.max(3.8, positionedSize.Y * 0.33)
-
 	if rouletteNameLabel then
 		rouletteNameLabel.Text = horseOption.DisplayName or horseOption.CatalogId
 	end
 
 	update_rarity_badge(horseOption)
+	HorseViewportRenderer.QueueCatalog(
+		rouletteViewportFrame,
+		horseOption.CatalogId,
+		HorseViewportRenderer.Presets.Admin,
+		{
+			ModelKey = horseOption.ModelKey,
+			Priority = rouletteState.IsRolling and 2 or 3,
+			Callback = function(success, scene)
+				if not success or not scene or not scene.Model then return end
+				local model = scene.Model
+				local boxCFrame, boxSize = model:GetBoundingBox()
+				local offset = model:GetPivot():ToObjectSpace(boxCFrame)
+				local targetBoxCFrame = CFrame.new(0, math.max(2.2, boxSize.Y * 0.5), 0)
+					* CFrame.Angles(0, math.rad(25), 0)
+				model:PivotTo(targetBoxCFrame * offset:Inverse())
+
+				local _, positionedSize = model:GetBoundingBox()
+				roulettePreview.WorldModel = scene.WorldModel
+				roulettePreview.Camera = scene.Camera
+				roulettePreview.Model = model
+				roulettePreview.Focus = Vector3.new(0, math.max(2.5, positionedSize.Y * 0.56), 0)
+				roulettePreview.CameraDistance = math.max(12, positionedSize.X * 1.45 + positionedSize.Z + 3.5)
+				roulettePreview.CameraHeight = math.max(3.8, positionedSize.Y * 0.33)
+			end,
+		}
+	)
 end
 
 local function get_selected_roulette_horse()
