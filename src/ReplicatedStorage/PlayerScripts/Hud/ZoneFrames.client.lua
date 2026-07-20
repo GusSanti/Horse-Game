@@ -6,6 +6,7 @@ local Workspace = game:GetService("Workspace")
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Libraries = Modules:WaitForChild("Libraries")
 
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 
 local localPlayer = Players.LocalPlayer
@@ -146,18 +147,31 @@ local function get_display_visible(instance: GuiObject): boolean
 	return instance.Visible
 end
 
-local function set_display_visible(instance: GuiObject?, isVisible: boolean)
+local function sync_hud_visibility(instance: Instance?, forcedOpenFrame: GuiObject?)
+	task.defer(function()
+		pcall(function()
+			if HudAnim.sync_hud_visibility_for_frame then
+				HudAnim.sync_hud_visibility_for_frame(instance, nil, forcedOpenFrame)
+			end
+		end)
+	end)
+end
+
+local function set_display_visible(instance: GuiObject?, isVisible: boolean): boolean
 	if not instance or instance.Visible == isVisible then
-		return
+		return false
 	end
 
 	instance.Visible = isVisible
+	return true
 end
 
-local function set_displays_visible(instances: { GuiObject }, isVisible: boolean)
+local function set_displays_visible(instances: { GuiObject }, isVisible: boolean): boolean
+	local changed = false
 	for _, instance in ipairs(instances) do
-		set_display_visible(instance, isVisible)
+		changed = set_display_visible(instance, isVisible) or changed
 	end
+	return changed
 end
 
 local function resolve_frame_names(zoneName: string): { string }
@@ -296,10 +310,12 @@ local function build_zone_states(framesContainer: Instance?, zonesFolder: Instan
 	return zoneStates
 end
 
-local function hide_all_displays(zoneStates: { ZoneState })
+local function hide_all_displays(zoneStates: { ZoneState }): boolean
+	local changed = false
 	for _, zoneState in ipairs(zoneStates) do
-		set_displays_visible(zoneState.Displays, false)
+		changed = set_displays_visible(zoneState.Displays, false) or changed
 	end
+	return changed
 end
 
 local function show_target_frame(framesContainer: Instance?, target: GuiObject?)
@@ -314,6 +330,7 @@ local function show_target_frame(framesContainer: Instance?, target: GuiObject?)
 	end
 
 	target.Visible = true
+	sync_hud_visibility(target, target)
 end
 
 local function destroy_interface_binding()
@@ -358,16 +375,21 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 	local function update_zones()
 		local characterRoot = get_character_root()
 		if not characterRoot then
-			hide_all_displays(zoneStates)
+			local displayVisibilityChanged = hide_all_displays(zoneStates)
 
 			for _, zoneState in ipairs(zoneStates) do
 				zoneState.IsInside = false
+			end
+
+			if displayVisibilityChanged then
+				sync_hud_visibility(framesContainer, nil)
 			end
 
 			return
 		end
 
 		local enteredDisplay = nil
+		local displayVisibilityChanged = false
 
 		for _, zoneState in ipairs(zoneStates) do
 			local isInside = false
@@ -385,7 +407,7 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 			if isInside and not wasInside and zoneState.PrimaryDisplay and not enteredDisplay then
 				enteredDisplay = zoneState.PrimaryDisplay
 			elseif not isInside and wasInside then
-				set_displays_visible(zoneState.Displays, false)
+				displayVisibilityChanged = set_displays_visible(zoneState.Displays, false) or displayVisibilityChanged
 				zoneState.CurrentDisplayName = nil
 			elseif isInside then
 				zoneState.CurrentDisplayName = find_visible_display_name(zoneState.Displays) or zoneState.CurrentDisplayName
@@ -401,6 +423,8 @@ local function bind_interface(uiRoot: Instance, zonesFolder: Instance)
 					break
 				end
 			end
+		elseif displayVisibilityChanged then
+			sync_hud_visibility(framesContainer, nil)
 		end
 	end
 

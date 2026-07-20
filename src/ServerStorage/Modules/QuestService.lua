@@ -1,3 +1,4 @@
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -14,6 +15,8 @@ local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local QuestService = {}
 
 local initialized = false
+local claimInFlight = {}
+local DAILY_ROLLOVER_CHECK_SECONDS = 30
 
 local function normalize_inventory_path(path: string?): string?
 	if type(path) ~= "string" then
@@ -185,6 +188,19 @@ function QuestService.Init()
 	end)
 
 	initialized = true
+
+	Players.PlayerRemoving:Connect(function(player)
+		claimInFlight[player] = nil
+	end)
+
+	task.spawn(function()
+		while initialized do
+			task.wait(DAILY_ROLLOVER_CHECK_SECONDS)
+			for _, player in ipairs(Players:GetPlayers()) do
+				QuestService.EnsureDailyQuest(player)
+			end
+		end
+	end)
 end
 
 function QuestService.EnsureDailyQuest(player)
@@ -212,6 +228,9 @@ function QuestService.RefreshDailyQuestProgress(player)
 	if not dailyQuest or dailyQuest.QuestId == "" then
 		return nil
 	end
+	if os.time() >= (dailyQuest.ExpiresAt or 0) then
+		return QuestService.EnsureDailyQuest(player)
+	end
 
 	local questDefinition = QuestCatalog.GetDefinition(dailyQuest.QuestId)
 	local progress, completed = resolve_daily_progress(player, dailyQuest)
@@ -226,6 +245,7 @@ end
 
 function QuestService.IncrementStat(player, statPath, amount)
 	amount = amount or 1
+	QuestService.EnsureDailyQuest(player)
 
 	local currentValue = DataUtility.server.get(player, statPath) or 0
 	local updatedValue = currentValue + amount
@@ -236,7 +256,7 @@ function QuestService.IncrementStat(player, statPath, amount)
 	return updatedValue
 end
 
-function QuestService.ClaimDailyQuest(player)
+local function claim_daily_quest_unlocked(player)
 	local dailyQuest = QuestService.EnsureDailyQuest(player)
 	if not dailyQuest or dailyQuest.QuestId == "" then
 		return {
@@ -313,6 +333,29 @@ function QuestService.ClaimDailyQuest(player)
 		DailyQuest = TableUtility.DeepCopy(dailyQuest),
 		Rewards = grantedRewards,
 	}
+end
+
+function QuestService.ClaimDailyQuest(player)
+	if claimInFlight[player] then
+		return {
+			Success = false,
+			Code = "ClaimInProgress",
+		}
+	end
+
+	claimInFlight[player] = true
+	local success, result = pcall(claim_daily_quest_unlocked, player)
+	claimInFlight[player] = nil
+
+	if not success then
+		warn(("[QuestService] failed to claim daily quest for %s: %s"):format(player.Name, tostring(result)))
+		return {
+			Success = false,
+			Code = "ClaimFailed",
+		}
+	end
+
+	return result
 end
 
 return QuestService

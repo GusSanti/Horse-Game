@@ -680,6 +680,10 @@ function HudAnim.apply_defaults_to_buttons(root: Instance, extra: {}?): ()
 	end
 end
 
+function HudAnim.sync_hud_visibility_for_frame(instance: Instance?, duration: number?, forcedOpenFrame: GuiObject?): ()
+	sync_hud_visibility_for_frame(instance, duration, forcedOpenFrame)
+end
+
 function HudAnim.bind(inst: GuiObject): ()
 	if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
 		if bound[inst] then

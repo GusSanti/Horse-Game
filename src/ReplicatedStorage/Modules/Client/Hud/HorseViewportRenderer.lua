@@ -28,24 +28,24 @@ local HorseViewportRenderer = {}
 
 HorseViewportRenderer.Presets = {
 	IndexGrid = {
-		FieldOfView = 24,
-		FocusMode = "Face",
-		FocusYOffsetScale = 0.34,
-		FocusZOffsetScale = -0.42,
-		FaceFocusYOffsetScale = 0.15,
-		RadiusScale = 0.52,
-		DistanceMultiplier = 2.4,
-		CameraOffsetScale = Vector3.new(0.34, -0.5, -0.76),
+		FieldOfView = 30,
+		FocusMode = "Bounds",
+		OrientationMode = "Horse",
+		FocusYOffsetScale = 0.06,
+		FocusZOffsetScale = 0,
+		RadiusScale = 0.62,
+		DistanceMultiplier = 0.96,
+		CameraOffsetScale = Vector3.new(0.88, 0.16, -0.34),
 	},
 	IndexDetails = {
-		FieldOfView = 22,
-		FocusMode = "Face",
-		FocusYOffsetScale = 0.36,
-		FocusZOffsetScale = -0.44,
-		FaceFocusYOffsetScale = 0.15,
-		RadiusScale = 0.54,
-		DistanceMultiplier = 2.4,
-		CameraOffsetScale = Vector3.new(0.38, -0.5, -0.74),
+		FieldOfView = 28,
+		FocusMode = "Bounds",
+		OrientationMode = "Horse",
+		FocusYOffsetScale = 0.08,
+		FocusZOffsetScale = 0,
+		RadiusScale = 0.62,
+		DistanceMultiplier = 0.9,
+		CameraOffsetScale = Vector3.new(0.82, 0.18, -0.42),
 	},
 	Wheel = {
 		FieldOfView = 30,
@@ -100,6 +100,7 @@ local catalogTemplateCache = {}
 local sourceTemplateCache = {}
 local snapshotCache = {}
 local preparedCloneCache = {}
+local missingCatalogWarnings = {}
 local queuedByViewport = setmetatable({}, { __mode = "k" })
 local renderQueue = {}
 local prewarmQueued = {}
@@ -233,26 +234,33 @@ local function get_catalog_template(catalogId, options)
 	local definition = HorseCatalog.GetDefinition(catalogId) or HorseCatalog.GetDefinition("Default")
 	if not definition then return nil, templateKey end
 
+	local candidateKeys = {}
+	if type(modelKey) == "string" and modelKey ~= "" then
+		candidateKeys[#candidateKeys + 1] = modelKey
+	end
+	for _, candidateKey in ipairs({ definition.PlaceholderModelKey, definition.DisplayName, definition.CatalogId }) do
+		if type(candidateKey) == "string" and candidateKey ~= "" then
+			candidateKeys[#candidateKeys + 1] = candidateKey
+		end
+	end
+
 	local source = nil
-	for _, candidateKey in ipairs({ modelKey, definition.PlaceholderModelKey, definition.DisplayName, definition.CatalogId }) do
+	for _, candidateKey in ipairs(candidateKeys) do
 		if type(candidateKey) == "string" and candidateKey ~= "" then
 			source = RaceVisualFactory.FindTemplateModel(candidateKey)
 			if source then break end
 		end
 	end
 
-	local model
-	if source then
-		model = clone_prepared_source(source, silhouette)
-	else
-		model = RaceVisualFactory.BuildFallbackHorseModel({
-			HorseId = catalogId,
-			Id = catalogId,
-			CatalogId = definition.CatalogId,
-			PlaceholderModelKey = definition.PlaceholderModelKey or "",
-		})
-		prepare_model(model, silhouette)
+	if not source then
+		if not missingCatalogWarnings[templateKey] then
+			missingCatalogWarnings[templateKey] = true
+			warn(("[HorseViewportRenderer] horse '%s' was not found in ReplicatedStorage.Assets.Horses"):format(tostring(catalogId)))
+		end
+		return nil, templateKey
 	end
+
+	local model = clone_prepared_source(source, silhouette)
 
 	if model then catalogTemplateCache[templateKey] = model end
 	return model, templateKey

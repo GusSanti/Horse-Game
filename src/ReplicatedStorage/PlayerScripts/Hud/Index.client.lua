@@ -52,8 +52,16 @@ local DETAILS_DISPLAY_NAMES = { "ItemDisplayBG" }
 local DETAILS_IMAGE_NAMES = { "HorseImage" }
 local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
 
-local GRID_CAMERA_CONFIG = HorseViewportRenderer.Presets.IndexGrid
-local DETAILS_CAMERA_CONFIG = HorseViewportRenderer.Presets.IndexDetails
+local INDEX_CAMERA_CONFIG = table.clone(HorseViewportRenderer.Presets.Stable)
+local stableCameraOffset = INDEX_CAMERA_CONFIG.CameraOffsetScale
+INDEX_CAMERA_CONFIG.CameraOffsetScale = Vector3.new(
+	stableCameraOffset.X,
+	stableCameraOffset.Y,
+	-stableCameraOffset.Z
+)
+
+local GRID_CAMERA_CONFIG = INDEX_CAMERA_CONFIG
+local DETAILS_CAMERA_CONFIG = INDEX_CAMERA_CONFIG
 
 -- VARIABLES
 local localPlayer = Players.LocalPlayer
