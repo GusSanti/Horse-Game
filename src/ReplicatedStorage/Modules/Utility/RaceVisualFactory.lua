@@ -72,6 +72,34 @@ local function create_part(parent, name, size, color, cframe)
 	return part
 end
 
+local function normalize_key(value)
+	if type(value) ~= "string" then return "" end
+	return string.lower(string.gsub(value, "[%s_%-]", ""))
+end
+
+local function is_horse_visual_source(instance)
+	return instance
+		and (instance:IsA("Model") or instance:IsA("BasePart") or instance:FindFirstChildWhichIsA("BasePart", true) ~= nil)
+end
+
+local function find_horse_visual_source(folder, modelKey)
+	if not folder then return nil end
+
+	local directMatch = folder:FindFirstChild(modelKey)
+	if is_horse_visual_source(directMatch) then
+		return directMatch
+	end
+
+	local normalizedModelKey = normalize_key(modelKey)
+	for _, descendant in ipairs(folder:GetDescendants()) do
+		if normalize_key(descendant.Name) == normalizedModelKey and is_horse_visual_source(descendant) then
+			return descendant
+		end
+	end
+
+	return nil
+end
+
 function RaceVisualFactory.ExtractRotation(cframe)
 	return CFrame.fromMatrix(Vector3.zero, cframe.XVector, cframe.YVector, cframe.ZVector)
 end
@@ -120,8 +148,8 @@ function RaceVisualFactory.FindTemplateModel(modelKey, raceFolder)
 	end
 
 	for _, folder in ipairs(candidates) do
-		local candidate = folder:FindFirstChild(modelKey)
-		if candidate and candidate:IsA("Model") then
+		local candidate = find_horse_visual_source(folder, modelKey)
+		if candidate then
 			return candidate
 		end
 	end
@@ -166,7 +194,14 @@ function RaceVisualFactory.CreateRaceModel(horseSummary, raceFolder, parent)
 	local model = nil
 
 	if template then
-		model = template:Clone()
+		local clone = template:Clone()
+		if clone:IsA("Model") then
+			model = clone
+		else
+			model = Instance.new("Model")
+			model.Name = clone.Name
+			clone.Parent = model
+		end
 		model.Name = ("%s_RaceModel"):format(horseSummary and horseSummary.Id or "horse")
 	else
 		model = RaceVisualFactory.BuildFallbackHorseModel(horseSummary)

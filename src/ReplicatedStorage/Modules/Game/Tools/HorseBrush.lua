@@ -42,6 +42,7 @@ local horseBrush = {
 		if not horses or not horses.Owned or not horses.Owned[context.horseId] then
 			return false, "HorseNotOwned"
 		end
+		QuestService.EnsureDailyQuest(context.player)
 
 		local horse = horses.Owned[context.horseId]
 		local now = os.time()

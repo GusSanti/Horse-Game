@@ -161,6 +161,7 @@ local soap = {
 			debug_log_soap(context, "consume-failed", horse, "reason=ItemUnavailable")
 			return false, "ItemUnavailable"
 		end
+		serverModules.QuestService.EnsureDailyQuest(context.player)
 
 		serverModules.HorseCareService.RefreshHorse(horse, now)
 		debug_log_soap(context, "after-refresh", horse)

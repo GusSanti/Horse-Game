@@ -673,6 +673,7 @@ function HorseCareService.UseCareItem(player, horseId, itemId, tool)
 	if consumedFromInventory ~= true then
 		return false, "ItemUnavailable"
 	end
+	QuestService.EnsureDailyQuest(player)
 
 	local needs = horse.Needs
 	local values = needs.Values
@@ -792,6 +793,7 @@ function HorseCareService.UseMedicalItem(player, horseId, itemId, tool)
 	if consumedFromInventory ~= true then
 		return false, "ItemUnavailable"
 	end
+	QuestService.EnsureDailyQuest(player)
 
 	local needs = horse.Needs
 	local values = needs.Values

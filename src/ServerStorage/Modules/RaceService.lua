@@ -15,6 +15,7 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 local InventoryService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("InventoryServer"))
+local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 local RaceStateEvent = Net.Event.RaceState
 local RaceActionFunction = Net.Function.RaceAction
 
@@ -698,6 +699,10 @@ local function finish_round(round, winnerParticipant)
 		rewardsByUserId[participant.Player.UserId] = reward
 		HorseService.RecordRacePlacement(participant.Player, participant.HorseId, placement, rankedParticipantCount, reward.Horseshoes)
 
+		local completedArenaRuns = (DataUtility.server.get(participant.Player, "Arena.RunsCompleted") or 0) + 1
+		DataUtility.server.set(participant.Player, "Arena.RunsCompleted", completedArenaRuns)
+		QuestService.IncrementStat(participant.Player, "Stats.TotalArenaRuns", 1)
+
 		if participant == winnerParticipant then
 			HorseService.RecordRaceWin(participant.Player, participant.HorseId, finishTimeMs, reward.Horseshoes)
 		end
@@ -749,6 +754,8 @@ local function begin_race(round)
 	round.LastStatusAt = 0
 
 	for _, participant in ipairs(round.Participants) do
+		local playedArenaRuns = (DataUtility.server.get(participant.Player, "Arena.RunsPlayed") or 0) + 1
+		DataUtility.server.set(participant.Player, "Arena.RunsPlayed", playedArenaRuns)
 		HorseService.RecordRaceEntry(participant.Player, participant.HorseId)
 		participant.Progress = 0
 		participant.SegmentStartProgress = 0
