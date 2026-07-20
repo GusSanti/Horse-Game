@@ -18,6 +18,7 @@ local RaceConfig = require(GameData:WaitForChild("RaceConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local HorseRaceVisuals = require(HudModules:WaitForChild("HorseRaceVisuals"))
+local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 local Notifications = require(HudModules:WaitForChild("Notifications"))
 
 local localPlayer = Players.LocalPlayer
@@ -328,25 +329,15 @@ local function render_horse_viewport(viewport, entry)
 		return
 	end
 
-	clear_viewport(viewport)
-	local model = RaceVisualFactory.CreateRaceModel(entry, nil)
-	if not model then
-		return
-	end
-
-	local worldModel = Instance.new("WorldModel")
-	model.Parent = worldModel
-	worldModel.Parent = viewport
-
-	local boxCFrame, boxSize = model:GetBoundingBox()
-	local focus = boxCFrame.Position + Vector3.new(0, boxSize.Y * 0.1, 0)
-	local distance = math.max(boxSize.X, boxSize.Y, boxSize.Z) * 1.45
-	local camera = Instance.new("Camera")
-	camera.FieldOfView = 32
-	camera.CFrame = CFrame.lookAt(focus + Vector3.new(boxSize.X * 0.28, boxSize.Y * 0.08, distance), focus)
-	camera.Parent = viewport
-	viewport.BackgroundTransparency = 1
-	viewport.CurrentCamera = camera
+	HorseViewportRenderer.QueueCatalog(
+		viewport,
+		entry.CatalogId or entry.HorseId or entry.Id,
+		HorseViewportRenderer.Presets.Race,
+		{
+			ModelKey = entry.PlaceholderModelKey,
+			Priority = 3,
+		}
+	)
 end
 
 local function render_player_viewport(viewport, userId)

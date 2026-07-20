@@ -7,14 +7,16 @@ local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local ClientModules = Modules:WaitForChild("Client")
 local GameData = Modules:WaitForChild("GameData")
+local HudModules = ClientModules:WaitForChild("Hud")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local Trove = require(Libraries:WaitForChild("Trove"))
+local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 
 local MAIN_UI_NAMES = { "MainUI" }
@@ -34,26 +36,10 @@ local WHEEL_SPIN_DURATION = 5.2
 local WHEEL_SPIN_FULL_TURNS = 6
 local RESULT_DISPLAY_SECONDS = 3
 
-local SLOT_CAMERA_CONFIG = {
-	FieldOfView = 30,
-	FocusYOffsetScale = 0.18,
-	FocusZOffsetScale = -0.28,
-	RadiusScale = 0.5,
-	DistanceMultiplier = 0.7,
-	CameraOffsetScale = Vector3.new(0.18, 0.08, -0.54),
-}
-
-local RESULT_CAMERA_CONFIG = {
-	FieldOfView = 27,
-	FocusYOffsetScale = 0.2,
-	FocusZOffsetScale = -0.32,
-	RadiusScale = 0.48,
-	DistanceMultiplier = 0.66,
-	CameraOffsetScale = Vector3.new(0.14, 0.07, -0.48),
-}
+local SLOT_CAMERA_CONFIG = HorseViewportRenderer.Presets.Wheel
+local RESULT_CAMERA_CONFIG = HorseViewportRenderer.Presets.Reward
 
 local horseOptions = HorseCatalog.GetRouletteHorseOptions()
-local previewSnapshotCache = {}
 
 local rootTrove = Trove.new()
 local uiTrove = Trove.new()
@@ -145,15 +131,6 @@ local function find_viewport_frame(root)
 	end
 
 	return find_named_instance(root, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
-end
-
-local function clear_preview_cache()
-	for cacheKey, snapshot in pairs(previewSnapshotCache) do
-		if snapshot and snapshot.ModelTemplate then
-			snapshot.ModelTemplate:Destroy()
-		end
-		previewSnapshotCache[cacheKey] = nil
-	end
 end
 
 local function create(className, properties)
@@ -273,285 +250,23 @@ local function hide_reward_gui()
 end
 
 local function clear_viewport(viewportFrame)
-	if not viewportFrame then
-		return
-	end
-
-	for _, child in ipairs(viewportFrame:GetChildren()) do
-		if child:IsA("UIAspectRatioConstraint")
-			or child:IsA("UICorner")
-			or child:IsA("UIStroke")
-			or child:IsA("UIPadding")
-			or child:IsA("UISizeConstraint")
-			or child:IsA("UITextSizeConstraint")
-			or child:IsA("UIListLayout")
-		then
-			continue
-		end
-
-		child:Destroy()
-	end
-
-	viewportFrame.CurrentCamera = nil
-end
-
-local function resolve_catalog_model(catalogId)
-	local definition = HorseCatalog.GetDefinition(catalogId) or HorseCatalog.GetDefinition("Default")
-	if not definition then
-		return nil
-	end
-
-	local candidateKeys = {
-		definition.PlaceholderModelKey,
-		definition.DisplayName,
-		definition.CatalogId,
-	}
-
-	for _, candidateKey in ipairs(candidateKeys) do
-		if type(candidateKey) == "string" and candidateKey ~= "" then
-			local model = RaceVisualFactory.FindTemplateModel(candidateKey)
-			if model then
-				return model:Clone()
-			end
-		end
-	end
-
-	return RaceVisualFactory.BuildFallbackHorseModel({
-		HorseId = catalogId,
-		Id = catalogId,
-		CatalogId = definition.CatalogId,
-		PlaceholderModelKey = definition.PlaceholderModelKey or "",
-	})
-end
-
-local function prepare_preview_model(root)
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
-			descendant:Destroy()
-		elseif descendant:IsA("BillboardGui") or descendant:IsA("SurfaceGui") or descendant:IsA("ProximityPrompt") then
-			descendant:Destroy()
-		elseif descendant:IsA("BasePart") then
-			descendant.Anchored = true
-			descendant.CanCollide = false
-			descendant.CanQuery = false
-			descendant.CanTouch = false
-			descendant.CastShadow = false
-			descendant.Material = Enum.Material.SmoothPlastic
-			descendant.Transparency = 0
-			descendant.Reflectance = 0
-		end
-	end
-
-	if root:IsA("Model") then
-		RaceVisualFactory.PrepareModel(root)
-	elseif root:IsA("BasePart") then
-		root.Anchored = true
-		root.CanCollide = false
-		root.CanQuery = false
-		root.CanTouch = false
-		root.CastShadow = false
-		root.Material = Enum.Material.SmoothPlastic
-		root.Transparency = 0
-	end
-end
-
-local function get_bounding_box(root)
-	if root:IsA("Model") then
-		return root:GetBoundingBox()
-	end
-
-	if root:IsA("BasePart") then
-		return root.CFrame, root.Size
-	end
-
-	local model = Instance.new("Model")
-
-	for _, child in ipairs(root:GetChildren()) do
-		child.Parent = model
-	end
-
-	local boxCFrame, boxSize = model:GetBoundingBox()
-
-	for _, child in ipairs(model:GetChildren()) do
-		child.Parent = root
-	end
-
-	model:Destroy()
-	return boxCFrame, boxSize
-end
-
-local function get_named_part_positions(root, patterns)
-	local positions = {}
-
-	local function matches_pattern(instanceName)
-		local normalizedName = normalize_key(instanceName)
-		if not normalizedName then
-			return false
-		end
-
-		for _, pattern in ipairs(patterns) do
-			if string.find(normalizedName, pattern, 1, true) then
-				return true
-			end
-		end
-
-		return false
-	end
-
-	local function push_position(instance)
-		if instance:IsA("BasePart") and matches_pattern(instance.Name) then
-			positions[#positions + 1] = instance.Position
-		end
-	end
-
-	if root:IsA("BasePart") then
-		push_position(root)
-	end
-
-	for _, descendant in ipairs(root:GetDescendants()) do
-		push_position(descendant)
-	end
-
-	return positions
-end
-
-local function average_positions(positions)
-	if #positions == 0 then
-		return nil
-	end
-
-	local total = Vector3.zero
-
-	for _, position in ipairs(positions) do
-		total += position
-	end
-
-	return total / #positions
-end
-
-local function get_preview_camera(focusPoint, boxSize, cameraConfig, forwardVector)
-	local normalizedForward = forwardVector
-	if normalizedForward.Magnitude <= 0.001 then
-		normalizedForward = Vector3.new(0, 0, -1)
-	else
-		normalizedForward = normalizedForward.Unit
-	end
-
-	local up = Vector3.yAxis
-	local right = normalizedForward:Cross(up)
-	if right.Magnitude <= 0.001 then
-		right = Vector3.xAxis
-	else
-		right = right.Unit
-	end
-
-	local visualRadius = math.max(
-		boxSize.X * 0.68,
-		boxSize.Y * 0.58,
-		boxSize.Z * 0.2
-	) * cameraConfig.RadiusScale
-	local distance = (visualRadius / math.tan(math.rad(cameraConfig.FieldOfView * 0.5)) + visualRadius)
-		* cameraConfig.DistanceMultiplier
-	local offsetScale = cameraConfig.CameraOffsetScale
-	local forwardDistanceScale = math.max(0.2, math.abs(offsetScale.Z))
-	local offset = (normalizedForward * distance * forwardDistanceScale)
-		+ (right * distance * offsetScale.X)
-		+ (up * distance * offsetScale.Y)
-
-	return CFrame.lookAt(focusPoint + offset, focusPoint)
-end
-
-local function build_preview_snapshot(catalogId, cameraConfig, cameraKey)
-	local cacheKey = table.concat({ cameraKey, catalogId }, "|")
-	local cachedSnapshot = previewSnapshotCache[cacheKey]
-	if cachedSnapshot then
-		return cachedSnapshot
-	end
-
-	local model = resolve_catalog_model(catalogId)
-	if not model then
-		return nil
-	end
-
-	prepare_preview_model(model)
-
-	local boxCFrame, boxSize = get_bounding_box(model)
-	if not boxCFrame or not boxSize then
-		model:Destroy()
-		return nil
-	end
-
-	local headPoint = average_positions(get_named_part_positions(model, { "head", "face", "neck", "mane", "nose" }))
-	local tailPoint = average_positions(get_named_part_positions(model, { "tail", "rear", "hind" }))
-	local focusPoint = headPoint or (
-		boxCFrame.Position + Vector3.new(
-			0,
-			boxSize.Y * cameraConfig.FocusYOffsetScale,
-			boxSize.Z * cameraConfig.FocusZOffsetScale
-		)
-	)
-	local forwardVector = if headPoint and tailPoint then (headPoint - tailPoint) else boxCFrame.LookVector
-
-	cachedSnapshot = {
-		ModelTemplate = model,
-		FieldOfView = cameraConfig.FieldOfView,
-		CameraCFrame = get_preview_camera(focusPoint, boxSize, cameraConfig, forwardVector),
-		Ambient = Color3.fromRGB(220, 220, 220),
-		LightColor = Color3.fromRGB(255, 255, 255),
-		LightDirection = Vector3.new(-0.8, -1, -0.45),
-	}
-	previewSnapshotCache[cacheKey] = cachedSnapshot
-
-	return cachedSnapshot
+	HorseViewportRenderer.Clear(viewportFrame)
 end
 
 local function prewarm_preview_snapshots()
-	task.spawn(function()
-		for index, horseOption in ipairs(horseOptions) do
-			local catalogId = horseOption and horseOption.CatalogId
-			if type(catalogId) == "string" and catalogId ~= "" then
-				build_preview_snapshot(catalogId, SLOT_CAMERA_CONFIG, "wheel")
-				build_preview_snapshot(catalogId, RESULT_CAMERA_CONFIG, "reward")
-			end
-
-			if index < #horseOptions then
-				RunService.Heartbeat:Wait()
-			end
-		end
-	end)
+	HorseViewportRenderer.PrewarmCatalogs(horseOptions, { SLOT_CAMERA_CONFIG, RESULT_CAMERA_CONFIG })
 end
 
 local function populate_horse_viewport(viewportFrame, horseOption, cameraConfig, cameraKey)
-	if not viewportFrame then
-		return
-	end
-
-	clear_viewport(viewportFrame)
-
+	if not viewportFrame then return end
 	if not horseOption then
+		HorseViewportRenderer.Clear(viewportFrame)
 		return
 	end
-
-	local snapshot = build_preview_snapshot(horseOption.CatalogId, cameraConfig, cameraKey)
-	if not snapshot then
-		return
-	end
-
-	local worldModel = Instance.new("WorldModel")
-	worldModel.Parent = viewportFrame
-
-	snapshot.ModelTemplate:Clone().Parent = worldModel
-
-	local camera = Instance.new("Camera")
-	camera.FieldOfView = snapshot.FieldOfView
-	camera.CFrame = snapshot.CameraCFrame
-	camera.Parent = viewportFrame
-
-	viewportFrame.CurrentCamera = camera
-	viewportFrame.BackgroundTransparency = 1
-	viewportFrame.Ambient = snapshot.Ambient
-	viewportFrame.LightColor = snapshot.LightColor
-	viewportFrame.LightDirection = snapshot.LightDirection
+	HorseViewportRenderer.QueueCatalog(viewportFrame, horseOption.CatalogId, cameraConfig, {
+		ModelKey = horseOption.ModelKey,
+		Priority = cameraKey == "reward" and 1 or 4,
+	})
 end
 
 local function find_horse_option(catalogId)
@@ -1012,7 +727,6 @@ if type(initialPendingReveal) == "table" then
 end
 
 rootTrove:Add(function()
-	clear_preview_cache()
 	uiTrove:Destroy()
 	hide_reward_gui()
 end)

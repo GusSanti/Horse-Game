@@ -11,7 +11,7 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local HorseIndexViewportCache = require(ClientModules:WaitForChild("Hud"):WaitForChild("HorseIndexViewportCache"))
+local HorseViewportRenderer = require(ClientModules:WaitForChild("Hud"):WaitForChild("HorseViewportRenderer"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
@@ -52,29 +52,8 @@ local DETAILS_DISPLAY_NAMES = { "ItemDisplayBG" }
 local DETAILS_IMAGE_NAMES = { "HorseImage" }
 local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
 
-local GRID_CAMERA_CONFIG = {
-	FieldOfView = 24,
-	FocusYOffsetScale = 0.34,
-	FocusZOffsetScale = -0.42,
-	FaceFocusYOffsetScale = 0.15, -- 1. AUMENTE este valor (ex: de 0.04 para 0.15). Isso sobe o alvo da visão.
-	RadiusScale = 0.52,
-	DistanceMultiplier = 2.4, -- Aproveitei e afastei um pouco mais para garantir que o corpo caiba
-	
-	-- 2. ALTERE O EIXO Y (o valor do meio). Estava 0.05, coloque um valor NEGATIVO.
-	CameraOffsetScale = Vector3.new(0.34, -0.5, -0.76), 
-}
-
-local DETAILS_CAMERA_CONFIG = {
-	FieldOfView = 22,
-	FocusYOffsetScale = 0.36,
-	FocusZOffsetScale = -0.44,
-	FaceFocusYOffsetScale = 0.15, -- 1. AUMENTE este valor
-	RadiusScale = 0.54,
-	DistanceMultiplier = 2.4, 
-	
-	-- 2. ALTERE O EIXO Y (o valor do meio).
-	CameraOffsetScale = Vector3.new(0.38, -0.5, -0.74),
-}
+local GRID_CAMERA_CONFIG = HorseViewportRenderer.Presets.IndexGrid
+local DETAILS_CAMERA_CONFIG = HorseViewportRenderer.Presets.IndexDetails
 
 -- VARIABLES
 local localPlayer = Players.LocalPlayer
@@ -566,19 +545,18 @@ end
 
 local function apply_viewport_job(job)
 	if job.Kind == "clear" then
-		HorseIndexViewportCache.ClearViewport(job.ViewportFrame)
+		HorseViewportRenderer.Clear(job.ViewportFrame)
 		if job.CardEntry then
 			job.CardEntry.ViewportPopulated = false
 		end
 		return
 	end
 
-	local populated = HorseIndexViewportCache.ApplyToViewport(
+	local populated = HorseViewportRenderer.ApplyCatalog(
 		job.ViewportFrame,
 		job.CatalogId,
-		job.IsUnlocked,
 		job.CameraConfig,
-		job.CameraKey
+		{ Silhouette = not job.IsUnlocked }
 	)
 
 	if job.CardEntry then
@@ -722,7 +700,7 @@ local function render_details(entry)
 	if not entry then
 		if ui.DetailsNameLabel then ui.DetailsNameLabel.Text = "" end
 		if ui.DetailsTextLabel then ui.DetailsTextLabel.Text = "" end
-		if ui.DetailsViewport then HorseIndexViewportCache.ClearViewport(ui.DetailsViewport) end
+		if ui.DetailsViewport then HorseViewportRenderer.Clear(ui.DetailsViewport) end
 		return
 	end
 
@@ -800,7 +778,7 @@ local function create_card_entry(ui, entry, entryIndex)
 	end
 
 	if viewportFrame then
-		HorseIndexViewportCache.ClearViewport(viewportFrame)
+		HorseViewportRenderer.Clear(viewportFrame)
 	end
 
 	if clickTarget then
