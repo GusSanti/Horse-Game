@@ -15,6 +15,7 @@ local PlayerSettingsService = require(ServerStorage:WaitForChild("Modules"):Wait
 local PersistentToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("PersistentToolService"))
 local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
 local RaceService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("RaceService"))
+local SoundUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("SoundUtility"))
 
 local function safe_require_module(moduleScript: ModuleScript, moduleName: string)
 	local success, result = pcall(require, moduleScript)
@@ -77,6 +78,7 @@ local function bootstrap_player(player: Player): ()
 end
 
 safe_init_service("CookingService", CookingService)
+safe_init_service("SoundUtility", SoundUtility)
 FarmingShopService.Init()
 HorseIndexService.Init()
 ConsumableToolService.Init()

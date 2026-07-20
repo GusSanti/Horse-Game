@@ -11,8 +11,10 @@ local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
+local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
+local InventoryLoadoutService = require(script.Parent:WaitForChild("InventoryLoadoutService"))
 
 local FarmingShopService = {}
 
@@ -25,6 +27,35 @@ local LEGACY_TOOL_ITEM_ATTRIBUTE = "ToolItemId"
 local SHOP_ACTION_FUNCTION_NAME = "FarmingShopAction"
 local SEED_INVENTORY_PATH = "Inventory.Seeds"
 local FRUIT_INVENTORY_PATH = "Inventory.Fruits"
+local SEED_TOOL_VERSION_ATTRIBUTE = "FarmingSeedToolVersion"
+local SEED_TOOL_VERSION = 1
+local SEED_TOOL_PACKET_COLOR = Color3.fromRGB(227, 197, 148)
+local SEED_TOOL_EDGE_COLOR = Color3.fromRGB(117, 83, 52)
+local SEED_TOOL_STRIPE_COLOR = Color3.fromRGB(248, 231, 190)
+local SEED_TOOL_COLOR_RULES = {
+	{ "beetroot", Color3.fromRGB(137, 47, 92) },
+	{ "carrot", Color3.fromRGB(236, 121, 43) },
+	{ "corn", Color3.fromRGB(240, 193, 58) },
+	{ "eggplant", Color3.fromRGB(96, 63, 144) },
+	{ "garlic", Color3.fromRGB(235, 226, 199) },
+	{ "grape", Color3.fromRGB(110, 73, 173) },
+	{ "lettuce", Color3.fromRGB(93, 178, 77) },
+	{ "pepper", Color3.fromRGB(204, 62, 52) },
+	{ "pineapple", Color3.fromRGB(226, 165, 54) },
+	{ "potato", Color3.fromRGB(166, 117, 72) },
+	{ "pumpkin", Color3.fromRGB(220, 117, 41) },
+	{ "radish", Color3.fromRGB(220, 67, 94) },
+	{ "strawberry", Color3.fromRGB(211, 55, 65) },
+	{ "tomato", Color3.fromRGB(216, 62, 55) },
+	{ "wheat", Color3.fromRGB(214, 171, 72) },
+}
+local SEED_TOOL_FALLBACK_COLORS = {
+	Color3.fromRGB(93, 178, 77),
+	Color3.fromRGB(236, 121, 43),
+	Color3.fromRGB(214, 171, 72),
+	Color3.fromRGB(204, 62, 52),
+	Color3.fromRGB(110, 73, 173),
+}
 
 local function normalize_key(value): string?
 	if type(value) ~= "string" then
@@ -289,7 +320,137 @@ local function is_matching_tool(tool: Tool, itemDefinition): boolean
 	return false
 end
 
+local function get_seed_tool_color(itemDefinition): Color3
+	local normalizedItemId = normalize_key(itemDefinition.ItemId)
+	local normalizedCropId = normalize_key(itemDefinition.CropId)
+	local normalizedDisplayName = normalize_key(itemDefinition.DisplayName)
+
+	for _, rule in ipairs(SEED_TOOL_COLOR_RULES) do
+		local token = rule[1]
+		if (normalizedItemId and string.find(normalizedItemId, token, 1, true))
+			or (normalizedCropId and string.find(normalizedCropId, token, 1, true))
+			or (normalizedDisplayName and string.find(normalizedDisplayName, token, 1, true))
+		then
+			return rule[2]
+		end
+	end
+
+	local source = normalizedItemId or normalizedCropId or normalizedDisplayName or "seed"
+	local hash = 0
+	for index = 1, #source do
+		hash += string.byte(source, index) or 0
+	end
+
+	return SEED_TOOL_FALLBACK_COLORS[(hash % #SEED_TOOL_FALLBACK_COLORS) + 1]
+end
+
+local function configure_seed_tool_part(part: BasePart, color: Color3, material)
+	part.Anchored = false
+	part.CanCollide = false
+	part.CanTouch = false
+	part.CanQuery = false
+	part.Massless = true
+	part.CastShadow = false
+	part.Material = material or Enum.Material.SmoothPlastic
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.Color = color
+end
+
+local function weld_seed_tool_part(part: BasePart, handle: BasePart)
+	if part == handle then
+		return
+	end
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = part
+	weld.Parent = part
+end
+
+local function create_seed_tool_part(
+	parent: Instance,
+	handle: BasePart?,
+	name: string,
+	size: Vector3,
+	offset: CFrame,
+	color: Color3,
+	material
+): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.CFrame = offset
+	configure_seed_tool_part(part, color, material)
+	part.Parent = parent
+
+	if handle then
+		weld_seed_tool_part(part, handle)
+	end
+
+	return part
+end
+
+local function create_seed_tool_disc(
+	parent: Instance,
+	handle: BasePart,
+	name: string,
+	position: Vector3,
+	scale: Vector3,
+	color: Color3
+): Part
+	local part = create_seed_tool_part(
+		parent,
+		handle,
+		name,
+		Vector3.new(1, 1, 1),
+		CFrame.new(position),
+		color,
+		Enum.Material.SmoothPlastic
+	)
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Scale = scale
+	mesh.Parent = part
+	return part
+end
+
+local function create_seed_tool(itemDefinition): Tool
+	local tool = Instance.new("Tool")
+	tool.Name = itemDefinition.ToolName
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool.ToolTip = itemDefinition.DisplayName
+	tool.Grip = CFrame.new(0, -0.12, -0.18) * CFrame.Angles(math.rad(-12), math.rad(8), 0)
+	tool:SetAttribute(SEED_TOOL_VERSION_ATTRIBUTE, SEED_TOOL_VERSION)
+
+	local cropColor = get_seed_tool_color(itemDefinition)
+	local handle = create_seed_tool_part(
+		tool,
+		nil,
+		"Handle",
+		Vector3.new(0.64, 0.78, 0.08),
+		CFrame.new(),
+		SEED_TOOL_PACKET_COLOR,
+		Enum.Material.SmoothPlastic
+	)
+	handle.Massless = false
+
+	create_seed_tool_part(tool, handle, "TopStripe", Vector3.new(0.56, 0.11, 0.09), CFrame.new(0, 0.27, -0.04), SEED_TOOL_STRIPE_COLOR, Enum.Material.SmoothPlastic)
+	create_seed_tool_part(tool, handle, "BottomStripe", Vector3.new(0.56, 0.08, 0.09), CFrame.new(0, -0.28, -0.04), SEED_TOOL_EDGE_COLOR, Enum.Material.SmoothPlastic)
+	create_seed_tool_part(tool, handle, "ColorPatch", Vector3.new(0.32, 0.27, 0.1), CFrame.new(0, -0.02, -0.08), cropColor, Enum.Material.SmoothPlastic)
+	create_seed_tool_disc(tool, handle, "SeedA", Vector3.new(-0.08, 0.01, -0.14), Vector3.new(0.11, 0.16, 0.03), Color3.fromRGB(65, 56, 37))
+	create_seed_tool_disc(tool, handle, "SeedB", Vector3.new(0.07, -0.05, -0.14), Vector3.new(0.1, 0.15, 0.03), Color3.fromRGB(83, 66, 38))
+	create_seed_tool_disc(tool, handle, "Highlight", Vector3.new(-0.04, 0.12, -0.15), Vector3.new(0.11, 0.04, 0.02), Color3.fromRGB(255, 245, 202))
+
+	return tool
+end
+
 local function create_placeholder_tool(itemDefinition): Tool
+	if itemDefinition.Kind == "Seed" then
+		return create_seed_tool(itemDefinition)
+	end
+
 	local tool = Instance.new("Tool")
 	tool.Name = itemDefinition.ToolName
 	tool.RequiresHandle = false
@@ -309,6 +470,10 @@ local function create_placeholder_tool(itemDefinition): Tool
 end
 
 local function get_item_tool_template(itemDefinition): Instance
+	if itemDefinition.Kind == "Seed" then
+		return create_seed_tool(itemDefinition)
+	end
+
 	local template = FarmingUtility.GetItemAsset(itemDefinition)
 	if template then
 		return template
@@ -327,17 +492,21 @@ end
 
 local function sanitize_tool(tool: Tool, itemDefinition)
 	tool.Name = itemDefinition.ToolName
-	tool.RequiresHandle = false
 	tool.ToolTip = itemDefinition.DisplayName
 	tool.CanBeDropped = false
 	tool:SetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE, itemDefinition.ItemId)
 	tool:SetAttribute(FarmingUtility.FARMING_CROP_ATTRIBUTE, itemDefinition.CropId)
 	tool:SetAttribute(FarmingUtility.FARMING_KIND_ATTRIBUTE, itemDefinition.Kind)
 
+	local directHandle = tool:FindFirstChild("Handle")
 	local handle = FarmingUtility.GetToolHandle(tool)
+	tool.RequiresHandle = itemDefinition.Kind == "Seed" and directHandle ~= nil and directHandle:IsA("BasePart")
 	if handle then
 		handle.Anchored = false
 		handle.CanCollide = false
+		handle.CanTouch = false
+		handle.CanQuery = false
+		handle.Massless = false
 	end
 
 	for _, attributeName in ipairs({
@@ -394,6 +563,23 @@ local function collect_matching_tools(container: Instance?, itemDefinition): {To
 	return tools
 end
 
+local function remove_stale_seed_tools(tools: { Tool }, itemDefinition): { Tool }
+	if itemDefinition.Kind ~= "Seed" then
+		return tools
+	end
+
+	local currentTools = {}
+	for _, tool in ipairs(tools) do
+		if tool:GetAttribute(SEED_TOOL_VERSION_ATTRIBUTE) == SEED_TOOL_VERSION then
+			currentTools[#currentTools + 1] = tool
+		elseif tool.Parent then
+			tool:Destroy()
+		end
+	end
+
+	return currentTools
+end
+
 local function sync_item_tools(player: Player, itemDefinition)
 	if not player.Parent then
 		return
@@ -403,8 +589,8 @@ local function sync_item_tools(player: Player, itemDefinition)
 	local character = player.Character
 	local ownedCount = get_item_count(player, itemDefinition)
 	local desiredCount = if ownedCount > 0 and is_item_selected_for_hotbar(player, itemDefinition) then 1 else 0
-	local backpackTools = collect_matching_tools(backpack, itemDefinition)
-	local characterTools = collect_matching_tools(character, itemDefinition)
+	local backpackTools = remove_stale_seed_tools(collect_matching_tools(backpack, itemDefinition), itemDefinition)
+	local characterTools = remove_stale_seed_tools(collect_matching_tools(character, itemDefinition), itemDefinition)
 	local liveCount = #backpackTools + #characterTools
 
 	if liveCount > desiredCount then
@@ -433,7 +619,7 @@ local function sync_item_tools(player: Player, itemDefinition)
 
 	local starterGear = player:FindFirstChild("StarterGear") or player:WaitForChild("StarterGear", 5)
 	if starterGear then
-		local starterTools = collect_matching_tools(starterGear, itemDefinition)
+		local starterTools = remove_stale_seed_tools(collect_matching_tools(starterGear, itemDefinition), itemDefinition)
 		if #starterTools > desiredCount then
 			for index = 1, #starterTools - desiredCount do
 				local tool = starterTools[#starterTools - index + 1]
@@ -672,16 +858,16 @@ function FarmingShopService.BuySeed(player: Player, itemId)
 		return create_state_payload(player, false, "NotEnoughHorseshoes", itemDefinition, profileData)
 	end
 
-	local bucket = select(1, write_item_count(
-		profileData,
-		itemDefinition,
-		get_item_count_from_profile(profileData, itemDefinition) + 1
-	))
+	local previousCount = get_item_count_from_profile(profileData, itemDefinition)
+	local bucket = select(1, write_item_count(profileData, itemDefinition, previousCount + 1))
 
 	DataUtility.server.set_many(player, {
 		{ Path = "Currencies.Horseshoes", Value = currentHorseshoes - itemDefinition.Price },
 		{ Path = itemDefinition.InventoryPath, Value = bucket },
 	})
+
+	InventoryLoadoutService.TryAutoEquipNewItem(player, itemDefinition.ItemId, previousCount)
+	SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
 
 	return create_state_payload(player, true, "SeedPurchased", itemDefinition, profileData)
 end
@@ -708,6 +894,7 @@ function FarmingShopService.SellFruit(player: Player, itemId)
 		{ Path = itemDefinition.InventoryPath, Value = bucket },
 		{ Path = "Currencies.Horseshoes", Value = get_horseshoes_from_profile(profileData) + itemDefinition.SellPrice },
 	})
+	SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
 
 	return create_state_payload(player, true, "FruitSold", itemDefinition, profileData)
 end
@@ -748,15 +935,18 @@ function FarmingShopService.AwardHarvest(player: Player, itemId, amount: number?
 		return create_state_payload(player, false, "ProfileUnavailable", itemDefinition)
 	end
 
+	local previousCount = get_item_count_from_profile(profileData, itemDefinition)
 	local bucket = select(1, write_item_count(
 		profileData,
 		itemDefinition,
-		get_item_count_from_profile(profileData, itemDefinition) + (amount or itemDefinition.HarvestYield or 1)
+		previousCount + (amount or itemDefinition.HarvestYield or 1)
 	))
 
 	DataUtility.server.set_many(player, {
 		{ Path = itemDefinition.InventoryPath, Value = bucket },
 	})
+
+	InventoryLoadoutService.TryAutoEquipNewItem(player, itemDefinition.ItemId, previousCount)
 
 	return create_state_payload(player, true, "HarvestAwarded", itemDefinition, profileData)
 end

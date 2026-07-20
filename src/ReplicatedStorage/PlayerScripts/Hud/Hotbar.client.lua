@@ -31,6 +31,8 @@ local MONEY_BG_NAME = "MoneyBG"
 local MONEY_CONTAINER_NAME = "Money"
 local MONEY_ADD_BUTTON_NAMES = { "AddBT" }
 local CLICK_LAYER_NAME = "HotbarButton"
+local ITEM_HAND_LABEL_NAME = "ItemHandTX"
+local GENERATED_VIEWPORT_NAME = "ViewportFrame"
 local MONEY_LABEL_NAMES = { "MoneyTX" }
 local MONEY_SHADOW_LABEL_NAMES = { "MoneyShadowTX" }
 local AMOUNT_LABEL_NAMES = { "AmountTX", "Quant" }
@@ -46,6 +48,39 @@ local VIEWPORT_DISTANCE_MULTIPLIER = 1.55
 local VIEWPORT_MIN_DISTANCE = 1.75
 local VIEWPORT_FOCUS_Y_SCALE = 0.02
 local VIEWPORT_CAMERA_OFFSET_SCALE = Vector3.new(0.08, 0.05, 1.15)
+local SEED_VIEWPORT_RADIUS_SCALE = 0.78
+local SEED_VIEWPORT_DISTANCE_MULTIPLIER = 1.05
+local SEED_VIEWPORT_MIN_DISTANCE = 0.55
+local SEED_VIEWPORT_FOCUS_Y_SCALE = 0.04
+local SEED_VIEWPORT_CAMERA_OFFSET_SCALE = Vector3.new(0.06, 0.08, 1.05)
+local SEED_PREVIEW_CACHE_VERSION = "seed-preview-v2"
+local SEED_PACKET_COLOR = Color3.fromRGB(227, 197, 148)
+local SEED_PACKET_EDGE_COLOR = Color3.fromRGB(117, 83, 52)
+local SEED_PACKET_STRIPE_COLOR = Color3.fromRGB(248, 231, 190)
+local SEED_PREVIEW_COLOR_RULES = {
+	{ "beetroot", Color3.fromRGB(137, 47, 92) },
+	{ "carrot", Color3.fromRGB(236, 121, 43) },
+	{ "corn", Color3.fromRGB(240, 193, 58) },
+	{ "eggplant", Color3.fromRGB(96, 63, 144) },
+	{ "garlic", Color3.fromRGB(235, 226, 199) },
+	{ "grape", Color3.fromRGB(110, 73, 173) },
+	{ "lettuce", Color3.fromRGB(93, 178, 77) },
+	{ "pepper", Color3.fromRGB(204, 62, 52) },
+	{ "pineapple", Color3.fromRGB(226, 165, 54) },
+	{ "potato", Color3.fromRGB(166, 117, 72) },
+	{ "pumpkin", Color3.fromRGB(220, 117, 41) },
+	{ "radish", Color3.fromRGB(220, 67, 94) },
+	{ "strawberry", Color3.fromRGB(211, 55, 65) },
+	{ "tomato", Color3.fromRGB(216, 62, 55) },
+	{ "wheat", Color3.fromRGB(214, 171, 72) },
+}
+local SEED_PREVIEW_FALLBACK_COLORS = {
+	Color3.fromRGB(93, 178, 77),
+	Color3.fromRGB(236, 121, 43),
+	Color3.fromRGB(214, 171, 72),
+	Color3.fromRGB(204, 62, 52),
+	Color3.fromRGB(110, 73, 173),
+}
 local MAX_HOTBAR_SLOTS = InventoryLoadout.MAX_HOTBAR_SLOTS or 9
 local SELECTION_SCALE_NAME = "HotbarSelectionScale"
 local SELECTED_SCALE = 1.1
@@ -53,6 +88,18 @@ local SELECTED_POP_SCALE = 1.22
 local SELECTED_POP_TIME = 0.09
 local SELECTED_SETTLE_TIME = 0.14
 local DESELECT_TIME = 0.1
+local ITEM_HAND_FADE_TIME = 0.12
+local MONEY_CHANGE_LABEL_NAME = "MoneyChangeFX"
+local MONEY_CHANGE_IN_TIME = 0.12
+local MONEY_CHANGE_FLOAT_TIME = 0.62
+local MONEY_CHANGE_START_OFFSET = 4
+local MONEY_CHANGE_FLOAT_DISTANCE = 42
+local MONEY_CHANGE_MIN_WIDTH = 92
+local MONEY_CHANGE_HEIGHT = 30
+local MONEY_GAIN_COLOR = Color3.fromRGB(94, 255, 139)
+local MONEY_LOSS_COLOR = Color3.fromRGB(255, 105, 105)
+local MONEY_CHANGE_STROKE_COLOR = Color3.fromRGB(39, 24, 18)
+local MAX_MONEY_CHANGE_EFFECTS = 5
 
 local KEYCODE_TO_SLOT_INDEX = {
 	[Enum.KeyCode.One] = 1,
@@ -75,8 +122,10 @@ local uiRoot = nil
 local hudRoot = nil
 local hotbarFrame = nil
 local hotbarTemplate = nil
+local moneyTabFrame = nil
 local moneyLabel = nil
 local moneyShadowLabel = nil
+local itemHandLabel = nil
 local slotInstances = {}
 local slotTroves = {}
 local orderedItemKeys = {}
@@ -86,6 +135,12 @@ local refreshQueued = false
 local stickySelectionKey = nil
 local slotSelectionTweens = {}
 local slotSelectionTokens = {}
+local itemHandTweens = {}
+local itemHandToken = 0
+local itemHandOriginals = nil
+local itemHandTargetKey = nil
+local lastMoneyAmount = nil
+local moneyChangeEffects = {}
 
 local rootTrove = Trove.new()
 local backpackTrove = Trove.new()
@@ -308,17 +363,21 @@ local function find_hotbar_template(targetHotbar: Instance?): GuiObject?
 	return find_gui_object(targetHotbar, { TEMPLATE_NAME }, true)
 end
 
+local function find_item_hand_label(targetHudRoot: Instance?): TextLabel?
+	return find_text_label(targetHudRoot, { ITEM_HAND_LABEL_NAME }, true)
+end
+
+local function find_money_tab(targetHudRoot: Instance?): GuiObject?
+	return find_gui_object(targetHudRoot, { MONEY_TAB_NAME }, false)
+		or find_gui_object(targetHudRoot, { MONEY_TAB_NAME }, true)
+end
+
 local function find_money_labels(targetHudRoot: Instance?): (TextLabel?, TextLabel?)
 	if not targetHudRoot then
 		return nil, nil
 	end
 
-	local moneyTab = targetHudRoot:FindFirstChild(MONEY_TAB_NAME)
-	if not moneyTab then
-		moneyTab = targetHudRoot:FindFirstChild(MONEY_TAB_NAME, true)
-	end
-
-	local moneyRoot = moneyTab
+	local moneyRoot = find_money_tab(targetHudRoot)
 	if moneyRoot then
 		local moneyBackground = moneyRoot:FindFirstChild(MONEY_BG_NAME) or moneyRoot:FindFirstChild(MONEY_BG_NAME, true)
 		if moneyBackground then
@@ -338,8 +397,262 @@ local function find_money_labels(targetHudRoot: Instance?): (TextLabel?, TextLab
 	return primaryLabel, shadowLabel
 end
 
-local function update_money_display()
-	local text = format_amount(DataUtility.client.get("Currencies.Horseshoes"))
+local function get_money_amount(value): number
+	return math.max(0, math.floor(tonumber(value) or 0))
+end
+
+local function is_visible_in_gui_hierarchy(instance: GuiObject?): boolean
+	local current: Instance? = instance
+
+	while current and current:IsA("GuiObject") do
+		if not current.Visible then
+			return false
+		end
+
+		current = current.Parent
+	end
+
+	local layerCollector = instance and instance:FindFirstAncestorWhichIsA("LayerCollector")
+	if layerCollector and layerCollector.Enabled == false then
+		return false
+	end
+
+	return instance ~= nil
+end
+
+local function remove_money_change_effect(label: TextLabel)
+	for index, effect in ipairs(moneyChangeEffects) do
+		if effect == label then
+			table.remove(moneyChangeEffects, index)
+			break
+		end
+	end
+end
+
+local function clear_old_money_change_effects()
+	while #moneyChangeEffects >= MAX_MONEY_CHANGE_EFFECTS do
+		local oldEffect = table.remove(moneyChangeEffects, 1)
+		if oldEffect and oldEffect.Parent then
+			oldEffect:Destroy()
+		end
+	end
+end
+
+local function format_money_change(delta: number): string
+	local prefix = if delta > 0 then "+" else "-"
+	return prefix .. format_amount(math.abs(delta))
+end
+
+local function show_money_change_effect(delta: number)
+	if delta == 0 then
+		return
+	end
+
+	if not hudRoot or not hudRoot:IsA("GuiObject") then
+		return
+	end
+
+	if not moneyTabFrame or not moneyTabFrame.Parent or not is_visible_in_gui_hierarchy(moneyTabFrame) then
+		return
+	end
+
+	local rootGui = hudRoot :: GuiObject
+	local tabGui = moneyTabFrame :: GuiObject
+	local rootSize = rootGui.AbsoluteSize
+	local tabSize = tabGui.AbsoluteSize
+	if rootSize.X <= 0 or rootSize.Y <= 0 or tabSize.X <= 0 or tabSize.Y <= 0 then
+		return
+	end
+
+	clear_old_money_change_effects()
+
+	local relativePosition = tabGui.AbsolutePosition - rootGui.AbsolutePosition
+	local centerX = relativePosition.X + tabSize.X * 0.5
+	local startY = relativePosition.Y - MONEY_CHANGE_START_OFFSET
+	local width = math.max(MONEY_CHANGE_MIN_WIDTH, tabSize.X * 0.9)
+	local textColor = if delta > 0 then MONEY_GAIN_COLOR else MONEY_LOSS_COLOR
+
+	local label = Instance.new("TextLabel")
+	label.Name = MONEY_CHANGE_LABEL_NAME
+	label.AnchorPoint = Vector2.new(0.5, 1)
+	label.BackgroundTransparency = 1
+	label.Position = UDim2.fromOffset(centerX, startY)
+	label.Size = UDim2.fromOffset(width, MONEY_CHANGE_HEIGHT)
+	label.Font = Enum.Font.GothamBold
+	label.Text = format_money_change(delta)
+	label.TextColor3 = textColor
+	label.TextScaled = true
+	label.TextTransparency = 1
+	label.TextStrokeColor3 = MONEY_CHANGE_STROKE_COLOR
+	label.TextStrokeTransparency = 1
+	label.ZIndex = math.max(tabGui.ZIndex + 20, 20)
+	label.Parent = rootGui
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.86
+	scale.Parent = label
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = MONEY_CHANGE_STROKE_COLOR
+	stroke.Thickness = 2
+	stroke.Transparency = 1
+	stroke.Parent = label
+
+	moneyChangeEffects[#moneyChangeEffects + 1] = label
+
+	local inPosition = UDim2.fromOffset(centerX, startY - 8)
+	local outPosition = UDim2.fromOffset(centerX, startY - MONEY_CHANGE_FLOAT_DISTANCE)
+	local inTween = TweenService:Create(label, TweenInfo.new(MONEY_CHANGE_IN_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Position = inPosition,
+		TextTransparency = 0,
+		TextStrokeTransparency = 0.2,
+	})
+	local strokeInTween = TweenService:Create(stroke, TweenInfo.new(MONEY_CHANGE_IN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Transparency = 0.15,
+	})
+	local scaleInTween = TweenService:Create(scale, TweenInfo.new(MONEY_CHANGE_IN_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1.08,
+	})
+
+	inTween:Play()
+	strokeInTween:Play()
+	scaleInTween:Play()
+
+	task.delay(MONEY_CHANGE_IN_TIME, function()
+		if not label or not label.Parent then
+			return
+		end
+
+		local floatTween = TweenService:Create(label, TweenInfo.new(MONEY_CHANGE_FLOAT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Position = outPosition,
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		})
+		local strokeOutTween = TweenService:Create(stroke, TweenInfo.new(MONEY_CHANGE_FLOAT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Transparency = 1,
+		})
+		local scaleOutTween = TweenService:Create(scale, TweenInfo.new(MONEY_CHANGE_FLOAT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Scale = 1,
+		})
+
+		floatTween.Completed:Connect(function()
+			remove_money_change_effect(label)
+			if label.Parent then
+				label:Destroy()
+			end
+		end)
+
+		floatTween:Play()
+		strokeOutTween:Play()
+		scaleOutTween:Play()
+	end)
+end
+
+local function cancel_item_hand_tweens()
+	for _, tween in ipairs(itemHandTweens) do
+		pcall(function()
+			tween:Cancel()
+		end)
+	end
+
+	table.clear(itemHandTweens)
+end
+
+local function get_item_hand_originals(label: TextLabel)
+	if itemHandOriginals and itemHandOriginals.Label == label then
+		return itemHandOriginals
+	end
+
+	itemHandOriginals = {
+		Label = label,
+		BackgroundTransparency = label.BackgroundTransparency,
+		TextTransparency = label.TextTransparency,
+		TextStrokeTransparency = label.TextStrokeTransparency,
+	}
+
+	return itemHandOriginals
+end
+
+local function set_item_hand_properties(label: TextLabel, properties)
+	pcall(function()
+		label.BackgroundTransparency = properties.BackgroundTransparency
+		label.TextTransparency = properties.TextTransparency
+		label.TextStrokeTransparency = properties.TextStrokeTransparency
+	end)
+end
+
+local function update_item_hand_display(itemKey: string?, displayName: string?)
+	local label = itemHandLabel
+	if not label or not label.Parent then
+		itemHandTargetKey = itemKey
+		return
+	end
+
+	local shouldShow = type(itemKey) == "string" and itemKey ~= "" and type(displayName) == "string" and displayName ~= ""
+	if itemHandTargetKey == itemKey and label.Visible == shouldShow and (not shouldShow or label.Text == displayName) then
+		return
+	end
+
+	itemHandTargetKey = itemKey
+	itemHandToken += 1
+	local token = itemHandToken
+	local originals = get_item_hand_originals(label)
+	cancel_item_hand_tweens()
+
+	if shouldShow then
+		label.Text = displayName
+		label.Visible = true
+		set_item_hand_properties(label, {
+			BackgroundTransparency = 1,
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		})
+	end
+
+	local targetProperties = if shouldShow then {
+			BackgroundTransparency = originals.BackgroundTransparency,
+			TextTransparency = originals.TextTransparency,
+			TextStrokeTransparency = originals.TextStrokeTransparency,
+		} else {
+			BackgroundTransparency = 1,
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		}
+	local tween = TweenService:Create(
+		label,
+		TweenInfo.new(ITEM_HAND_FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		targetProperties
+	)
+
+	itemHandTweens[1] = tween
+	tween:Play()
+
+	task.delay(ITEM_HAND_FADE_TIME, function()
+		if itemHandToken ~= token or not label or not label.Parent then
+			return
+		end
+
+		table.clear(itemHandTweens)
+
+		if shouldShow then
+			set_item_hand_properties(label, originals)
+			return
+		end
+
+		set_item_hand_properties(label, {
+			BackgroundTransparency = 1,
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		})
+		label.Text = ""
+		label.Visible = false
+	end)
+end
+
+local function update_money_display(value, animateChange: boolean?)
+	local amount = get_money_amount(if value ~= nil then value else DataUtility.client.get("Currencies.Horseshoes"))
+	local previousAmount = lastMoneyAmount
+	local text = format_amount(amount)
 
 	if moneyLabel and moneyLabel.Parent then
 		moneyLabel.Text = text
@@ -348,6 +661,14 @@ local function update_money_display()
 	if moneyShadowLabel and moneyShadowLabel.Parent then
 		moneyShadowLabel.Text = text
 	end
+
+	lastMoneyAmount = amount
+
+	if animateChange == false or previousAmount == nil or previousAmount == amount then
+		return
+	end
+
+	show_money_change_effect(amount - previousAmount)
 end
 
 local function find_money_add_button(targetHudRoot: Instance?): GuiButton?
@@ -355,7 +676,7 @@ local function find_money_add_button(targetHudRoot: Instance?): GuiButton?
 		return nil
 	end
 
-	local moneyTab = targetHudRoot:FindFirstChild(MONEY_TAB_NAME) or targetHudRoot:FindFirstChild(MONEY_TAB_NAME, true)
+	local moneyTab = find_money_tab(targetHudRoot)
 	return find_gui_button(moneyTab, MONEY_ADD_BUTTON_NAMES, true)
 end
 
@@ -651,6 +972,7 @@ local function resolve_tool_metadata(tool: Tool)
 				RenderSource = get_farming_render_source(farmingDefinition) or tool,
 				Quantity = math.max(quantity, 1),
 				ShowsQuantity = quantity > 1,
+				IsSeed = farmingDefinition.Kind == "Seed",
 			}
 		end
 	end
@@ -667,6 +989,7 @@ local function resolve_tool_metadata(tool: Tool)
 			RenderSource = get_catalog_render_source(toolDefinition) or tool,
 			Quantity = math.max(quantity, 1),
 			ShowsQuantity = not isDefaultItem and quantity > 1,
+			IsSeed = false,
 		}
 	end
 
@@ -678,6 +1001,7 @@ local function resolve_tool_metadata(tool: Tool)
 		RenderSource = tool,
 		Quantity = 1,
 		ShowsQuantity = false,
+		IsSeed = false,
 	}
 end
 
@@ -712,7 +1036,93 @@ local function create_fallback_preview_model(displayName: string): Model
 	return model
 end
 
-local function create_preview_model(source: Instance?, displayName: string): Model
+local function get_seed_preview_color(itemKey: string?, displayName: string?): Color3
+	local normalizedKey = normalize_key(itemKey)
+	local normalizedDisplayName = normalize_key(displayName)
+
+	for _, rule in ipairs(SEED_PREVIEW_COLOR_RULES) do
+		local token = rule[1]
+		if (normalizedKey and string.find(normalizedKey, token, 1, true))
+			or (normalizedDisplayName and string.find(normalizedDisplayName, token, 1, true))
+		then
+			return rule[2]
+		end
+	end
+
+	local source = normalizedKey or normalizedDisplayName or "seed"
+	local hash = 0
+	for index = 1, #source do
+		hash += string.byte(source, index) or 0
+	end
+
+	return SEED_PREVIEW_FALLBACK_COLORS[(hash % #SEED_PREVIEW_FALLBACK_COLORS) + 1]
+end
+
+local function configure_preview_part(part: BasePart, color: Color3, material)
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanTouch = false
+	part.CanQuery = false
+	part.CastShadow = false
+	part.Material = material or Enum.Material.SmoothPlastic
+	part.Color = color
+end
+
+local function create_preview_part(
+	parent: Instance,
+	name: string,
+	size: Vector3,
+	cframe: CFrame,
+	color: Color3,
+	material
+): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.CFrame = cframe
+	configure_preview_part(part, color, material)
+	part.Parent = parent
+	return part
+end
+
+local function create_seed_disc(
+	parent: Instance,
+	name: string,
+	position: Vector3,
+	scale: Vector3,
+	color: Color3
+): Part
+	local part = create_preview_part(parent, name, Vector3.new(1, 1, 1), CFrame.new(position), color, Enum.Material.SmoothPlastic)
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Scale = scale
+	mesh.Parent = part
+	return part
+end
+
+local function create_seed_preview_model(displayName: string, itemKey: string?): Model
+	local model = Instance.new("Model")
+	model.Name = ("%sSeedPreview"):format(displayName or "Seed")
+
+	local cropColor = get_seed_preview_color(itemKey, displayName)
+	create_preview_part(model, "Packet", Vector3.new(1.28, 1.54, 0.12), CFrame.new(0, 0, 0), SEED_PACKET_COLOR, Enum.Material.SmoothPlastic)
+	create_preview_part(model, "TopStripe", Vector3.new(1.12, 0.22, 0.14), CFrame.new(0, 0.54, 0.05), SEED_PACKET_STRIPE_COLOR, Enum.Material.SmoothPlastic)
+	create_preview_part(model, "BottomStripe", Vector3.new(1.12, 0.16, 0.14), CFrame.new(0, -0.55, 0.05), SEED_PACKET_EDGE_COLOR, Enum.Material.SmoothPlastic)
+	create_preview_part(model, "ColorPatch", Vector3.new(0.66, 0.54, 0.16), CFrame.new(0, -0.03, 0.1), cropColor, Enum.Material.SmoothPlastic)
+
+	create_seed_disc(model, "SeedA", Vector3.new(-0.16, 0.02, 0.23), Vector3.new(0.22, 0.31, 0.06), Color3.fromRGB(65, 56, 37))
+	create_seed_disc(model, "SeedB", Vector3.new(0.13, -0.09, 0.23), Vector3.new(0.2, 0.29, 0.06), Color3.fromRGB(83, 66, 38))
+	create_seed_disc(model, "Highlight", Vector3.new(-0.08, 0.24, 0.24), Vector3.new(0.22, 0.08, 0.02), Color3.fromRGB(255, 245, 202))
+
+	model:PivotTo(CFrame.new())
+	return model
+end
+
+local function create_preview_model(source: Instance?, displayName: string, isSeed: boolean?, itemKey: string?): Model
+	if isSeed then
+		return create_seed_preview_model(displayName, itemKey)
+	end
+
 	if not source then
 		return create_fallback_preview_model(displayName)
 	end
@@ -749,11 +1159,7 @@ local function create_preview_model(source: Instance?, displayName: string): Mod
 	end
 
 	for _, basePart in ipairs(baseParts) do
-		basePart.Anchored = true
-		basePart.CanCollide = false
-		basePart.CanTouch = false
-		basePart.CanQuery = false
-		basePart.CastShadow = false
+		configure_preview_part(basePart, basePart.Color, basePart.Material)
 	end
 
 	previewModel:PivotTo(CFrame.new())
@@ -761,26 +1167,52 @@ local function create_preview_model(source: Instance?, displayName: string): Mod
 	return previewModel
 end
 
-local function get_preview_snapshot(itemKey: string, source: Instance?, displayName: string)
-	local cachedPreview = previewCache[itemKey]
+local function get_preview_cache_key(itemKey: string, source: Instance?, isSeed: boolean): string
+	local sourceKey = "fallback"
+
+	if isSeed then
+		sourceKey = SEED_PREVIEW_CACHE_VERSION
+	elseif source then
+		local success, fullName = pcall(function()
+			return source:GetFullName()
+		end)
+
+		sourceKey = if success and type(fullName) == "string" then fullName else source.Name
+	end
+
+	return table.concat({
+		itemKey,
+		sourceKey,
+		if isSeed then "seed" else "item",
+	}, "|")
+end
+
+local function get_preview_snapshot(itemKey: string, source: Instance?, displayName: string, isSeed: boolean)
+	local previewKey = get_preview_cache_key(itemKey, source, isSeed)
+	local cachedPreview = previewCache[previewKey]
 	if cachedPreview then
 		return cachedPreview
 	end
 
-	local previewModel = create_preview_model(source, displayName)
+	local previewModel = create_preview_model(source, displayName, isSeed, itemKey)
 	local boundingBoxCFrame, boundingBoxSize = previewModel:GetBoundingBox()
-	local maxDimension = math.max(boundingBoxSize.X, boundingBoxSize.Y, boundingBoxSize.Z, 1)
-	local focusPosition = boundingBoxCFrame.Position + Vector3.new(0, boundingBoxSize.Y * VIEWPORT_FOCUS_Y_SCALE, 0)
-	local radius = maxDimension * VIEWPORT_RADIUS_SCALE
+	local maxDimension = math.max(boundingBoxSize.X, boundingBoxSize.Y, boundingBoxSize.Z, if isSeed then 0.2 else 1)
+	local focusYOffsetScale = if isSeed then SEED_VIEWPORT_FOCUS_Y_SCALE else VIEWPORT_FOCUS_Y_SCALE
+	local radiusScale = if isSeed then SEED_VIEWPORT_RADIUS_SCALE else VIEWPORT_RADIUS_SCALE
+	local distanceMultiplier = if isSeed then SEED_VIEWPORT_DISTANCE_MULTIPLIER else VIEWPORT_DISTANCE_MULTIPLIER
+	local minDistance = if isSeed then SEED_VIEWPORT_MIN_DISTANCE else VIEWPORT_MIN_DISTANCE
+	local cameraOffsetScale = if isSeed then SEED_VIEWPORT_CAMERA_OFFSET_SCALE else VIEWPORT_CAMERA_OFFSET_SCALE
+	local focusPosition = boundingBoxCFrame.Position + Vector3.new(0, boundingBoxSize.Y * focusYOffsetScale, 0)
+	local radius = maxDimension * radiusScale
 	local distance = math.max(
-		VIEWPORT_MIN_DISTANCE,
-		(radius / math.tan(math.rad(VIEWPORT_FIELD_OF_VIEW * 0.5))) * VIEWPORT_DISTANCE_MULTIPLIER
+		minDistance,
+		(radius / math.tan(math.rad(VIEWPORT_FIELD_OF_VIEW * 0.5))) * distanceMultiplier
 	)
 
 	local cameraOffset = Vector3.new(
-		distance * VIEWPORT_CAMERA_OFFSET_SCALE.X,
-		distance * VIEWPORT_CAMERA_OFFSET_SCALE.Y,
-		distance * VIEWPORT_CAMERA_OFFSET_SCALE.Z
+		distance * cameraOffsetScale.X,
+		distance * cameraOffsetScale.Y,
+		distance * cameraOffsetScale.Z
 	)
 
 	cachedPreview = {
@@ -789,18 +1221,18 @@ local function get_preview_snapshot(itemKey: string, source: Instance?, displayN
 		CameraCFrame = CFrame.lookAt(focusPosition + cameraOffset, focusPosition),
 	}
 
-	previewCache[itemKey] = cachedPreview
+	previewCache[previewKey] = cachedPreview
 	return cachedPreview
 end
 
-local function render_viewport(viewportFrame: ViewportFrame, itemKey: string, source: Instance?, displayName: string)
+local function render_viewport(viewportFrame: ViewportFrame, itemKey: string, source: Instance?, displayName: string, isSeed: boolean)
 	for _, child in ipairs(viewportFrame:GetChildren()) do
 		if child:IsA("WorldModel") or child:IsA("Camera") then
 			child:Destroy()
 		end
 	end
 
-	local snapshot = get_preview_snapshot(itemKey, source, displayName)
+	local snapshot = get_preview_snapshot(itemKey, source, displayName, isSeed)
 
 	local worldModel = Instance.new("WorldModel")
 	worldModel.Name = "HotbarWorldModel"
@@ -814,6 +1246,9 @@ local function render_viewport(viewportFrame: ViewportFrame, itemKey: string, so
 	camera.CFrame = snapshot.CameraCFrame
 	camera.Parent = viewportFrame
 	viewportFrame.CurrentCamera = camera
+	viewportFrame.BackgroundTransparency = 1
+	viewportFrame.Ambient = Color3.fromRGB(220, 220, 220)
+	viewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
 end
 
 local function create_click_target(slot: GuiObject): GuiButton
@@ -886,6 +1321,7 @@ local function build_groups()
 				RenderSource = metadata.RenderSource or tool,
 				Quantity = metadata.Quantity or 1,
 				ShowsQuantity = metadata.ShowsQuantity == true,
+				IsSeed = metadata.IsSeed == true,
 				Tools = {},
 				EquippedTool = nil,
 			}
@@ -894,6 +1330,7 @@ local function build_groups()
 
 		existingGroup.Quantity = math.max(existingGroup.Quantity or 1, metadata.Quantity or 1)
 		existingGroup.ShowsQuantity = existingGroup.ShowsQuantity or metadata.ShowsQuantity == true
+		existingGroup.IsSeed = existingGroup.IsSeed or metadata.IsSeed == true
 
 		existingGroup.Tools[#existingGroup.Tools + 1] = tool
 
@@ -1022,6 +1459,44 @@ local function toggle_group(itemKey: string)
 	equip_group(itemKey)
 end
 
+local function create_generated_viewport(parent: GuiObject): ViewportFrame
+	local viewportFrame = Instance.new("ViewportFrame")
+	viewportFrame.Name = GENERATED_VIEWPORT_NAME
+	viewportFrame.AnchorPoint = Vector2.new(0, 0)
+	viewportFrame.Position = UDim2.fromScale(0, 0)
+	viewportFrame.Size = UDim2.fromScale(1, 1)
+	viewportFrame.BackgroundTransparency = 1
+	viewportFrame.BorderSizePixel = 0
+	viewportFrame.ZIndex = parent.ZIndex + 1
+	viewportFrame.Parent = parent
+	return viewportFrame
+end
+
+local function get_slot_viewport(slot: GuiObject): ViewportFrame
+	local imageItem = find_named_instance(slot, { "ImageItem" }, nil, true)
+	if imageItem and imageItem:IsA("ViewportFrame") then
+		return imageItem :: ViewportFrame
+	end
+
+	if imageItem then
+		local nestedViewport = find_named_instance(imageItem, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
+		if nestedViewport then
+			return nestedViewport :: ViewportFrame
+		end
+	end
+
+	local viewportFrame = find_named_instance(slot, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
+	if viewportFrame then
+		return viewportFrame :: ViewportFrame
+	end
+
+	if imageItem and imageItem:IsA("GuiObject") then
+		return create_generated_viewport(imageItem)
+	end
+
+	return create_generated_viewport(slot)
+end
+
 local function update_slot(slot: GuiObject, group, slotIndex: number)
 	slot.Name = group.Key
 	slot.LayoutOrder = slotIndex
@@ -1048,19 +1523,12 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 		amountShadowLabel.Visible = showsQuantity
 	end
 
-	local imageItem = find_named_instance(slot, { "ImageItem" }, nil, true)
-	local viewportFrame = nil
-	if imageItem then
-		viewportFrame = find_named_instance(imageItem, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
-	end
-
-	if not viewportFrame then
-		viewportFrame = find_named_instance(slot, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
-	end
-
-	if viewportFrame and slot:GetAttribute("HotbarPreviewReady") ~= true then
-		render_viewport(viewportFrame :: ViewportFrame, group.Key, group.RenderSource, group.DisplayName)
+	local viewportFrame = get_slot_viewport(slot)
+	local previewKey = get_preview_cache_key(group.Key, group.RenderSource, group.IsSeed == true)
+	if slot:GetAttribute("HotbarPreviewReady") ~= true or slot:GetAttribute("HotbarPreviewKey") ~= previewKey then
+		render_viewport(viewportFrame, group.Key, group.RenderSource, group.DisplayName, group.IsSeed == true)
 		slot:SetAttribute("HotbarPreviewReady", true)
+		slot:SetAttribute("HotbarPreviewKey", previewKey)
 	end
 
 	set_slot_selected(slot, stickySelectionKey == group.Key)
@@ -1071,6 +1539,7 @@ local function create_slot(group)
 	local slotTrove = Trove.new()
 
 	slot:SetAttribute("HotbarPreviewReady", nil)
+	slot:SetAttribute("HotbarPreviewKey", nil)
 	slot.Parent = hotbarFrame
 	slotInstances[group.Key] = slot
 	slotTroves[group.Key] = slotTrove
@@ -1088,6 +1557,9 @@ end
 local function rebuild_hotbar()
 	refreshQueued = false
 	currentGroups = build_groups()
+	local equippedKey = get_equipped_group_key(currentGroups)
+	local equippedGroup = equippedKey and currentGroups[equippedKey] or nil
+	update_item_hand_display(equippedKey, equippedGroup and equippedGroup.DisplayName or nil)
 
 	if not hotbarFrame or not hotbarTemplate or not hotbarTemplate.Parent then
 		clear_slots()
@@ -1095,7 +1567,6 @@ local function rebuild_hotbar()
 	end
 
 	local groupArray = get_group_array(currentGroups)
-	local equippedKey = get_equipped_group_key(currentGroups)
 
 	if equippedKey then
 		stickySelectionKey = equippedKey
@@ -1192,14 +1663,26 @@ local function try_bind_hotbar()
 	local nextHudRoot = find_hud_container(nextMain)
 	local nextHotbar = find_hotbar_container(nextHudRoot)
 	local nextTemplate = find_hotbar_template(nextHotbar)
+	local nextMoneyTab = find_money_tab(nextHudRoot)
 	local nextMoneyLabel, nextMoneyShadowLabel = find_money_labels(nextHudRoot)
+	local nextItemHandLabel = find_item_hand_label(nextHudRoot)
 	local hotbarChanged = hudRoot ~= nextHudRoot or hotbarFrame ~= nextHotbar or hotbarTemplate ~= nextTemplate
+	local itemHandLabelChanged = itemHandLabel ~= nextItemHandLabel
 
 	uiRoot = nextUiRoot
 	hudRoot = nextHudRoot
+	moneyTabFrame = nextMoneyTab
 	moneyLabel = nextMoneyLabel
 	moneyShadowLabel = nextMoneyShadowLabel
-	update_money_display()
+	itemHandLabel = nextItemHandLabel
+
+	if itemHandLabelChanged then
+		cancel_item_hand_tweens()
+		itemHandOriginals = nil
+		itemHandTargetKey = nil
+	end
+
+	update_money_display(nil, false)
 	bind_money_add_button(nextHudRoot)
 
 	if not nextUiRoot or not nextHudRoot or not nextHotbar or not nextTemplate then
@@ -1235,6 +1718,7 @@ local function bind_ui_watchers()
 			or instance.Name == MONEY_TAB_NAME
 			or instance.Name == MONEY_BG_NAME
 			or instance.Name == MONEY_CONTAINER_NAME
+			or instance.Name == ITEM_HAND_LABEL_NAME
 			or matches_alias(instance, MONEY_ADD_BUTTON_NAMES)
 			or instance.Name == "MoneyTX"
 			or instance.Name == "MoneyShadowTX"
@@ -1257,6 +1741,7 @@ local function bind_ui_watchers()
 			or instance.Name == MONEY_TAB_NAME
 			or instance.Name == MONEY_BG_NAME
 			or instance.Name == MONEY_CONTAINER_NAME
+			or instance.Name == ITEM_HAND_LABEL_NAME
 			or matches_alias(instance, MONEY_ADD_BUTTON_NAMES)
 			or instance.Name == "MoneyTX"
 			or instance.Name == "MoneyShadowTX"
@@ -1292,6 +1777,7 @@ end)
 
 rootTrove:Connect(localPlayer.CharacterRemoving, function()
 	characterTrove:Clean()
+	update_item_hand_display(nil, nil)
 	queue_refresh()
 end)
 

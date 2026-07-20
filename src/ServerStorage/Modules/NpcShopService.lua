@@ -9,8 +9,10 @@ local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
+local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local ConsumableToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("ConsumableToolService"))
+local InventoryLoadoutService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("InventoryLoadoutService"))
 
 local NpcShopService = {}
 local initialized = false
@@ -56,7 +58,12 @@ local function purchase(player, shopId, itemId)
 	bucket[item.ItemId] = count + 1
 	DataUtility.server.set(player, inventoryPath, bucket)
 	DataUtility.server.set(player, "Currencies.Horseshoes", horseshoes - price)
-	ConsumableToolService.SyncPlayerTools(player)
+
+	local autoEquipped = select(1, InventoryLoadoutService.TryAutoEquipNewItem(player, item.ItemId, count))
+	if not autoEquipped then
+		ConsumableToolService.SyncPlayerTools(player)
+	end
+	SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
 
 	return { Success = true, Code = "Purchased", ItemId = item.ItemId, ItemCount = count + 1, Horseshoes = horseshoes - price }
 end

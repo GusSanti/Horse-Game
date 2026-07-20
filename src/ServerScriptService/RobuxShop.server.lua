@@ -14,6 +14,7 @@ local serverModules = ServerStorage:WaitForChild("Modules")
 local Net = require(Libraries:WaitForChild("Net"))
 local RobuxShopCatalog = require(GameData:WaitForChild("RobuxShopCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local ProfileSessionService = require(serverModules:WaitForChild("ProfileSessionService"))
 
 local GIFT_MESSAGE_TYPE = "RobuxProductGift"
@@ -226,6 +227,7 @@ local function commit_reward(player: Player, profileData, reward): boolean
 	if reward.CurrencyId == "Horseshoes" then
 		local currentHorseshoes = normalize_whole_number(DataUtility.server.get(player, "Currencies.Horseshoes"))
 		DataUtility.server.set(player, "Currencies.Horseshoes", currentHorseshoes + rewardAmount)
+		SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
 		return true
 	end
 

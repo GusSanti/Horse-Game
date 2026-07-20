@@ -25,6 +25,7 @@ local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
 local HorseBondService = require(Services:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
+local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))
 
@@ -1061,6 +1062,7 @@ function HorseService.buy_stable_slot(player: Player, slotName: string): (boolea
 
 	DataUtility.server.set(player, "Currencies.Horseshoes", currentHorseshoes - slotPrice)
 	save_stable(player, stable)
+	SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
 
 	return true, slotName, stable.OwnedStalls
 end

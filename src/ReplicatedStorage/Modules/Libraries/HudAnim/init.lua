@@ -30,9 +30,24 @@ local BUTTON_SUFFIX = "BT"
 local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAMES = { "MainframeFR", "MainFrameFR" }
 local HUD_ROOT_NAME = "HUDFR"
+local HOTBAR_ROOT_NAME = "BottomFrameFR"
+local MONEY_TAB_NAME = "MoneyTabBG"
 local FRAMES_CONTAINER_NAME = "Frames"
+local INVENTORY_FRAME_NAME = "Inventory"
+local SHOP_FRAME_NAMES = {
+	SeedShop = true,
+	FruitShop = true,
+	Seller = true,
+	Shop = true,
+}
 local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
 local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
+local INVENTORY_HUD_FADE_EXCLUDED_NAMES = {
+	[HOTBAR_ROOT_NAME] = true,
+}
+local SHOP_HUD_FADE_EXCLUDED_NAMES = {
+	[MONEY_TAB_NAME] = true,
+}
 
 local DEFAULTS = {
 	hover_scale = 0.08,
@@ -306,21 +321,84 @@ local function is_open_frame(frame: Instance?): boolean
 		and not has_true_attribute(frame, IGNORE_HUD_ANIM_ATTRIBUTE)
 end
 
-local function should_hide_hud_for_frames(instance: Instance?, forcedOpenFrame: GuiObject?): boolean
+local function get_open_frame_for_hud(instance: Instance?, forcedOpenFrame: GuiObject?): GuiObject?
 	local framesContainer = find_frames_container(instance or forcedOpenFrame)
 	if not framesContainer then
-		return false
+		if is_open_frame(forcedOpenFrame) then
+			return forcedOpenFrame
+		end
+
+		return nil
 	end
 
 	local forcedTopLevelFrame = get_top_level_frame_in_container(forcedOpenFrame, framesContainer)
 	if forcedTopLevelFrame then
-		return true
+		return forcedTopLevelFrame
 	end
 
 	for _, child in ipairs(framesContainer:GetChildren()) do
 		if is_open_frame(child) then
+			return child
+		end
+	end
+
+	if is_open_frame(forcedOpenFrame) then
+		return forcedOpenFrame
+	end
+
+	return nil
+end
+
+local function get_hud_fade_excluded_names(openFrame: GuiObject?): { [string]: boolean }?
+	if openFrame and openFrame.Name == INVENTORY_FRAME_NAME then
+		return INVENTORY_HUD_FADE_EXCLUDED_NAMES
+	end
+
+	if openFrame and SHOP_FRAME_NAMES[openFrame.Name] == true then
+		return SHOP_HUD_FADE_EXCLUDED_NAMES
+	end
+
+	return nil
+end
+
+local function has_hud_fade_exclusions(excludedNames: { [string]: boolean }?): boolean
+	if not excludedNames then
+		return false
+	end
+
+	return next(excludedNames) ~= nil
+end
+
+local function get_hud_fade_exclusion_key(excludedNames: { [string]: boolean }?): string
+	if not excludedNames then
+		return ""
+	end
+
+	local names = {}
+	for name in pairs(excludedNames) do
+		names[#names + 1] = name
+	end
+
+	table.sort(names)
+	return table.concat(names, "|")
+end
+
+local function is_in_excluded_hud_subtree(
+	instance: Instance?,
+	hudRoot: GuiObject,
+	excludedNames: { [string]: boolean }?
+): boolean
+	if not instance or not excludedNames then
+		return false
+	end
+
+	local current = instance
+	while current and current ~= hudRoot do
+		if excludedNames[current.Name] == true then
 			return true
 		end
+
+		current = current.Parent
 	end
 
 	return false
@@ -353,15 +431,24 @@ local function track_hud_fade_property(records, fadeState, instance: Instance, p
 	}
 end
 
-local function collect_hud_fade_records(hudRoot: GuiObject, fadeState)
+local function collect_hud_fade_records(
+	hudRoot: GuiObject,
+	fadeState,
+	excludedNames: { [string]: boolean }?,
+	forceDescendantFade: boolean?
+)
 	local records = {}
 
-	if hudRoot:IsA("CanvasGroup") then
+	if hudRoot:IsA("CanvasGroup") and not has_hud_fade_exclusions(excludedNames) and not forceDescendantFade then
 		track_hud_fade_property(records, fadeState, hudRoot, "GroupTransparency")
 		return records
 	end
 
 	local function track_instance(instance: Instance): ()
+		if is_in_excluded_hud_subtree(instance, hudRoot, excludedNames) then
+			return
+		end
+
 		if instance:IsA("GuiObject") then
 			track_hud_fade_property(records, fadeState, instance, "BackgroundTransparency")
 		end
@@ -382,6 +469,78 @@ local function collect_hud_fade_records(hudRoot: GuiObject, fadeState)
 	end
 
 	return records
+end
+
+local function restore_hud_canvas_group_transparency(hudRoot: GuiObject, fadeState): ()
+	if not hudRoot:IsA("CanvasGroup") then
+		return
+	end
+
+	local originalProperties = fadeState.Originals[hudRoot]
+	local originalGroupTransparency = originalProperties and originalProperties.GroupTransparency
+	if originalGroupTransparency == nil then
+		local success, currentValue = pcall(function()
+			return hudRoot.GroupTransparency
+		end)
+
+		originalGroupTransparency = if success then currentValue else 0
+	end
+
+	pcall(function()
+		hudRoot.GroupTransparency = originalGroupTransparency
+	end)
+end
+
+local function collect_hud_visibility_records(hudRoot: GuiObject, fadeState, excludedNames: { [string]: boolean }?)
+	local records = {}
+	local visibleOriginals = fadeState.VisibleOriginals
+	if not visibleOriginals then
+		visibleOriginals = {}
+		fadeState.VisibleOriginals = visibleOriginals
+	end
+
+	if has_hud_fade_exclusions(excludedNames) then
+		for _, child in ipairs(hudRoot:GetChildren()) do
+			if child:IsA("GuiObject") and not is_in_excluded_hud_subtree(child, hudRoot, excludedNames) then
+				if visibleOriginals[child] == nil then
+					visibleOriginals[child] = child.Visible
+				end
+			end
+		end
+	end
+
+	for instance, originalVisible in pairs(visibleOriginals) do
+		if instance
+			and instance.Parent
+			and instance:IsDescendantOf(hudRoot)
+			and not is_in_excluded_hud_subtree(instance, hudRoot, excludedNames)
+		then
+			records[#records + 1] = {
+				Instance = instance,
+				OriginalVisible = originalVisible,
+			}
+		end
+	end
+
+	return records
+end
+
+local function restore_excluded_hud_subtrees(
+	hudRoot: GuiObject,
+	fadeState,
+	excludedNames: { [string]: boolean }?
+): ()
+	if not has_hud_fade_exclusions(excludedNames) then
+		return
+	end
+
+	local visibleOriginals = fadeState.VisibleOriginals or {}
+	for _, child in ipairs(hudRoot:GetChildren()) do
+		if child:IsA("GuiObject") and is_in_excluded_hud_subtree(child, hudRoot, excludedNames) then
+			local originalVisible = visibleOriginals[child]
+			child.Visible = if originalVisible ~= nil then originalVisible else true
+		end
+	end
 end
 
 local function cancel_hud_fade(hudRoot: GuiObject): ()
@@ -410,7 +569,23 @@ local function set_hud_record_value(record, value): ()
 	end)
 end
 
-local function fade_hud_root(hudRoot: GuiObject?, shouldHide: boolean, duration: number?): ()
+local function set_hud_visibility_records(records, shouldHide: boolean): ()
+	for _, record in ipairs(records) do
+		local instance = record.Instance
+		if instance and instance.Parent then
+			pcall(function()
+				instance.Visible = if shouldHide then false else record.OriginalVisible
+			end)
+		end
+	end
+end
+
+local function fade_hud_root(
+	hudRoot: GuiObject?,
+	shouldHide: boolean,
+	duration: number?,
+	excludedNames: { [string]: boolean }?
+): ()
 	if not hudRoot or not hudRoot.Parent then
 		return
 	end
@@ -419,31 +594,58 @@ local function fade_hud_root(hudRoot: GuiObject?, shouldHide: boolean, duration:
 	if not fadeState then
 		fadeState = {
 			Originals = {},
+			VisibleOriginals = {},
 			Token = 0,
 			TargetHidden = nil,
+			ExclusionKey = "",
+			DescendantFadeActive = false,
 		}
 		hud_fade_states[hudRoot] = fadeState
 	end
 
-	if fadeState.TargetHidden == shouldHide then
+	local previousExclusionKey = fadeState.ExclusionKey or ""
+	local exclusionKey = get_hud_fade_exclusion_key(excludedNames)
+	if fadeState.TargetHidden == shouldHide and fadeState.ExclusionKey == exclusionKey then
 		return
 	end
 
 	fadeState.Token += 1
 	fadeState.TargetHidden = shouldHide
+	fadeState.ExclusionKey = exclusionKey
 	local token = fadeState.Token
 	local fadeDuration = math.max(0, duration or DEFAULTS.hud_fade_t)
-	local records = collect_hud_fade_records(hudRoot, fadeState)
+	local hasExclusions = has_hud_fade_exclusions(excludedNames)
+	local keepHudRootVisible = shouldHide and hasExclusions
+	local useDescendantFade = hasExclusions or previousExclusionKey ~= "" or fadeState.DescendantFadeActive == true
+	local visibilityRecords = collect_hud_visibility_records(hudRoot, fadeState, excludedNames)
+	if shouldHide and useDescendantFade then
+		fadeState.DescendantFadeActive = true
+	end
 
 	cancel_hud_fade(hudRoot)
 	hudRoot.Visible = true
+	if useDescendantFade then
+		restore_hud_canvas_group_transparency(hudRoot, fadeState)
+	end
+	restore_excluded_hud_subtrees(hudRoot, fadeState, excludedNames)
+
+	if not shouldHide then
+		set_hud_visibility_records(visibilityRecords, false)
+	end
+
+	local records = collect_hud_fade_records(hudRoot, fadeState, excludedNames, useDescendantFade)
 
 	if fadeDuration <= 0 then
 		for _, record in ipairs(records) do
 			set_hud_record_value(record, if shouldHide then 1 else record.Original)
 		end
 
-		hudRoot.Visible = not shouldHide
+		if shouldHide then
+			set_hud_visibility_records(visibilityRecords, true)
+		end
+
+		fadeState.DescendantFadeActive = shouldHide and useDescendantFade
+		hudRoot.Visible = keepHudRootVisible or not shouldHide
 		return
 	end
 
@@ -479,7 +681,12 @@ local function fade_hud_root(hudRoot: GuiObject?, shouldHide: boolean, duration:
 			set_hud_record_value(record, if shouldHide then 1 else record.Original)
 		end
 
-		hudRoot.Visible = not shouldHide
+		if shouldHide then
+			set_hud_visibility_records(visibilityRecords, true)
+		end
+
+		fadeState.DescendantFadeActive = shouldHide and useDescendantFade
+		hudRoot.Visible = keepHudRootVisible or not shouldHide
 	end)
 end
 
@@ -489,7 +696,8 @@ local function sync_hud_visibility_for_frame(instance: Instance?, duration: numb
 		return
 	end
 
-	fade_hud_root(hudRoot, should_hide_hud_for_frames(instance or hudRoot, forcedOpenFrame), duration)
+	local openFrame = get_open_frame_for_hud(instance or hudRoot, forcedOpenFrame)
+	fade_hud_root(hudRoot, openFrame ~= nil, duration, get_hud_fade_excluded_names(openFrame))
 end
 
 local function is_hud_button(button: GuiButton): boolean

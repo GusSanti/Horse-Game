@@ -1,6 +1,8 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local localPlayer = Players.LocalPlayer
+local SoundUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("SoundUtility"))
 
 local Notifications = {}
 
@@ -163,6 +165,7 @@ function Notifications.ShowDialogue(config): boolean
 
 	activeNotificationId = config.id
 	refs.Dialogue.Visible = true
+	SoundUtility.PlayGameSFX("Popup")
 	set_text_pair(refs.Title, refs.TitleShadow, config.title or "Notification")
 	set_text_pair(refs.Details, nil, config.details or "")
 	set_button_text(refs.AcceptButton, config.acceptText)

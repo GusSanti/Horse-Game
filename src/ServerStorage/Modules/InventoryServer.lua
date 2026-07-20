@@ -7,6 +7,7 @@ local Utility = Modules:WaitForChild("Utility")
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local InventoryLoadoutService = require(script.Parent:WaitForChild("InventoryLoadoutService"))
 
 local InventoryService = {}
 
@@ -88,11 +89,15 @@ function InventoryService.SetItemCount(player: Player, itemDefinitionOrId, amoun
 end
 
 function InventoryService.AddItemCount(player: Player, itemDefinitionOrId, amount: number): number
-	return InventoryService.SetItemCount(
-		player,
-		itemDefinitionOrId,
-		InventoryService.GetItemCount(player, itemDefinitionOrId) + (amount or 0)
-	)
+	local itemDefinition = resolve_item_definition(itemDefinitionOrId)
+	local previousCount = InventoryService.GetItemCount(player, itemDefinition)
+	local updatedCount = InventoryService.SetItemCount(player, itemDefinition, previousCount + (amount or 0))
+
+	if itemDefinition and updatedCount > previousCount then
+		InventoryLoadoutService.TryAutoEquipNewItem(player, itemDefinition.ItemId, previousCount)
+	end
+
+	return updatedCount
 end
 
 function InventoryService.ConsumeItem(player: Player, itemDefinitionOrId, amount: number?): (boolean, number)

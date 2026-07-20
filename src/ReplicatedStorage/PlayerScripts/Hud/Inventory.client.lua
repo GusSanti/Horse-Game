@@ -676,7 +676,6 @@ local function set_selected_visual(card, isSelected)
     if stroke then
         stroke.Thickness = isSelected and 2.5 or 1
         stroke.Transparency = isSelected and 0 or 0.22
-        stroke.Color = isSelected and Color3.fromRGB(255, 219, 134) or Color3.fromRGB(255, 255, 255)
     end
 end
 

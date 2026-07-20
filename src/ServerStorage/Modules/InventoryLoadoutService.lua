@@ -320,6 +320,46 @@ local function count_accessible_hotbar_slots(player, itemIds, genericToolNames)
 	return #get_accessible_hotbar_entries(player, itemIds, genericToolNames)
 end
 
+local function is_tool_for_item(tool: Tool, itemDefinition): boolean
+	local resolvedItemDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
+		or FarmingCatalog.GetItem(tool:GetAttribute("FarmingItemId"))
+
+	return resolvedItemDefinition ~= nil and resolvedItemDefinition.ItemId == itemDefinition.ItemId
+end
+
+local function find_item_tool_in_container(container: Instance?, itemDefinition): Tool?
+	if not container then
+		return nil
+	end
+
+	for _, child in ipairs(container:GetChildren()) do
+		if child:IsA("Tool") and is_tool_for_item(child, itemDefinition) then
+			return child
+		end
+	end
+
+	return nil
+end
+
+local function equip_item_tool_in_hand(player, itemDefinition): boolean
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+
+	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 5)
+	local tool = find_item_tool_in_container(backpack, itemDefinition)
+		or find_item_tool_in_container(character, itemDefinition)
+	if not tool then
+		return false
+	end
+
+	humanoid:UnequipTools()
+	humanoid:EquipTool(tool)
+	return true
+end
+
 local function get_ninth_accessible_hotbar_entry(player, itemIds, genericToolNames)
 	local entries = get_accessible_hotbar_entries(player, itemIds, genericToolNames)
 	return entries[InventoryLoadout.MAX_HOTBAR_SLOTS]
@@ -548,6 +588,40 @@ end
 function InventoryLoadoutService.SyncPlayerTools(player)
 	ensure_loadout_initialized(player)
 	sync_player_tools(player)
+end
+
+function InventoryLoadoutService.TryAutoEquipNewItem(player, itemId, previousCount: number?): (boolean, string)
+	local itemDefinition = resolve_item_definition(itemId)
+	if not itemDefinition then
+		return false, "UnknownItem"
+	end
+
+	if math.max(0, math.floor(tonumber(previousCount) or 0)) > 0 then
+		return false, "AlreadyOwned"
+	end
+
+	ensure_loadout_initialized(player)
+
+	local itemIds = DataUtility.server.get(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH)
+	local toolNames = DataUtility.server.get(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH)
+	local alreadyEquipped = InventoryLoadout.IsItemEquipped(itemIds, itemDefinition.ItemId)
+
+	if not alreadyEquipped then
+		if count_accessible_hotbar_slots(player, itemIds, toolNames) >= InventoryLoadout.MAX_HOTBAR_SLOTS then
+			return false, "HotbarFull"
+		end
+
+		itemIds = InventoryLoadout.SetItemEquipped(itemIds, itemDefinition.ItemId, true)
+		DataUtility.server.set(player, InventoryLoadout.HOTBAR_ITEM_IDS_PATH, itemIds)
+	end
+
+	sync_player_tools(player)
+
+	if equip_item_tool_in_hand(player, itemDefinition) then
+		return true, "EquippedInHand"
+	end
+
+	return true, "AddedToHotbar"
 end
 
 function InventoryLoadoutService.UpdateLoadout(player, payload)

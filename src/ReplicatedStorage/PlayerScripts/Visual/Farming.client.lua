@@ -10,6 +10,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
+local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 
 local localPlayer = Players.LocalPlayer
@@ -138,6 +139,7 @@ local function try_place_seed()
 	requestInFlight = false
 
 	if success and response and response.Success then
+		SoundUtility.PlayGameSFX("Dig")
 		hide_preview()
 	end
 end
@@ -153,10 +155,14 @@ local function try_water_plant()
 	end
 
 	requestInFlight = true
-	pcall(function()
+	local success, response = pcall(function()
 		return Net.Function.WaterPlant:Call(raycastResult.Instance)
 	end)
 	requestInFlight = false
+
+	if success and response and response.Success then
+		SoundUtility.PlayGameSFX("Watering")
+	end
 end
 
 local function activate_seed_tool(tool: Tool)

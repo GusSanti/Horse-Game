@@ -13,6 +13,37 @@ local DEFAULT_MUSIC_VOLUME = 0.5
 local DEFAULT_SFX_VOLUME = 0.5
 local FADE_DURATION = 1
 local MAX_SFX_INSTANCES = 3
+local REMOTE_SFX_EVENT_NAME = "PlayGameSFX"
+local GAME_SFX = {
+	Dig = {
+		SoundId = "rbxassetid://139911414972673",
+		Volume = 1,
+		Pitch = 1,
+	},
+	Watering = {
+		SoundId = "rbxassetid://9125409840",
+		Volume = 1,
+		Pitch = 1,
+	},
+	MoneyGet = {
+		SoundId = "rbxassetid://6809101819",
+		Volume = 1,
+		Pitch = 1,
+	},
+	Popup = {
+		SoundId = "rbxassetid://85837202919094",
+		Volume = 1,
+		Pitch = 1,
+	},
+}
+local GAME_SFX_ALIASES = {
+	dig = "Dig",
+	watering = "Watering",
+	moneyget = "MoneyGet",
+	money_get = "MoneyGet",
+	popup = "Popup",
+	pupup = "Popup",
+}
 
 -- VARIABLES
 local currentMusic = nil
@@ -26,6 +57,8 @@ local musicGroup = nil
 local sfxGroup = nil
 local activeSFX = {}
 local musicEndedConnection = nil
+local net = nil
+local remoteSFXConnection = nil
 
 -- FUNCTIONS
 local function sanitize_boolean(value, fallback)
@@ -188,6 +221,67 @@ local function normalizeMusicQueue(soundIds)
 	return normalizedQueue
 end
 
+local function get_net()
+	if net then
+		return net
+	end
+
+	local modules = script:FindFirstAncestor("Modules")
+	local libraries = modules and modules:FindFirstChild("Libraries")
+	local netModule = libraries and libraries:FindFirstChild("Net")
+	if not netModule then
+		return nil
+	end
+
+	local success, result = pcall(require, netModule)
+	if not success then
+		warn("[SoundUtility] Failed to require Net: " .. tostring(result))
+		return nil
+	end
+
+	net = result
+	return net
+end
+
+local function resolve_game_sfx_name(effectName)
+	if type(effectName) ~= "string" then
+		return nil
+	end
+
+	local trimmedName = string.gsub(effectName, "^%s*(.-)%s*$", "%1")
+	if trimmedName == "" then
+		return nil
+	end
+
+	if GAME_SFX[trimmedName] then
+		return trimmedName
+	end
+
+	return GAME_SFX_ALIASES[string.lower(trimmedName)]
+end
+
+local function get_game_sfx_definition(effectName)
+	local resolvedName = resolve_game_sfx_name(effectName)
+	if not resolvedName then
+		return nil, nil
+	end
+
+	return GAME_SFX[resolvedName], resolvedName
+end
+
+local function ensure_remote_sfx_event()
+	if not RunService:IsServer() then
+		return nil
+	end
+
+	local resolvedNet = get_net()
+	if not resolvedNet then
+		return nil
+	end
+
+	return resolvedNet.Event[REMOTE_SFX_EVENT_NAME]
+end
+
 local function getNextQueueIndex()
 	if not musicQueue or #musicQueue == 0 then
 		return 0
@@ -243,6 +337,105 @@ end
 
 function SoundController.Init()
 	createSoundGroups()
+	ensure_remote_sfx_event()
+end
+
+function SoundController.GetGameSFX(effectName)
+	local definition, resolvedName = get_game_sfx_definition(effectName)
+	if not definition then
+		return nil
+	end
+
+	return {
+		Name = resolvedName,
+		SoundId = definition.SoundId,
+		Volume = definition.Volume,
+		Pitch = definition.Pitch,
+	}
+end
+
+function SoundController.PlayGameSFX(effectName, parent, volume, pitch)
+	local definition = get_game_sfx_definition(effectName)
+	if not definition then
+		return nil
+	end
+
+	return SoundController.PlaySFX(
+		definition.SoundId,
+		parent,
+		volume or definition.Volume,
+		pitch or definition.Pitch
+	)
+end
+
+function SoundController.InitRemoteSFX()
+	return ensure_remote_sfx_event()
+end
+
+function SoundController.BindRemoteSFX()
+	if not RunService:IsClient() then
+		return nil
+	end
+
+	if remoteSFXConnection then
+		return remoteSFXConnection
+	end
+
+	local resolvedNet = get_net()
+	if not resolvedNet then
+		return nil
+	end
+
+	remoteSFXConnection = resolvedNet.Event[REMOTE_SFX_EVENT_NAME]:Connect(function(payload)
+		local effectName = payload
+		local options = nil
+
+		if type(payload) == "table" then
+			effectName = payload.EffectName or payload.Effect or payload.Name
+			options = payload
+		end
+
+		SoundController.PlayGameSFX(
+			effectName,
+			nil,
+			options and options.Volume or nil,
+			options and options.Pitch or nil
+		)
+	end)
+
+	return remoteSFXConnection
+end
+
+function SoundController.PlayGameSFXForPlayer(player, effectName, options)
+	if not RunService:IsServer() then
+		return false
+	end
+
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return false
+	end
+
+	local _, resolvedName = get_game_sfx_definition(effectName)
+	if not resolvedName then
+		return false
+	end
+
+	local resolvedNet = get_net()
+	if not resolvedNet then
+		return false
+	end
+
+	if type(options) == "table" then
+		resolvedNet.Event[REMOTE_SFX_EVENT_NAME]:Fire(player, {
+			EffectName = resolvedName,
+			Volume = options.Volume,
+			Pitch = options.Pitch,
+		})
+	else
+		resolvedNet.Event[REMOTE_SFX_EVENT_NAME]:Fire(player, resolvedName)
+	end
+
+	return true
 end
 
 function SoundController.PlayMusic(soundId, fadeIn, loop)
@@ -390,5 +583,10 @@ end
 -- INIT
 apply_initial_client_settings()
 SoundController.Init()
+if RunService:IsClient() then
+	task.defer(function()
+		SoundController.BindRemoteSFX()
+	end)
+end
 
 return SoundController

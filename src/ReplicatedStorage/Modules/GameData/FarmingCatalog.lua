@@ -72,6 +72,10 @@ local function build_stage_folder_aliases(cropId: string, explicitAliases)
 	return aliases
 end
 
+local function clamp_number(value: number, minValue: number, maxValue: number): number
+	return math.max(minValue, math.min(maxValue, value))
+end
+
 local function build_crop_definition(config)
 	local cropId = config.CropId
 	local displayName = config.DisplayName or cropId
@@ -80,6 +84,9 @@ local function build_crop_definition(config)
 	local stageFolderName = config.StageFolderName or cropId
 	local stageAssetPrefix = config.StageAssetPrefix or ("SM_%s"):format(cropId)
 	local maxStage = math.max(1, math.floor(tonumber(config.MaxStage) or 4))
+	local waterIntervalSeconds = math.max(1, math.floor(tonumber(config.WaterIntervalSeconds) or 300))
+	local initialWaterDelaySeconds = math.max(1, math.floor(tonumber(config.InitialWaterDelaySeconds) or waterIntervalSeconds))
+	local stageAdvanceRatio = clamp_number(tonumber(config.StageAdvanceRatio) or 0.6, 0.1, 0.95)
 
 	return {
 		CropId = cropId,
@@ -89,6 +96,9 @@ local function build_crop_definition(config)
 		StageAssetPrefix = stageAssetPrefix,
 		SortOrder = math.max(0, math.floor(tonumber(config.SortOrder) or 0)),
 		MaxStage = maxStage,
+		InitialWaterDelaySeconds = initialWaterDelaySeconds,
+		WaterIntervalSeconds = waterIntervalSeconds,
+		StageAdvanceRatio = stageAdvanceRatio,
 		Seed = {
 			ItemId = config.SeedItemId or ("%s_seed"):format(string.lower(cropId)),
 			DisplayName = config.SeedDisplayName or ("%s Seed"):format(displayName),
@@ -130,12 +140,14 @@ local cropDefinitions = {
 		SortOrder = 10,
 		SeedPrice = 1,
 		FruitSellPrice = 5,
+		WaterIntervalSeconds = 300,
 	}),
 	build_crop_definition({
 		CropId = "Carrot",
 		SortOrder = 20,
 		SeedPrice = 1,
 		FruitSellPrice = 5,
+		WaterIntervalSeconds = 7,
 		StageFolderAliases = { "CarrotStage" },
 		LegacySeedToolNames = { "SeedCarrot", "Seed" },
 		LegacyFruitToolNames = { "Carrot Bunch" },
@@ -146,78 +158,91 @@ local cropDefinitions = {
 		SortOrder = 30,
 		SeedPrice = 2,
 		FruitSellPrice = 6,
+		WaterIntervalSeconds = 420,
 	}),
 	build_crop_definition({
 		CropId = "Eggplant",
 		SortOrder = 40,
 		SeedPrice = 2,
 		FruitSellPrice = 7,
+		WaterIntervalSeconds = 480,
 	}),
 	build_crop_definition({
 		CropId = "Garlic",
 		SortOrder = 50,
 		SeedPrice = 2,
 		FruitSellPrice = 7,
+		WaterIntervalSeconds = 360,
 	}),
 	build_crop_definition({
 		CropId = "Grape",
 		SortOrder = 60,
 		SeedPrice = 3,
 		FruitSellPrice = 8,
+		WaterIntervalSeconds = 600,
 	}),
 	build_crop_definition({
 		CropId = "Lettuce",
 		SortOrder = 70,
 		SeedPrice = 1,
 		FruitSellPrice = 4,
+		WaterIntervalSeconds = 180,
 	}),
 	build_crop_definition({
 		CropId = "Pepper",
 		SortOrder = 80,
 		SeedPrice = 3,
 		FruitSellPrice = 8,
+		WaterIntervalSeconds = 420,
 	}),
 	build_crop_definition({
 		CropId = "Pineapple",
 		SortOrder = 90,
 		SeedPrice = 4,
 		FruitSellPrice = 10,
+		WaterIntervalSeconds = 720,
 	}),
 	build_crop_definition({
 		CropId = "Potato",
 		SortOrder = 100,
 		SeedPrice = 2,
 		FruitSellPrice = 6,
+		WaterIntervalSeconds = 300,
 	}),
 	build_crop_definition({
 		CropId = "Pumpkin",
 		SortOrder = 110,
 		SeedPrice = 4,
 		FruitSellPrice = 10,
+		WaterIntervalSeconds = 720,
 	}),
 	build_crop_definition({
 		CropId = "Radish",
 		SortOrder = 120,
 		SeedPrice = 1,
 		FruitSellPrice = 4,
+		WaterIntervalSeconds = 150,
 	}),
 	build_crop_definition({
 		CropId = "Strawberry",
 		SortOrder = 130,
 		SeedPrice = 3,
 		FruitSellPrice = 9,
+		WaterIntervalSeconds = 360,
 	}),
 	build_crop_definition({
 		CropId = "Tomato",
 		SortOrder = 140,
 		SeedPrice = 2,
 		FruitSellPrice = 7,
+		WaterIntervalSeconds = 420,
 	}),
 	build_crop_definition({
 		CropId = "Wheat",
 		SortOrder = 150,
 		SeedPrice = 1,
 		FruitSellPrice = 4,
+		WaterIntervalSeconds = 240,
 	}),
 }
 

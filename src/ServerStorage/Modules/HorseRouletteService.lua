@@ -7,6 +7,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
 
 local HorseRouletteService = {}
@@ -95,6 +96,10 @@ function HorseRouletteService.Roll(player)
 	})
 
 	if grantedHorse then
+		if paidPrice > 0 then
+			SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
+		end
+
 		return {
 			Success = true,
 			Code = "Granted",
@@ -109,6 +114,10 @@ function HorseRouletteService.Roll(player)
 	end
 
 	if grantCode == "NoStableSlotAvailable" then
+		if paidPrice > 0 then
+			SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
+		end
+
 		return {
 			Success = true,
 			Code = grantCode,
