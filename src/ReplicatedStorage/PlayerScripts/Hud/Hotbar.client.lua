@@ -122,6 +122,7 @@ local uiRoot = nil
 local hudRoot = nil
 local hotbarFrame = nil
 local hotbarTemplate = nil
+local hotbarTemplateSource = nil
 local moneyTabFrame = nil
 local moneyLabel = nil
 local moneyShadowLabel = nil
@@ -152,6 +153,8 @@ rootTrove:Add(backpackTrove)
 rootTrove:Add(characterTrove)
 rootTrove:Add(uiTrove)
 rootTrove:Add(moneyButtonTrove)
+
+local strip_scripts
 
 local function normalize_key(value): string?
 	if type(value) ~= "string" then
@@ -725,6 +728,150 @@ local function set_gui_visible(instance: Instance?, isVisible: boolean)
 	end
 end
 
+local function find_direct_child_by_name(parent: Instance, childName: string): Instance?
+	for _, child in ipairs(parent:GetChildren()) do
+		if child.Name == childName then
+			return child
+		end
+	end
+
+	return nil
+end
+
+local function build_relative_path(root: Instance, target: Instance): { string }
+	local segments = {}
+	local current = target
+
+	while current and current ~= root do
+		table.insert(segments, 1, current.Name)
+		current = current.Parent
+	end
+
+	return segments
+end
+
+local function find_by_relative_path(root: Instance, pathSegments: { string }): Instance?
+	local current = root
+
+	for _, segment in ipairs(pathSegments) do
+		local nextNode = find_direct_child_by_name(current, segment)
+		if not nextNode then
+			return nil
+		end
+
+		current = nextNode
+	end
+
+	return current
+end
+
+local function copy_instance_property(source: Instance, target: Instance, propertyName: string)
+	pcall(function()
+		target[propertyName] = source[propertyName]
+	end)
+end
+
+local function restore_template_gui_state(sourceRoot: Instance?, targetRoot: Instance?)
+	if not sourceRoot or not targetRoot then
+		return
+	end
+
+	local function restore_pair(sourceInstance: Instance, targetInstance: Instance)
+		if sourceInstance:IsA("GuiObject") and targetInstance:IsA("GuiObject") then
+			for _, propertyName in ipairs({
+				"AnchorPoint",
+				"AutomaticSize",
+				"BackgroundColor3",
+				"BackgroundTransparency",
+				"BorderColor3",
+				"BorderSizePixel",
+				"ClipsDescendants",
+				"Position",
+				"Rotation",
+				"Size",
+				"Visible",
+				"ZIndex",
+			}) do
+				copy_instance_property(sourceInstance, targetInstance, propertyName)
+			end
+		end
+
+		if sourceInstance:IsA("ImageLabel") or sourceInstance:IsA("ImageButton") then
+			for _, propertyName in ipairs({
+				"Image",
+				"ImageColor3",
+				"ImageRectOffset",
+				"ImageRectSize",
+				"ImageTransparency",
+				"ScaleType",
+				"SliceCenter",
+				"SliceScale",
+			}) do
+				copy_instance_property(sourceInstance, targetInstance, propertyName)
+			end
+		end
+
+		if sourceInstance:IsA("TextLabel")
+			or sourceInstance:IsA("TextButton")
+			or sourceInstance:IsA("TextBox")
+		then
+			for _, propertyName in ipairs({
+				"Font",
+				"TextColor3",
+				"TextScaled",
+				"TextSize",
+				"TextStrokeColor3",
+				"TextStrokeTransparency",
+				"TextTransparency",
+				"TextWrapped",
+			}) do
+				copy_instance_property(sourceInstance, targetInstance, propertyName)
+			end
+		end
+
+		if sourceInstance:IsA("UIStroke") and targetInstance:IsA("UIStroke") then
+			for _, propertyName in ipairs({
+				"ApplyStrokeMode",
+				"Color",
+				"Enabled",
+				"LineJoinMode",
+				"Thickness",
+				"Transparency",
+			}) do
+				copy_instance_property(sourceInstance, targetInstance, propertyName)
+			end
+		end
+
+		if sourceInstance:IsA("UIScale") and targetInstance:IsA("UIScale") then
+			copy_instance_property(sourceInstance, targetInstance, "Scale")
+		end
+	end
+
+	restore_pair(sourceRoot, targetRoot)
+
+	for _, sourceDescendant in ipairs(sourceRoot:GetDescendants()) do
+		local targetDescendant = find_by_relative_path(targetRoot, build_relative_path(sourceRoot, sourceDescendant))
+		if targetDescendant then
+			restore_pair(sourceDescendant, targetDescendant)
+		end
+	end
+end
+
+local function make_template_source(template: GuiObject): GuiObject
+	local source = template:Clone()
+	source.Visible = true
+	strip_scripts(source)
+	set_gui_visible(template, false)
+	return source
+end
+
+local function destroy_hotbar_template_source()
+	if hotbarTemplateSource then
+		hotbarTemplateSource:Destroy()
+		hotbarTemplateSource = nil
+	end
+end
+
 local function destroy_slot(itemKey: string)
 	local slot = slotInstances[itemKey]
 	if slot then
@@ -867,7 +1014,7 @@ local function set_bind_indicator(slot: GuiObject, slotIndex: number)
 	end
 end
 
-local function strip_scripts(root: Instance)
+strip_scripts = function(root: Instance)
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
 			descendant:Destroy()
@@ -1535,11 +1682,12 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 end
 
 local function create_slot(group)
-	local slot = hotbarTemplate:Clone()
+	local slot = hotbarTemplateSource:Clone()
 	local slotTrove = Trove.new()
 
 	slot:SetAttribute("HotbarPreviewReady", nil)
 	slot:SetAttribute("HotbarPreviewKey", nil)
+	restore_template_gui_state(hotbarTemplateSource, slot)
 	slot.Parent = hotbarFrame
 	slotInstances[group.Key] = slot
 	slotTroves[group.Key] = slotTrove
@@ -1561,7 +1709,7 @@ local function rebuild_hotbar()
 	local equippedGroup = equippedKey and currentGroups[equippedKey] or nil
 	update_item_hand_display(equippedKey, equippedGroup and equippedGroup.DisplayName or nil)
 
-	if not hotbarFrame or not hotbarTemplate or not hotbarTemplate.Parent then
+	if not hotbarFrame or not hotbarTemplateSource then
 		clear_slots()
 		return
 	end
@@ -1590,6 +1738,7 @@ local function rebuild_hotbar()
 			slot = create_slot(group)
 		end
 
+		restore_template_gui_state(hotbarTemplateSource, slot)
 		update_slot(slot, group, index)
 	end
 
@@ -1690,6 +1839,7 @@ local function try_bind_hotbar()
 			clear_slots()
 		end
 
+		destroy_hotbar_template_source()
 		hotbarFrame = nextHotbar
 		hotbarTemplate = nextTemplate
 		return
@@ -1697,10 +1847,12 @@ local function try_bind_hotbar()
 
 	if hotbarChanged then
 		clear_slots()
+		destroy_hotbar_template_source()
 	end
 
 	hotbarFrame = nextHotbar
 	hotbarTemplate = nextTemplate
+	hotbarTemplateSource = hotbarTemplateSource or make_template_source(hotbarTemplate)
 
 	set_gui_visible(hotbarTemplate, false)
 	queue_refresh()

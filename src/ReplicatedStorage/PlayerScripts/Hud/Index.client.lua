@@ -5,13 +5,11 @@ local RunService = game:GetService("RunService")
 
 -- CONSTANTS
 local Modules = ReplicatedStorage:WaitForChild("Modules")
-local ClientModules = Modules:WaitForChild("Client")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local HorseViewportRenderer = require(ClientModules:WaitForChild("Hud"):WaitForChild("HorseViewportRenderer"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
@@ -27,13 +25,6 @@ local INDEX_STATE_FUNCTION_NAME = "HorseIndexGetState"
 local INDEX_STATE_CHANGED_EVENT_NAME = "HorseIndexStateChanged"
 
 local CARD_BUILD_INTERVAL_SECONDS = 0.025
-local VIEWPORT_JOB_INTERVAL_SECONDS = 0.065
-local DETAIL_VIEWPORT_DELAY_SECONDS = 0.035
-local VIEWPORT_VISIBILITY_PADDING_PX = 72
-local VIEWPORT_VISIBILITY_PADDING_SCALE = 0.22
-local VIEWPORT_UNLOAD_PADDING_PX = 220
-local VIEWPORT_UNLOAD_PADDING_SCALE = 0.75
-local MAX_GRID_VIEWPORTS = 8
 
 local MAIN_UI_NAMES = { "MainUI" }
 local MAINFRAME_NAMES = { "MainFrameFR", "MainframeFR" }
@@ -44,7 +35,6 @@ local GRID_CONTAINER_NAMES = { "GridScrollingFrame", "ListScrollingFrame", "Scro
 local ITEM_TEMPLATE_NAMES = { "ItemBT" }
 local ITEM_NAME_NAMES = { "ItemNameTX", "ItemName" }
 local HORSE_IMAGE_NAMES = { "HorseImage" }
-local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
 local DETAILS_ROOT_NAMES = { "ItemBG" }
 local DETAILS_NAME_NAMES = { "ItemTX", "ItemNameTX", "ItemName" }
 local DETAILS_TEXT_NAMES = { "DetailsTX", "DetailTX", "DescriptionTX" }
@@ -52,16 +42,8 @@ local DETAILS_DISPLAY_NAMES = { "ItemDisplayBG" }
 local DETAILS_IMAGE_NAMES = { "HorseImage" }
 local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
 
-local INDEX_CAMERA_CONFIG = table.clone(HorseViewportRenderer.Presets.Stable)
-local stableCameraOffset = INDEX_CAMERA_CONFIG.CameraOffsetScale
-INDEX_CAMERA_CONFIG.CameraOffsetScale = Vector3.new(
-	stableCameraOffset.X,
-	stableCameraOffset.Y,
-	-stableCameraOffset.Z
-)
-
-local GRID_CAMERA_CONFIG = INDEX_CAMERA_CONFIG
-local DETAILS_CAMERA_CONFIG = INDEX_CAMERA_CONFIG
+local UNLOCKED_IMAGE_COLOR = Color3.fromRGB(255, 255, 255)
+local LOCKED_IMAGE_COLOR = Color3.fromRGB(0, 0, 0)
 
 -- VARIABLES
 local localPlayer = Players.LocalPlayer
@@ -79,25 +61,17 @@ local currentEntries = {}
 local entriesByCatalogId = {}
 local activeCards = {}
 local activeCardsByCatalogId = {}
-local viewportJobs = {}
-local viewportJobsByKey = {}
 
 local renderDirty = true
 local renderQueued = false
 local renderGeneration = 0
-local viewportJobGeneration = 0
-local viewportWorkerRunning = false
-local detailViewportToken = 0
 local stateRequestToken = 0
 local serverEventBound = false
-
-local viewportUpdatePending = false
 
 local queue_render
 local refresh_or_render_index
 local try_bind_ui
 local select_catalog
-local queue_visible_grid_viewports
 
 -- FUNCTIONS
 local function wait_for_preload_ready()
@@ -150,12 +124,6 @@ end
 
 local function find_text_label(root, aliases, recursive)
 	return find_named_instance(root, aliases, "TextLabel", recursive)
-end
-
-local function find_viewport_frame(root)
-	if not root then return nil end
-	if root:IsA("ViewportFrame") then return root end
-	return find_named_instance(root, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
 end
 
 local function set_gui_visible(instance, isVisible)
@@ -235,13 +203,34 @@ local function resolve_child_by_path(root, path, className)
 	return current
 end
 
+local function clear_viewport_descendants(root)
+	if not root then return end
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("ViewportFrame") then
+			descendant:Destroy()
+		end
+	end
+end
+
+local function set_horse_image(imageObject, definition, isUnlocked)
+	if not imageObject then return end
+
+	clear_viewport_descendants(imageObject)
+
+	local imageId = definition and definition.Image or ""
+	if imageObject:IsA("ImageLabel") or imageObject:IsA("ImageButton") then
+		imageObject.Image = type(imageId) == "string" and imageId or ""
+		imageObject.ImageColor3 = isUnlocked and UNLOCKED_IMAGE_COLOR or LOCKED_IMAGE_COLOR
+		imageObject.ImageTransparency = imageObject.Image ~= "" and 0 or 1
+	end
+end
+
 local function create_template_map(template)
 	local nameLabel = find_text_label(template, ITEM_NAME_NAMES, true)
 	local imageRoot = find_gui_object(template, HORSE_IMAGE_NAMES, true)
-	local viewportFrame = find_viewport_frame(imageRoot or template)
 	return {
 		NameLabelPath = get_relative_child_path(template, nameLabel),
-		ViewportFramePath = get_relative_child_path(template, viewportFrame),
+		ImagePath = get_relative_child_path(template, imageRoot),
 	}
 end
 
@@ -250,6 +239,7 @@ local function make_template_source(template)
 	source.Visible = true
 	strip_scripts(source)
 	disable_hud_anim_tree(source)
+	clear_viewport_descendants(source)
 
 	local originalParent = template.Parent
 	template.Visible = false
@@ -374,6 +364,7 @@ local function sanitize_server_entry(rawEntry, index)
 			Rarity = rawEntry.Rarity or (catalogDefinition and catalogDefinition.Rarity) or "",
 			Tier = rawEntry.Tier or (catalogDefinition and catalogDefinition.Tier) or "",
 			PlaceholderModelKey = rawEntry.ModelKey or (catalogDefinition and catalogDefinition.PlaceholderModelKey) or "",
+			Image = rawEntry.Image or (catalogDefinition and catalogDefinition.Image) or "",
 		},
 		IsUnlocked = rawEntry.IsUnlocked == true,
 		SortOrder = tonumber(rawEntry.SortOrder) or index,
@@ -430,18 +421,6 @@ local function update_canvas_size()
 	scrollingFrame.CanvasSize = UDim2.fromOffset(0, math.max(0, layout.AbsoluteContentSize.Y + verticalPadding))
 end
 
-local function is_card_near_visible_region(scrollingFrame, card, paddingPixels, paddingScale)
-	if not scrollingFrame or not card or not card.Parent then return true end
-
-	local padding = math.max(paddingPixels, scrollingFrame.AbsoluteSize.Y * paddingScale)
-	local regionTop = scrollingFrame.AbsolutePosition.Y - padding
-	local regionBottom = scrollingFrame.AbsolutePosition.Y + scrollingFrame.AbsoluteSize.Y + padding
-	local cardTop = card.AbsolutePosition.Y
-	local cardBottom = cardTop + card.AbsoluteSize.Y
-
-	return cardBottom >= regionTop and cardTop <= regionBottom
-end
-
 local function create_click_target(card)
 	if card:IsA("GuiButton") then return card end
 	local existingButton = card:FindFirstChild("IndexClickTarget")
@@ -478,228 +457,6 @@ local function set_selected_visual(card, isSelected)
 	end
 end
 
-local function clear_viewport_jobs()
-	viewportJobGeneration += 1
-	viewportWorkerRunning = false
-	table.clear(viewportJobs)
-	table.clear(viewportJobsByKey)
-
-	for _, cardEntry in ipairs(activeCards) do
-		cardEntry.ViewportJobQueued = false
-		cardEntry.ViewportQueuedKind = nil
-	end
-end
-
-local function pop_next_viewport_job()
-	local bestIndex = nil
-	local bestPriority = nil
-
-	for index, job in ipairs(viewportJobs) do
-		if not job.Cancelled and (not bestPriority or job.Priority < bestPriority) then
-			bestIndex = index
-			bestPriority = job.Priority
-		end
-	end
-
-	if not bestIndex then
-		table.clear(viewportJobs)
-		table.clear(viewportJobsByKey)
-		return nil
-	end
-
-	local job = table.remove(viewportJobs, bestIndex)
-	if viewportJobsByKey[job.Key] == job then
-		viewportJobsByKey[job.Key] = nil
-	end
-
-	if job.CardEntry then
-		job.CardEntry.ViewportJobQueued = false
-		job.CardEntry.ViewportQueuedKind = nil
-	end
-
-	return job
-end
-
-local function is_viewport_job_valid(job)
-	if job.Cancelled or job.Generation ~= renderGeneration then return false end
-
-	local ui = currentUi
-	if not ui or ui ~= job.Ui or not ui.Root or not ui.Root.Parent or not is_gui_visible(ui.Root) then
-		return false
-	end
-
-	if not job.ViewportFrame or not job.ViewportFrame.Parent then return false end
-
-	if job.Kind == "detail" then
-		return job.DetailToken == detailViewportToken and selectedCatalogId == job.CatalogId
-	end
-
-	local cardEntry = job.CardEntry
-	if not cardEntry or cardEntry.ViewportFrame ~= job.ViewportFrame or not cardEntry.Card or not cardEntry.Card.Parent then
-		return false
-	end
-
-	if not ui.GridContainer:IsA("ScrollingFrame") then return true end
-
-	local scrollingFrame = ui.GridContainer
-	if job.Kind == "clear" then
-		return cardEntry.ViewportPopulated
-			and not is_card_near_visible_region(scrollingFrame, cardEntry.Card, VIEWPORT_UNLOAD_PADDING_PX, VIEWPORT_UNLOAD_PADDING_SCALE)
-	end
-
-	return not cardEntry.ViewportPopulated
-		and is_card_near_visible_region(scrollingFrame, cardEntry.Card, VIEWPORT_VISIBILITY_PADDING_PX, VIEWPORT_VISIBILITY_PADDING_SCALE)
-end
-
-local function apply_viewport_job(job)
-	if job.Kind == "clear" then
-		HorseViewportRenderer.Clear(job.ViewportFrame)
-		if job.CardEntry then
-			job.CardEntry.ViewportPopulated = false
-		end
-		return
-	end
-
-	local populated = HorseViewportRenderer.ApplyCatalog(
-		job.ViewportFrame,
-		job.CatalogId,
-		job.CameraConfig,
-		{ Silhouette = not job.IsUnlocked }
-	)
-
-	if job.CardEntry then
-		job.CardEntry.ViewportPopulated = populated == true
-		job.CardEntry.LastViewportTouchedAt = os.clock()
-	end
-end
-
-local function start_viewport_worker()
-	if viewportWorkerRunning then return end
-	viewportWorkerRunning = true
-	local workerGeneration = viewportJobGeneration
-
-	task.spawn(function()
-		task.wait(VIEWPORT_JOB_INTERVAL_SECONDS)
-		while workerGeneration == viewportJobGeneration do
-			local job = pop_next_viewport_job()
-			if not job then break end
-			if is_viewport_job_valid(job) then
-				apply_viewport_job(job)
-			end
-			task.wait(VIEWPORT_JOB_INTERVAL_SECONDS)
-		end
-		if workerGeneration == viewportJobGeneration then
-			viewportWorkerRunning = false
-		end
-	end)
-end
-
-local function enqueue_viewport_job(job)
-	if not job or not job.Key then return end
-	local existingJob = viewportJobsByKey[job.Key]
-	if existingJob then
-		existingJob.Cancelled = true
-	end
-
-	viewportJobsByKey[job.Key] = job
-	viewportJobs[#viewportJobs + 1] = job
-
-	if job.CardEntry then
-		job.CardEntry.ViewportJobQueued = true
-		job.CardEntry.ViewportQueuedKind = job.Kind
-	end
-	start_viewport_worker()
-end
-
-local function enqueue_grid_viewport(cardEntry)
-	if not currentUi or not cardEntry or not cardEntry.ViewportFrame or cardEntry.ViewportPopulated then return end
-	if cardEntry.ViewportJobQueued and cardEntry.ViewportQueuedKind == "grid" then return end
-
-	enqueue_viewport_job({
-		Kind = "grid",
-		Key = "grid:" .. cardEntry.CatalogId,
-		Priority = 2,
-		Ui = currentUi,
-		Generation = renderGeneration,
-		CardEntry = cardEntry,
-		ViewportFrame = cardEntry.ViewportFrame,
-		CatalogId = cardEntry.CatalogId,
-		IsUnlocked = cardEntry.IsUnlocked,
-		CameraConfig = GRID_CAMERA_CONFIG,
-		CameraKey = "grid",
-	})
-end
-
-local function enqueue_grid_clear(cardEntry)
-	if not currentUi or not cardEntry or not cardEntry.ViewportFrame or not cardEntry.ViewportPopulated then return end
-	if cardEntry.ViewportJobQueued and cardEntry.ViewportQueuedKind == "clear" then return end
-
-	enqueue_viewport_job({
-		Kind = "clear",
-		Key = "grid:" .. cardEntry.CatalogId,
-		Priority = 5,
-		Ui = currentUi,
-		Generation = renderGeneration,
-		CardEntry = cardEntry,
-		ViewportFrame = cardEntry.ViewportFrame,
-	})
-end
-
-local function trim_grid_viewports(scrollingFrame)
-	if not scrollingFrame then return end
-	local populatedCards = {}
-
-	for _, cardEntry in ipairs(activeCards) do
-		if cardEntry.ViewportFrame and cardEntry.ViewportPopulated then
-			local nearUnloadRegion = is_card_near_visible_region(scrollingFrame, cardEntry.Card, VIEWPORT_UNLOAD_PADDING_PX, VIEWPORT_UNLOAD_PADDING_SCALE)
-			if not nearUnloadRegion then
-				enqueue_grid_clear(cardEntry)
-			else
-				populatedCards[#populatedCards + 1] = cardEntry
-			end
-		end
-	end
-
-	if #populatedCards <= MAX_GRID_VIEWPORTS then return end
-
-	table.sort(populatedCards, function(left, right)
-		return (left.LastViewportTouchedAt or 0) < (right.LastViewportTouchedAt or 0)
-	end)
-
-	local overflow = #populatedCards - MAX_GRID_VIEWPORTS
-	for index = 1, overflow do
-		local cardEntry = populatedCards[index]
-		if not is_card_near_visible_region(scrollingFrame, cardEntry.Card, VIEWPORT_VISIBILITY_PADDING_PX, VIEWPORT_VISIBILITY_PADDING_SCALE) then
-			enqueue_grid_clear(cardEntry)
-		end
-	end
-end
-
-queue_visible_grid_viewports = function()
-	local ui = currentUi
-	if not ui or not ui.Root or not is_gui_visible(ui.Root) then return end
-	local scrollingFrame = if ui.GridContainer:IsA("ScrollingFrame") then ui.GridContainer else nil
-	local now = os.clock()
-
-	for _, cardEntry in ipairs(activeCards) do
-		local shouldLoad = not scrollingFrame or is_card_near_visible_region(scrollingFrame, cardEntry.Card, VIEWPORT_VISIBILITY_PADDING_PX, VIEWPORT_VISIBILITY_PADDING_SCALE)
-		if shouldLoad then
-			cardEntry.LastViewportTouchedAt = now
-			enqueue_grid_viewport(cardEntry)
-		end
-	end
-	trim_grid_viewports(scrollingFrame)
-end
-
-local function request_viewport_update()
-	if viewportUpdatePending then return end
-	viewportUpdatePending = true
-	task.delay(0.05, function()
-		viewportUpdatePending = false
-		queue_visible_grid_viewports()
-	end)
-end
-
 local function render_details(entry)
 	local ui = currentUi
 	if not ui then return end
@@ -708,7 +465,7 @@ local function render_details(entry)
 	if not entry then
 		if ui.DetailsNameLabel then ui.DetailsNameLabel.Text = "" end
 		if ui.DetailsTextLabel then ui.DetailsTextLabel.Text = "" end
-		if ui.DetailsViewport then HorseViewportRenderer.Clear(ui.DetailsViewport) end
+		set_horse_image(ui.DetailsImage, nil, true)
 		return
 	end
 
@@ -718,33 +475,10 @@ local function render_details(entry)
 	if ui.DetailsTextLabel then
 		ui.DetailsTextLabel.Text = get_details_text(entry.Definition)
 	end
+	set_horse_image(ui.DetailsImage, entry.Definition, entry.IsUnlocked)
 end
 
-local function queue_details_viewport(entry)
-	local ui = currentUi
-	detailViewportToken += 1
-	local token = detailViewportToken
-	if not ui or not ui.DetailsViewport or not entry or not is_gui_visible(ui.Root) then return end
-
-	task.delay(DETAIL_VIEWPORT_DELAY_SECONDS, function()
-		if detailViewportToken ~= token or selectedCatalogId ~= entry.CatalogId or currentUi ~= ui then return end
-		enqueue_viewport_job({
-			Kind = "detail",
-			Key = "detail",
-			Priority = 0,
-			Ui = ui,
-			Generation = renderGeneration,
-			DetailToken = token,
-			ViewportFrame = ui.DetailsViewport,
-			CatalogId = entry.CatalogId,
-			IsUnlocked = entry.IsUnlocked,
-			CameraConfig = DETAILS_CAMERA_CONFIG,
-			CameraKey = "details",
-		})
-	end)
-end
-
-local function apply_selection(queueDetails)
+local function apply_selection()
 	local selectedEntry = selectedCatalogId and entriesByCatalogId[selectedCatalogId] or nil
 	if selectedCatalogId and not selectedEntry then
 		selectedCatalogId = nil
@@ -755,18 +489,15 @@ local function apply_selection(queueDetails)
 	end
 
 	render_details(selectedEntry)
-	if queueDetails ~= false then
-		queue_details_viewport(selectedEntry)
-	end
 end
 
 select_catalog = function(catalogId)
 	if selectedCatalogId == catalogId then
-		apply_selection(true)
+		apply_selection()
 		return
 	end
 	selectedCatalogId = catalogId
-	apply_selection(true)
+	apply_selection()
 end
 
 local function create_card_entry(ui, entry, entryIndex)
@@ -778,16 +509,14 @@ local function create_card_entry(ui, entry, entryIndex)
 	disable_hud_anim_tree(card)
 
 	local nameLabel = resolve_child_by_path(card, ui.TemplateMap.NameLabelPath, "TextLabel") or find_text_label(card, ITEM_NAME_NAMES, true)
-	local viewportFrame = resolve_child_by_path(card, ui.TemplateMap.ViewportFramePath, "ViewportFrame") or find_viewport_frame(find_gui_object(card, HORSE_IMAGE_NAMES, true) or card)
+	local imageObject = resolve_child_by_path(card, ui.TemplateMap.ImagePath, "GuiObject") or find_gui_object(card, HORSE_IMAGE_NAMES, true)
 	local clickTarget = create_click_target(card)
 
 	if nameLabel then
 		nameLabel.Text = entry.Definition.DisplayName or entry.CatalogId
 	end
 
-	if viewportFrame then
-		HorseViewportRenderer.Clear(viewportFrame)
-	end
+	set_horse_image(imageObject, entry.Definition, entry.IsUnlocked)
 
 	if clickTarget then
 		cardTrove:Connect(clickTarget.Activated, function()
@@ -801,11 +530,7 @@ local function create_card_entry(ui, entry, entryIndex)
 		IsUnlocked = entry.IsUnlocked,
 		Card = card,
 		NameLabel = nameLabel,
-		ViewportFrame = viewportFrame,
-		ViewportPopulated = false,
-		ViewportJobQueued = false,
-		ViewportQueuedKind = nil,
-		LastViewportTouchedAt = 0,
+		ImageObject = imageObject,
 	}
 end
 
@@ -832,11 +557,11 @@ local function refresh_cards_from_entries(entries)
 			if cardEntry.NameLabel then
 				cardEntry.NameLabel.Text = entry.Definition.DisplayName or entry.CatalogId
 			end
+			set_horse_image(cardEntry.ImageObject, entry.Definition, entry.IsUnlocked)
 		end
 	end
 
-	apply_selection(false)
-	request_viewport_update()
+	apply_selection()
 end
 
 local function render_index()
@@ -849,7 +574,6 @@ local function render_index()
 
 	renderDirty = false
 	renderGeneration += 1
-	clear_viewport_jobs()
 
 	local generation = renderGeneration
 	local entries = get_entry_data()
@@ -878,9 +602,8 @@ local function render_index()
 			if selectedCatalogId and not entriesByCatalogId[selectedCatalogId] then
 				selectedCatalogId = nil
 			end
-			apply_selection(true)
+			apply_selection()
 			update_canvas_size()
-			request_viewport_update()
 			return
 		end
 
@@ -895,7 +618,6 @@ local function render_index()
 
 		if nextEntryIndex == 2 or nextEntryIndex % 4 == 0 then
 			update_canvas_size()
-			request_viewport_update()
 		end
 
 		task.delay(CARD_BUILD_INTERVAL_SECONDS, render_next_card)
@@ -982,11 +704,10 @@ local function get_index_ui(indexRoot)
 	local detailsRoot = find_gui_object(contentRoot, DETAILS_ROOT_NAMES, true)
 	local detailsDisplayRoot = detailsRoot and (find_gui_object(detailsRoot, DETAILS_DISPLAY_NAMES, true) or detailsRoot)
 	local detailsImageRoot = detailsDisplayRoot and (find_gui_object(detailsDisplayRoot, DETAILS_IMAGE_NAMES, true) or detailsDisplayRoot)
-	local detailsViewport = find_viewport_frame(detailsImageRoot)
 	local detailsNameLabel = find_text_label(detailsRoot, DETAILS_NAME_NAMES, true)
 	local detailsTextLabel = find_text_label(detailsRoot, DETAILS_TEXT_NAMES, true)
 
-	if not gridContainer or not template or not detailsRoot or not detailsViewport or not detailsNameLabel or not detailsTextLabel then
+	if not gridContainer or not template or not detailsRoot or not detailsImageRoot or not detailsNameLabel or not detailsTextLabel then
 		return nil
 	end
 
@@ -995,7 +716,7 @@ local function get_index_ui(indexRoot)
 		GridContainer = gridContainer,
 		Template = template,
 		DetailsRoot = detailsRoot,
-		DetailsViewport = detailsViewport,
+		DetailsImage = detailsImageRoot,
 		DetailsNameLabel = detailsNameLabel,
 		DetailsTextLabel = detailsTextLabel,
 		TemplateSource = nil,
@@ -1018,10 +739,8 @@ end
 
 local function destroy_ui_binding()
 	renderGeneration += 1
-	detailViewportToken += 1
 	renderDirty = true
 	renderQueued = false
-	clear_viewport_jobs()
 	cardTrove:Clean()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
@@ -1063,9 +782,7 @@ local function bind_ui(ui)
 		end
 		uiTrove:Connect(scrollingFrame:GetPropertyChangedSignal("AbsoluteSize"), function()
 			update_canvas_size()
-			request_viewport_update()
 		end)
-		uiTrove:Connect(scrollingFrame:GetPropertyChangedSignal("CanvasPosition"), request_viewport_update)
 	end
 
 	uiTrove:Connect(ui.Root.AncestryChanged, function(_, parent)
@@ -1082,11 +799,8 @@ local function bind_ui(ui)
 				if renderDirty then
 					queue_render()
 				else
-					request_viewport_update()
-					apply_selection(true)
+					apply_selection()
 				end
-			else
-				clear_viewport_jobs()
 			end
 		end)
 	end
@@ -1105,7 +819,6 @@ local function is_index_ui_related(instance)
 		or matches_alias(instance, ITEM_TEMPLATE_NAMES)
 		or matches_alias(instance, DETAILS_ROOT_NAMES)
 		or matches_alias(instance, HORSE_IMAGE_NAMES)
-		or matches_alias(instance, VIEWPORT_FRAME_NAMES)
 end
 
 try_bind_ui = function()
@@ -1163,8 +876,6 @@ rootTrove:Connect(RunService.Heartbeat, function()
 		refresh_or_render_index()
 	end
 	
-	-- REMOVIDO DAQUI: queue_visible_grid_viewports()
-	-- Executar isso a cada frame causa Layout Thrashing intenso.
 end)
 
 task.defer(function()

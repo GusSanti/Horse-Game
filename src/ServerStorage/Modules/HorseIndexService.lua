@@ -114,6 +114,7 @@ local function build_state_payload(player)
 			Rarity = definition.Rarity or "",
 			Tier = definition.Tier or "",
 			ModelKey = definition.PlaceholderModelKey or "",
+			Image = definition.Image or "",
 			IsUnlocked = unlockedLookup[catalogId] == true,
 			SortOrder = index,
 		}

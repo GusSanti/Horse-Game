@@ -3,17 +3,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
-local ClientModules = Modules:WaitForChild("Client")
 local Dictionary = Modules:WaitForChild("Dictionary")
 local GameData = Modules:WaitForChild("GameData")
-local HudModules = ClientModules:WaitForChild("Hud")
 local Libraries = Modules:WaitForChild("Libraries")
 local Services = Modules:WaitForChild("Services")
 local Utility = Modules:WaitForChild("Utility")
 
 local Trove = require(Libraries:WaitForChild("Trove"))
-local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
-local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local HorseStatusBillboardConfig = require(GameData:WaitForChild("HorseStatusBillboardConfig"))
@@ -24,15 +20,11 @@ local Net = require(Libraries:WaitForChild("Net"))
 
 local localPlayer: Player = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui") :: PlayerGui
-local plotValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName) :: ObjectValue
 
 local rootTrove = Trove.new()
 local uiTrove = Trove.new()
 local cardTrove = Trove.new()
 
-local HORSE_FOLDER_NAME: string = ToolDictionary.HorseFolderName
-local VISUAL_HORSE_ATTRIBUTE: string = ToolDictionary.VisualHorseAttribute
-local HORSE_ID_ATTRIBUTE: string = ToolDictionary.HorseIdAttribute
 local REFRESH_INTERVAL: number = HorseStatusBillboardConfig.RefreshInterval or 0.25
 local RENDER_BATCH_SIZE = 1
 
@@ -48,7 +40,6 @@ local STAT_TEMPLATE_NAMES = { "StatFR" }
 local HORSE_NAME_NAMES = { "HorseNameTX" }
 local HORSE_DETAILS_NAMES = { "DetailsTX" }
 local HORSE_IMAGE_NAMES = { "HorseImage" }
-local VIEWPORT_FRAME_NAMES = { "ViewportFrame" }
 local SELECTED_FRAME_NAMES = { "SelectedFR" }
 local SELECTED_TEXT_NAMES = { "SelectedTX" }
 local STAT_NAME_NAMES = { "StatsTX" }
@@ -97,8 +88,7 @@ type HorseCard = {
 	DetailsLabel: TextLabel?,
 	SelectedFrame: GuiObject?,
 	SelectedLabel: TextLabel?,
-	ViewportFrame: ViewportFrame?,
-	ViewportPopulated: boolean,
+	ImageObject: GuiObject?,
 	StatRows: {[string]: CardStatRow},
 }
 
@@ -109,11 +99,6 @@ local renderQueued = false
 local renderGeneration = 0
 local stableRenderDirty = false
 local mountRequestInFlight = false
-local viewportPopulationInProgress = false
-local stablePrewarmScheduled = false
-local prewarmedVisualByHorseId: {[string]: Instance} = {}
-
-local populate_visible_stable_viewports
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -226,13 +211,33 @@ local function find_frame(root: Instance?, aliases: {string}, recursive: boolean
 	return nil
 end
 
-local function find_viewport_frame(root: Instance?): ViewportFrame?
-	local instance = find_named_instance(root, VIEWPORT_FRAME_NAMES, "ViewportFrame")
-	if instance then
-		return instance :: ViewportFrame
+local function clear_viewport_descendants(root: Instance?): ()
+	if not root then
+		return
 	end
 
-	return nil
+	for _, descendant: Instance in ipairs(root:GetDescendants()) do
+		if descendant:IsA("ViewportFrame") then
+			descendant:Destroy()
+		end
+	end
+end
+
+local function set_horse_image(imageObject: GuiObject?, horse): ()
+	if not imageObject then
+		return
+	end
+
+	clear_viewport_descendants(imageObject)
+
+	local definition = type(horse) == "table" and HorseCatalog.GetDefinition(horse.CatalogId) or nil
+	local imageId = definition and definition.Image or ""
+
+	if imageObject:IsA("ImageLabel") or imageObject:IsA("ImageButton") then
+		imageObject.Image = type(imageId) == "string" and imageId or ""
+		imageObject.ImageColor3 = Color3.fromRGB(255, 255, 255)
+		imageObject.ImageTransparency = imageObject.Image ~= "" and 0 or 1
+	end
 end
 
 local function find_main_ui_root(): Instance?
@@ -332,20 +337,6 @@ local function is_ui_visible(instance: Instance?): boolean
 	return true
 end
 
-local function is_card_near_visible_region(scrollingFrame: ScrollingFrame, card: GuiObject): boolean
-	if not card.Parent then
-		return false
-	end
-
-	local padding = math.max(80, scrollingFrame.AbsoluteSize.Y * 0.35)
-	local regionTop = scrollingFrame.AbsolutePosition.Y - padding
-	local regionBottom = scrollingFrame.AbsolutePosition.Y + scrollingFrame.AbsoluteSize.Y + padding
-	local cardTop = card.AbsolutePosition.Y
-	local cardBottom = cardTop + card.AbsoluteSize.Y
-
-	return cardBottom >= regionTop and cardTop <= regionBottom
-end
-
 local function strip_local_scripts(root: Instance): ()
 	for _, descendant: Instance in ipairs(root:GetDescendants()) do
 		if descendant:IsA("LocalScript") then
@@ -416,6 +407,7 @@ local function make_template_source(template: GuiObject): GuiObject
 	local source = template:Clone()
 	source.Visible = true
 	strip_local_scripts(source)
+	clear_viewport_descendants(source)
 
 	template.Visible = false
 
@@ -580,124 +572,6 @@ local function build_horse_details_text(horseId: string, horse): string
 	return horseId
 end
 
-local function find_plot_horse_visual(slotName: string, horseId: string): Instance?
-	local plot = plotValue.Value
-	if not plot then
-		return nil
-	end
-
-	local horseFolder = plot:FindFirstChild(HORSE_FOLDER_NAME)
-	local slotFolder = horseFolder and horseFolder:FindFirstChild(slotName)
-	if slotFolder then
-		for _, child: Instance in ipairs(slotFolder:GetChildren()) do
-			if child:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true and child:GetAttribute(HORSE_ID_ATTRIBUTE) == horseId then
-				return child
-			end
-		end
-	end
-
-	if horseFolder then
-		for _, descendant: Instance in ipairs(horseFolder:GetDescendants()) do
-			if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true and descendant:GetAttribute(HORSE_ID_ATTRIBUTE) == horseId then
-				return descendant
-			end
-		end
-	end
-
-	return nil
-end
-
-local function populate_viewport(viewportFrame: ViewportFrame, horseId: string, slotName: string): ()
-	local horse = get_owned_horse(horseId)
-	if not horse then
-		HorseViewportRenderer.Clear(viewportFrame)
-		return
-	end
-
-	local liveVisual = find_plot_horse_visual(slotName, horseId)
-	if liveVisual then
-		HorseViewportRenderer.QueueSource(
-			viewportFrame,
-			liveVisual,
-			"stable:" .. horseId,
-			HorseViewportRenderer.Presets.Stable,
-			{ Priority = 4 }
-		)
-		return
-	end
-
-	HorseViewportRenderer.QueueCatalog(
-		viewportFrame,
-		horse.CatalogId or "Default",
-		HorseViewportRenderer.Presets.Stable,
-		{
-			ModelKey = horse.VisualModelName or horse.PlaceholderModelKey,
-			Priority = 4,
-		}
-	)
-end
-
-local function clear_stable_source_prewarms(): ()
-	for horseId: string in pairs(prewarmedVisualByHorseId) do
-		HorseViewportRenderer.ForgetSource("stable:" .. horseId)
-		prewarmedVisualByHorseId[horseId] = nil
-	end
-end
-
-local function prewarm_stable_viewports(): ()
-	stablePrewarmScheduled = false
-	local activeHorseIds: {[string]: boolean} = {}
-
-	for _, stableHorseEntry: StableHorseEntry in ipairs(get_stable_horses()) do
-		local horseId = stableHorseEntry.HorseId
-		local horse = get_owned_horse(horseId)
-		activeHorseIds[horseId] = true
-
-		local liveVisual = find_plot_horse_visual(stableHorseEntry.SlotName, horseId)
-		if liveVisual then
-			local previousVisual = prewarmedVisualByHorseId[horseId]
-			if previousVisual ~= liveVisual then
-				if previousVisual then
-					HorseViewportRenderer.ForgetSource("stable:" .. horseId)
-				end
-				prewarmedVisualByHorseId[horseId] = liveVisual
-				HorseViewportRenderer.PrewarmSource(
-					liveVisual,
-					"stable:" .. horseId,
-					{ HorseViewportRenderer.Presets.Stable },
-					{
-						PrepareClone = true,
-						Priority = 15,
-					}
-				)
-			end
-		elseif type(horse) == "table" then
-			HorseViewportRenderer.PrewarmCatalogs(
-				{ horse.CatalogId or "Default" },
-				{ HorseViewportRenderer.Presets.Stable },
-				{
-					ModelKey = horse.VisualModelName or horse.PlaceholderModelKey,
-					PrepareClone = true,
-					Priority = 15,
-				}
-			)
-		end
-	end
-
-	for horseId: string in pairs(prewarmedVisualByHorseId) do
-		if not activeHorseIds[horseId] then
-			HorseViewportRenderer.ForgetSource("stable:" .. horseId)
-			prewarmedVisualByHorseId[horseId] = nil
-		end
-	end
-end
-
-local function queue_stable_viewport_prewarm(): ()
-	if stablePrewarmScheduled then return end
-	stablePrewarmScheduled = true
-	task.defer(prewarm_stable_viewports)
-end
-
 local function update_canvas_size(): ()
 	local ui = currentUi
 	if not ui then
@@ -846,6 +720,8 @@ local function update_card_stats(cardEntry: HorseCard): ()
 		cardEntry.DetailsLabel.Text = build_horse_details_text(cardEntry.HorseId, horse)
 	end
 
+	set_horse_image(cardEntry.ImageObject, horse)
+
 	if cardEntry.SelectedFrame then
 		cardEntry.SelectedFrame.Visible = is_horse_equipped(cardEntry.HorseId)
 	end
@@ -888,7 +764,6 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 	local mountButton = find_horse_mount_button(card, horseImage)
 	local selectedFrame = find_gui_object(card, SELECTED_FRAME_NAMES, true)
 	local selectedLabel = find_text_label(selectedFrame, SELECTED_TEXT_NAMES)
-	local viewportFrame = find_viewport_frame(horseImage or card)
 	local statsContainer = find_gui_object(card, STATS_NAMES, true)
 	local statTemplate = find_gui_object(statsContainer, STAT_TEMPLATE_NAMES, true)
 	local statRows: {[string]: CardStatRow} = {}
@@ -913,6 +788,8 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 	if selectedLabel and selectedLabel.Text == "" then
 		selectedLabel.Text = "Selected"
 	end
+
+	set_horse_image(horseImage, horse)
 
 	if mountButton then
 		cardTrove:Connect(mountButton.Activated, function()
@@ -949,67 +826,9 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 		DetailsLabel = detailsLabel,
 		SelectedFrame = selectedFrame,
 		SelectedLabel = selectedLabel,
-		ViewportFrame = viewportFrame,
-		ViewportPopulated = false,
+		ImageObject = horseImage,
 		StatRows = statRows,
 	}
-end
-
-populate_visible_stable_viewports = function(): ()
-	local ui = currentUi
-	if viewportPopulationInProgress or not ui or not is_ui_visible(ui.Root) then
-		return
-	end
-	if not ui.ListContainer:IsA("ScrollingFrame") then
-		return
-	end
-
-	local scrollingFrame = ui.ListContainer :: ScrollingFrame
-	local hasVisiblePendingViewport = false
-	for _, cardEntry: HorseCard in ipairs(activeCards) do
-		if cardEntry.ViewportFrame
-			and not cardEntry.ViewportPopulated
-			and is_card_near_visible_region(scrollingFrame, cardEntry.Card)
-		then
-			hasVisiblePendingViewport = true
-			break
-		end
-	end
-	if not hasVisiblePendingViewport then
-		return
-	end
-
-	viewportPopulationInProgress = true
-	local generation = renderGeneration
-
-	task.spawn(function()
-		RunService.Heartbeat:Wait()
-
-		while generation == renderGeneration and currentUi == ui and is_ui_visible(ui.Root) do
-			local nextCardEntry: HorseCard? = nil
-			for _, cardEntry: HorseCard in ipairs(activeCards) do
-				if cardEntry.ViewportFrame
-					and not cardEntry.ViewportPopulated
-					and is_card_near_visible_region(scrollingFrame, cardEntry.Card)
-				then
-					nextCardEntry = cardEntry
-					break
-				end
-			end
-
-			if not nextCardEntry then
-				break
-			end
-
-			populate_viewport(nextCardEntry.ViewportFrame :: ViewportFrame, nextCardEntry.HorseId, nextCardEntry.SlotName)
-			nextCardEntry.ViewportPopulated = true
-			RunService.Heartbeat:Wait()
-		end
-
-		if generation == renderGeneration then
-			viewportPopulationInProgress = false
-		end
-	end)
 end
 
 local function refresh_cards(): ()
@@ -1090,7 +909,6 @@ local function render_stable(): ()
 			end
 
 			update_canvas_size()
-			populate_visible_stable_viewports()
 		end)
 	end
 
@@ -1155,9 +973,8 @@ local function get_stable_ui(root: Instance): StableUi?
 	local statTemplate = statsContainer and find_gui_object(statsContainer, STAT_TEMPLATE_NAMES, true)
 	local horseName = find_text_label(template, HORSE_NAME_NAMES)
 	local horseImage = find_gui_object(template, HORSE_IMAGE_NAMES, true)
-	local viewportFrame = find_viewport_frame(horseImage or template)
 
-	if not statsContainer or not statTemplate or not horseName or not viewportFrame then
+	if not statsContainer or not statTemplate or not horseName or not horseImage then
 		return nil
 	end
 
@@ -1181,7 +998,6 @@ local function destroy_ui_binding(): ()
 	renderGeneration += 1
 	renderQueued = false
 	stableRenderDirty = false
-	viewportPopulationInProgress = false
 	cardTrove:Clean()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
@@ -1202,46 +1018,9 @@ local function bind_ui(ui: StableUi): ()
 	currentUi = ui
 	uiTrove:Add(templateSource)
 
-	local plotTrove = uiTrove:Extend()
-
-	local function rebind_plot(): ()
-		plotTrove:Clean()
-
-		local plot = plotValue.Value
-		if not plot then
-			return
-		end
-
-		plotTrove:Connect(plot.DescendantAdded, function(descendant: Instance)
-			if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true or descendant.Name == HORSE_FOLDER_NAME then
-				queue_render()
-				queue_stable_viewport_prewarm()
-			end
-		end)
-
-		plotTrove:Connect(plot.DescendantRemoving, function(descendant: Instance)
-			if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true or descendant.Name == HORSE_FOLDER_NAME then
-				queue_render()
-				local horseId = descendant:GetAttribute(HORSE_ID_ATTRIBUTE)
-				if type(horseId) == "string" and prewarmedVisualByHorseId[horseId] == descendant then
-					HorseViewportRenderer.ForgetSource("stable:" .. horseId)
-					prewarmedVisualByHorseId[horseId] = nil
-				end
-				task.defer(queue_stable_viewport_prewarm)
-			end
-		end)
-	end
-
 	uiTrove:Add(DataUtility.client.bind("Stable", refresh_or_render_stable))
 	uiTrove:Add(DataUtility.client.bind("Horses", refresh_or_render_stable))
 	uiTrove:Add(DataUtility.client.bind("Horses.Owned", refresh_or_render_stable))
-
-	uiTrove:Connect(plotValue:GetPropertyChangedSignal("Value"), function()
-		clear_stable_source_prewarms()
-		rebind_plot()
-		queue_render()
-		queue_stable_viewport_prewarm()
-	end)
 
 	uiTrove:Connect(ui.Root.AncestryChanged, function(_, parent)
 		if parent then
@@ -1260,13 +1039,7 @@ local function bind_ui(ui: StableUi): ()
 		end
 	end)
 
-	if ui.ListContainer:IsA("ScrollingFrame") then
-		uiTrove:Connect((ui.ListContainer :: ScrollingFrame):GetPropertyChangedSignal("CanvasPosition"), populate_visible_stable_viewports)
-	end
-
-	rebind_plot()
 	queue_render()
-	queue_stable_viewport_prewarm()
 end
 
 local function is_stable_ui_related(instance: Instance): boolean
@@ -1274,7 +1047,7 @@ local function is_stable_ui_related(instance: Instance): boolean
 		or instance.Name == STABLE_CONTENT_NAME
 		or matches_alias(instance, TEMPLATE_NAMES)
 		or matches_alias(instance, STAT_TEMPLATE_NAMES)
-		or matches_alias(instance, VIEWPORT_FRAME_NAMES)
+		or matches_alias(instance, HORSE_IMAGE_NAMES)
 		or matches_alias(instance, HORSE_NAME_NAMES)
 		or instance.Name == FRAMES_CONTAINER_NAME
 		or instance.Name == MAINFRAME_NAME
@@ -1314,20 +1087,12 @@ rootTrove:Connect(playerGui.DescendantRemoving, function(instance: Instance)
 	end
 end)
 
-rootTrove:Add(DataUtility.client.bind("Stable", queue_stable_viewport_prewarm))
-rootTrove:Add(DataUtility.client.bind("Horses.Owned", function()
-	refresh_or_render_stable()
-	queue_stable_viewport_prewarm()
-end))
+rootTrove:Add(DataUtility.client.bind("Horses.Owned", refresh_or_render_stable))
 
 rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 	local ui = currentUi
 	if ui and stableRenderDirty and is_ui_visible(ui.Root) and not renderQueued then
 		refresh_or_render_stable()
-	end
-
-	if ui and is_ui_visible(ui.Root) and not viewportPopulationInProgress then
-		populate_visible_stable_viewports()
 	end
 
 	if not ui or #activeCards == 0 then
@@ -1344,4 +1109,3 @@ rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 end)
 
 try_bind_ui()
-queue_stable_viewport_prewarm()

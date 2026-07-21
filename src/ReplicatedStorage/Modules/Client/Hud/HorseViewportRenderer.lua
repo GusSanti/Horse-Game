@@ -73,7 +73,7 @@ HorseViewportRenderer.Presets = {
 		FocusZOffsetScale = 0,
 		RadiusScale = 0.6,
 		DistanceMultiplier = 0.92,
-		CameraOffsetScale = Vector3.new(0.42, 0.18, -1),
+		CameraOffsetScale = Vector3.new(0.42, 0.28, -1),
 	},
 	Race = {
 		FieldOfView = 32,
