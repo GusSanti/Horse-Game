@@ -30,8 +30,8 @@ local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
 local MOUNT_MOVEMENT_SOUND_NAME = "HorseMovement"
 local MOUNT_MOVEMENT_SOUND_ID = "rbxassetid://108771044697744"
 local MOUNT_MOVEMENT_MIN_SPEED = 0.35
-local MOUNT_WALK_MIN_PLAYBACK_SPEED = 0.62
-local MOUNT_WALK_MAX_PLAYBACK_SPEED = 0.8
+local MOUNT_WALK_MIN_PLAYBACK_SPEED = 0.56
+local MOUNT_WALK_MAX_PLAYBACK_SPEED = 0.72
 local MOUNT_RUN_PLAYBACK_SPEED = 1
 local MOUNT_MOVEMENT_VOLUME = 0.45
 local LOCAL_MOUNT_SMOOTHNESS = 26
@@ -372,14 +372,20 @@ local function set_local_rider_mode(mode)
 		end
 	end
 
-	local fadeTime = HorseMountConfig.RiderResumeBlendTime or 0.24
+	local isMountToIdleTransition = mode == "Idle" and animationState.Mode == "Mounting"
+	local fadeTime = isMountToIdleTransition
+		and (HorseMountConfig.MountIdleBlendLeadTime or 0.18)
+		or (HorseMountConfig.RiderResumeBlendTime or 0.24)
 	local tracks = animationState.Tracks
 
 	if mode == "Idle" then
-		stop_local_track(tracks.HopOn, 0.05)
+		-- Bring the seated pose in before fading the hop-on pose out. Using the
+		-- same blend window prevents the default character pose from showing
+		-- between the two animations at the end of mounting.
+		play_local_track(tracks.Idle, fadeTime, 1, 1)
+		stop_local_track(tracks.HopOn, isMountToIdleTransition and fadeTime or 0.05)
 		stop_local_track(tracks.HopOff, 0.05)
 		stop_local_track(tracks.Ride, fadeTime)
-		play_local_track(tracks.Idle, fadeTime, 1, 1)
 	elseif mode == "Ride" then
 		stop_local_track(tracks.HopOn, 0.05)
 		stop_local_track(tracks.HopOff, 0.05)
