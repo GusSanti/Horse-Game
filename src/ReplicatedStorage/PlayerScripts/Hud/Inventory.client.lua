@@ -878,6 +878,18 @@ end
 local function render_viewport(viewportFrame, entry, cameraConfig, cameraKey)
     clear_viewport(viewportFrame)
 
+    local farmingDefinition = entry and entry.FarmingDefinition
+    if not farmingDefinition and entry and type(entry.ItemId) == "string" then
+        farmingDefinition = FarmingCatalog.GetItem(entry.ItemId)
+    end
+
+    if farmingDefinition then
+        local farmingViewportCache = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
+        if farmingViewportCache.ApplyToViewport(viewportFrame, farmingDefinition, "InventoryFarmingWorldModel", "InventoryFarmingCamera") then
+            return
+        end
+    end
+
     local previewKey = entry.EntryKey or entry.ItemId or entry.DisplayName
     local snapshot = get_preview_snapshot(previewKey, entry.RenderSource, entry.DisplayName, cameraConfig, cameraKey)
     local worldModel = Instance.new("WorldModel")
@@ -938,6 +950,7 @@ local function create_item_entry(itemDefinition, farmingDefinition, count)
         EntryKey = entryKey,
         ItemId = itemId,
         Definition = itemDefinition or farmingDefinition,
+        FarmingDefinition = farmingDefinition,
         DisplayName = itemDefinition and itemDefinition.DisplayName or farmingDefinition and farmingDefinition.DisplayName or "",
         Description = get_item_description(itemDefinition, farmingDefinition),
         Count = displayCount,

@@ -1117,6 +1117,7 @@ local function resolve_tool_metadata(tool: Tool)
 					or (categoryOrderLookup.Food or math.huge),
 				SortOrder = farmingDefinition.SortOrder or math.huge,
 				RenderSource = get_farming_render_source(farmingDefinition) or tool,
+				FarmingDefinition = farmingDefinition,
 				Quantity = math.max(quantity, 1),
 				ShowsQuantity = quantity > 1,
 				IsSeed = farmingDefinition.Kind == "Seed",
@@ -1372,10 +1373,29 @@ local function get_preview_snapshot(itemKey: string, source: Instance?, displayN
 	return cachedPreview
 end
 
-local function render_viewport(viewportFrame: ViewportFrame, itemKey: string, source: Instance?, displayName: string, isSeed: boolean)
+local function render_viewport(
+	viewportFrame: ViewportFrame,
+	itemKey: string,
+	source: Instance?,
+	displayName: string,
+	isSeed: boolean,
+	farmingDefinition
+)
 	for _, child in ipairs(viewportFrame:GetChildren()) do
 		if child:IsA("WorldModel") or child:IsA("Camera") then
 			child:Destroy()
+		end
+	end
+
+	local cachedFarmingDefinition = farmingDefinition
+	if not cachedFarmingDefinition and type(itemKey) == "string" then
+		cachedFarmingDefinition = FarmingCatalog.GetItem(itemKey)
+	end
+
+	if cachedFarmingDefinition then
+		local farmingViewportCache = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
+		if farmingViewportCache.ApplyToViewport(viewportFrame, cachedFarmingDefinition, "HotbarFarmingWorldModel", "HotbarFarmingCamera") then
+			return
 		end
 	end
 
@@ -1466,6 +1486,7 @@ local function build_groups()
 				SortCategory = metadata.SortCategory,
 				SortOrder = metadata.SortOrder,
 				RenderSource = metadata.RenderSource or tool,
+				FarmingDefinition = metadata.FarmingDefinition,
 				Quantity = metadata.Quantity or 1,
 				ShowsQuantity = metadata.ShowsQuantity == true,
 				IsSeed = metadata.IsSeed == true,
@@ -1478,6 +1499,7 @@ local function build_groups()
 		existingGroup.Quantity = math.max(existingGroup.Quantity or 1, metadata.Quantity or 1)
 		existingGroup.ShowsQuantity = existingGroup.ShowsQuantity or metadata.ShowsQuantity == true
 		existingGroup.IsSeed = existingGroup.IsSeed or metadata.IsSeed == true
+		existingGroup.FarmingDefinition = existingGroup.FarmingDefinition or metadata.FarmingDefinition
 
 		existingGroup.Tools[#existingGroup.Tools + 1] = tool
 
@@ -1673,7 +1695,7 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 	local viewportFrame = get_slot_viewport(slot)
 	local previewKey = get_preview_cache_key(group.Key, group.RenderSource, group.IsSeed == true)
 	if slot:GetAttribute("HotbarPreviewReady") ~= true or slot:GetAttribute("HotbarPreviewKey") ~= previewKey then
-		render_viewport(viewportFrame, group.Key, group.RenderSource, group.DisplayName, group.IsSeed == true)
+		render_viewport(viewportFrame, group.Key, group.RenderSource, group.DisplayName, group.IsSeed == true, group.FarmingDefinition)
 		slot:SetAttribute("HotbarPreviewReady", true)
 		slot:SetAttribute("HotbarPreviewKey", previewKey)
 	end

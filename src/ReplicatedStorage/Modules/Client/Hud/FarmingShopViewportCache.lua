@@ -10,9 +10,31 @@ local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 local FarmingShopViewportCache = {}
 
 local VIEWPORT_FIELD_OF_VIEW = 35
-local VIEWPORT_RADIUS_SCALE = 0.55
+local VIEWPORT_RADIUS_SCALE = 0.5
 local VIEWPORT_CAMERA_Y_SCALE = 0.2
 local VIEWPORT_CAMERA_X_SCALE = 0.45
+local CLOSE_VIEWPORT_DISTANCE_SCALE = 0.82
+local SEED_TOP_DOWN_DISTANCE = 2.25
+
+local CLOSE_VIEWPORT_CROP_IDS = {
+	beetroot = true,
+	carrot = true,
+	corn = true,
+	eggplant = true,
+	grape = true,
+	pineapple = true,
+	pumpkin = true,
+	radish = true,
+	wheat = true,
+}
+
+local MODEL_ROTATION_BY_CROP_ID = {
+	carrot = CFrame.Angles(0, 0, math.rad(-90)),
+}
+
+local TOP_DOWN_VIEWPORT_CROP_IDS = {
+	lettuce = true,
+}
 
 local cacheByItemId = {}
 local preloadInstances = nil
@@ -73,8 +95,13 @@ local function resolve_item_definition(itemDefinitionOrId)
 		return itemDefinitionOrId
 	end
 
+	local normalizedItemId = normalize_key(itemDefinitionOrId)
+	if not normalizedItemId then
+		return nil
+	end
+
 	get_all_item_definitions()
-	return itemDefinitionsById[normalize_key(itemDefinitionOrId)]
+	return itemDefinitionsById[normalizedItemId]
 end
 
 local function strip_scripts(root: Instance)
@@ -158,6 +185,37 @@ local function get_bounds(root: Instance): (Vector3?, Vector3?)
 	return (minVector + maxVector) * 0.5, maxVector - minVector
 end
 
+local function apply_model_rotation(root: Instance, rotation: CFrame)
+	local center = get_bounds(root)
+	if not center then
+		return
+	end
+
+	local origin = CFrame.new(center)
+
+	local function rotate_part(part: BasePart)
+		part.CFrame = origin * rotation * origin:ToObjectSpace(part.CFrame)
+	end
+
+	if root:IsA("BasePart") then
+		rotate_part(root)
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			rotate_part(descendant)
+		end
+	end
+end
+
+local function get_top_down_camera_cframe(center: Vector3, distance: number): CFrame
+	return CFrame.lookAt(
+		center + Vector3.new(0, distance, 0),
+		center,
+		Vector3.new(0, 0, -1)
+	)
+end
+
 local function build_cache_entry(itemDefinition)
 	local asset = FarmingUtility.GetViewportAsset(itemDefinition) or FarmingUtility.GetItemAsset(itemDefinition)
 	if not asset then
@@ -167,6 +225,13 @@ local function build_cache_entry(itemDefinition)
 	local preparedTemplate = asset:Clone()
 	prepare_viewport_model(preparedTemplate)
 
+	local isSeed = itemDefinition.Kind == "Seed"
+	local cropKey = normalize_key(itemDefinition.CropId)
+	local modelRotation = if not isSeed and cropKey then MODEL_ROTATION_BY_CROP_ID[cropKey] else nil
+	if modelRotation then
+		apply_model_rotation(preparedTemplate, modelRotation)
+	end
+
 	local center, size = get_bounds(preparedTemplate)
 	if not center or not size then
 		preparedTemplate:Destroy()
@@ -175,15 +240,27 @@ local function build_cache_entry(itemDefinition)
 
 	local radius = math.max(size.X, size.Y, size.Z) * VIEWPORT_RADIUS_SCALE
 	local distance = radius / math.tan(math.rad(VIEWPORT_FIELD_OF_VIEW * 0.5)) + radius
+	if not isSeed and cropKey and CLOSE_VIEWPORT_CROP_IDS[cropKey] then
+		distance *= CLOSE_VIEWPORT_DISTANCE_SCALE
+	end
+
+	local cameraCFrame
+	if isSeed then
+		cameraCFrame = get_top_down_camera_cframe(center, SEED_TOP_DOWN_DISTANCE)
+	elseif cropKey and TOP_DOWN_VIEWPORT_CROP_IDS[cropKey] then
+		cameraCFrame = get_top_down_camera_cframe(center, distance)
+	else
+		cameraCFrame = CFrame.lookAt(
+			center + Vector3.new(distance * VIEWPORT_CAMERA_X_SCALE, distance * VIEWPORT_CAMERA_Y_SCALE, distance),
+			center
+		)
+	end
 
 	local cacheEntry = {
 		ItemId = itemDefinition.ItemId,
 		Template = preparedTemplate,
 		FieldOfView = VIEWPORT_FIELD_OF_VIEW,
-		CameraCFrame = CFrame.lookAt(
-			center + Vector3.new(distance * VIEWPORT_CAMERA_X_SCALE, distance * VIEWPORT_CAMERA_Y_SCALE, distance),
-			center
-		),
+		CameraCFrame = cameraCFrame,
 	}
 
 	cacheByItemId[itemDefinition.ItemId] = cacheEntry
@@ -202,6 +279,41 @@ function FarmingShopViewportCache.Get(itemDefinitionOrId)
 	end
 
 	return build_cache_entry(itemDefinition)
+end
+
+function FarmingShopViewportCache.ApplyToViewport(viewportFrame: ViewportFrame, itemDefinitionOrId, worldModelName: string?, cameraName: string?): boolean
+	if not viewportFrame then
+		return false
+	end
+
+	local cachedViewport = FarmingShopViewportCache.Get(itemDefinitionOrId)
+	if not cachedViewport then
+		return false
+	end
+
+	for _, child in ipairs(viewportFrame:GetChildren()) do
+		if child:IsA("WorldModel") or child:IsA("Camera") then
+			child:Destroy()
+		end
+	end
+
+	local worldModel = Instance.new("WorldModel")
+	worldModel.Name = worldModelName or "FarmingViewportWorldModel"
+	worldModel.Parent = viewportFrame
+	cachedViewport.Template:Clone().Parent = worldModel
+
+	local camera = Instance.new("Camera")
+	camera.Name = cameraName or "FarmingViewportCamera"
+	camera.FieldOfView = cachedViewport.FieldOfView
+	camera.CFrame = cachedViewport.CameraCFrame
+	camera.Parent = viewportFrame
+
+	viewportFrame.CurrentCamera = camera
+	viewportFrame.BackgroundTransparency = 1
+	viewportFrame.Ambient = Color3.fromRGB(220, 220, 220)
+	viewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
+
+	return true
 end
 
 function FarmingShopViewportCache.BuildAll(yieldInterval: number?)
