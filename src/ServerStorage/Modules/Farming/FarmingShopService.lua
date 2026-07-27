@@ -838,14 +838,6 @@ local function handle_shop_action(player: Player, actionOrPayload, itemId: strin
 	return create_state_payload(player, false, "UnknownAction", itemDefinition)
 end
 
-function FarmingShopService.SyncSeedTools(player: Player)
-	sync_seed_tools(player)
-end
-
-function FarmingShopService.SyncFruitTools(player: Player)
-	sync_fruit_tools(player)
-end
-
 function FarmingShopService.SyncPlayerTools(player: Player)
 	if not player or not player.Parent then
 		return
@@ -854,24 +846,6 @@ function FarmingShopService.SyncPlayerTools(player: Player)
 	migrate_legacy_inventory(player)
 	sync_seed_tools(player)
 	sync_fruit_tools(player)
-end
-
-function FarmingShopService.GetSeedCount(player: Player, itemId): number
-	local itemDefinition = resolve_item_definition(itemId, "Seed")
-	if itemDefinition then
-		return get_item_count(player, itemDefinition)
-	end
-
-	return get_total_count(player, get_seed_items())
-end
-
-function FarmingShopService.GetFruitCount(player: Player, itemId): number
-	local itemDefinition = resolve_item_definition(itemId, "Fruit")
-	if itemDefinition then
-		return get_item_count(player, itemDefinition)
-	end
-
-	return get_total_count(player, get_fruit_items())
 end
 
 function FarmingShopService.BuySeed(player: Player, itemId)

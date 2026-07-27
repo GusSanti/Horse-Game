@@ -81,8 +81,6 @@ HorseCatalog.RoulettePool = {
 	{ CatalogId = "friesian", Weight = 2 },
 }
 
-HorseCatalog.StarterPool = HorseCatalog.RoulettePool
-
 HorseCatalog.Definitions = {
 	Default = create_definition({
 		CatalogId = "Default",
@@ -319,10 +317,6 @@ function HorseCatalog.GetDefinition(catalogId)
 	return HorseCatalog.Definitions[catalogId]
 end
 
-function HorseCatalog.GetStarterPool()
-	return HorseCatalog.StarterPool
-end
-
 function HorseCatalog.GetRoulettePool()
 	return HorseCatalog.RoulettePool
 end
@@ -353,10 +347,6 @@ end
 
 function HorseCatalog.RollRouletteHorseId()
 	return roll_weighted_catalog_id(HorseCatalog.RoulettePool)
-end
-
-function HorseCatalog.GetStarterHorseIdForPlayer(_userId)
-	return HorseCatalog.RollRouletteHorseId()
 end
 
 return HorseCatalog

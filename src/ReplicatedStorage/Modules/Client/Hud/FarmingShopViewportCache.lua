@@ -37,7 +37,6 @@ local TOP_DOWN_VIEWPORT_CROP_IDS = {
 }
 
 local cacheByItemId = {}
-local preloadInstances = nil
 local itemDefinitionsById = {}
 local allItemDefinitions = nil
 
@@ -297,35 +296,6 @@ function FarmingShopViewportCache.ApplyToViewport(viewportFrame: ViewportFrame, 
 	viewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
 
 	return true
-end
-
-function FarmingShopViewportCache.BuildAll(yieldInterval: number?)
-	local normalizedYieldInterval = math.max(0, math.floor(tonumber(yieldInterval) or 0))
-
-	for index, itemDefinition in ipairs(get_all_item_definitions()) do
-		FarmingShopViewportCache.Get(itemDefinition)
-
-		if normalizedYieldInterval > 0 and index % normalizedYieldInterval == 0 then
-			task.wait()
-		end
-	end
-end
-
-function FarmingShopViewportCache.GetPreloadInstances()
-	if preloadInstances then
-		return preloadInstances
-	end
-
-	preloadInstances = {}
-
-	for _, itemDefinition in ipairs(get_all_item_definitions()) do
-		local asset = FarmingUtility.GetViewportAsset(itemDefinition) or FarmingUtility.GetItemAsset(itemDefinition)
-		if asset then
-			preloadInstances[#preloadInstances + 1] = asset
-		end
-	end
-
-	return preloadInstances
 end
 
 return FarmingShopViewportCache

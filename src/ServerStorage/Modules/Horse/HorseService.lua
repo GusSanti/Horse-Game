@@ -20,7 +20,6 @@ local STATUS_UPDATE_INTERVAL_SECONDS = 60
 ------------------//VARIABLES
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local HorseFactory = require(GameData:WaitForChild("HorseFactory"))
 local HorseBondService = require(Utility:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Utility:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
@@ -47,6 +46,80 @@ local function get_display_name(horse)
 	end
 
 	return horse.DisplayName or horse.CatalogId or horse.Id
+end
+
+local function create_horse_record(definition, instanceId: number, ownerUserId: number, options)
+	local obtainedAt = options.ObtainedAt or os.time()
+
+	return {
+		Id = ("horse_%d"):format(instanceId),
+		InstanceId = instanceId,
+		CatalogId = definition.CatalogId,
+		DisplayName = definition.DisplayName,
+		Nickname = options.Nickname or definition.ShortName or definition.DisplayName,
+		VisualModelName = definition.PlaceholderModelKey,
+		Tier = definition.Tier,
+		Rarity = definition.Rarity,
+		LaunchGroup = definition.LaunchGroup,
+		PlaceholderModelKey = definition.PlaceholderModelKey,
+		Description = definition.Description,
+		OwnerUserId = ownerUserId,
+		Acquisition = {
+			Source = options.Source or "Unknown",
+			ObtainedAt = obtainedAt,
+			IsStarterGrant = options.IsStarterGrant == true,
+		},
+		Bond = {
+			Level = 1,
+			XP = 0,
+			TotalXP = 0,
+			MaxLevel = definition.Bonding.MaxBondLevel,
+			Friendship = definition.Bonding.StartingFriendship,
+			MaxFriendship = definition.Bonding.MaxFriendship,
+			CareBonus = TableUtility.DeepCopy(definition.Bonding.CareBonus),
+			LastProgressAt = obtainedAt,
+			AccruedCareSeconds = 0,
+			CareStreak = 0,
+			BestCareStreak = 0,
+			SuccessfulCareWindows = 0,
+			LastQualifiedAt = 0,
+			TrustState = "Wary",
+		},
+		Needs = {
+			Values = TableUtility.DeepCopy(definition.Needs.Starting),
+			Max = TableUtility.DeepCopy(definition.Needs.Max),
+			DecayPerHour = TableUtility.DeepCopy(definition.Needs.DecayPerHour),
+			Modifiers = {},
+			LastUpdatedAt = obtainedAt,
+		},
+		Movement = TableUtility.DeepCopy(definition.Movement),
+		Temperament = TableUtility.DeepCopy(definition.Temperament),
+		Dependencies = TableUtility.DeepCopy(definition.Dependencies),
+		State = {
+			Mood = "Curious",
+			Energy = 100,
+			IsDirty = false,
+			IsSaddled = false,
+			LastCareAt = 0,
+			LastFedAt = 0,
+			LastWateredAt = 0,
+			LastMedicatedAt = 0,
+			LastGroomedAt = 0,
+			LastCleanedAt = 0,
+		},
+		Equipment = {
+			SaddleItemId = "",
+			BridleItemId = "",
+			SaddlePadItemId = "",
+			AccessoryItemIds = {},
+		},
+		Stats = {
+			CareActions = 0,
+			RacesEntered = 0,
+			RacesWon = 0,
+			BestRaceTimeMs = 0,
+		},
+	}
 end
 
 local function get_status_display_name(statusName: string?): string
@@ -204,14 +277,6 @@ local function get_first_empty_slot_name(horseSlots: {[string]: string}, ownedSt
 	end
 
 	return nil
-end
-
-local function clear_duplicate_horse_slots(horseSlots: {[string]: string}, horseId: string, ignoreSlotName: string?): ()
-	for _, slotName: string in StableDictionary.HorseSlotOrder do
-		if slotName ~= ignoreSlotName and horseSlots[slotName] == horseId then
-			horseSlots[slotName] = ""
-		end
-	end
 end
 
 local function ensure_stable_state(stable, horses): boolean
@@ -659,7 +724,7 @@ local function add_happiness_to_horse(horse, happinessGain: number, moodText: st
 end
 
 ------------------//MAIN FUNCTIONS
-function HorseService.get_player_horse(player: Player, horseId: string?): (any?, string)
+function HorseService.GetPlayerHorse(player: Player, horseId: string?): (any?, string)
 	local horses = DataUtility.server.get(player, "Horses")
 	if not horses or not horses.Owned then
 		return nil, "DataUnavailable"
@@ -694,24 +759,6 @@ function HorseService.get_player_horse(player: Player, horseId: string?): (any?,
 	end
 
 	return horse, resolvedHorseId
-end
-
-function HorseService.equip_horse(player: Player, horseId: string): (boolean, string)
-	local horse = HorseService.get_player_horse(player, horseId)
-	if not horse then
-		return false, "HorseNotOwned"
-	end
-
-	local horses = DataUtility.server.get(player, "Horses")
-	if not horses then
-		return false, "DataUnavailable"
-	end
-
-	horses.EquippedHorseId = horseId
-	DataUtility.server.set(player, "Horses", horses)
-	HorseService.set_stable_slot_horse(player, PRIMARY_HORSE_SLOT_NAME, horseId)
-
-	return true, horseId
 end
 
 function HorseService.GetOwnedHorse(player, horseId)
@@ -765,7 +812,7 @@ function HorseService.GetOwnedHorseSummaries(player)
 end
 
 function HorseService.GetRaceReadiness(player: Player, horseId: string)
-	local horse, errorCode = HorseService.get_player_horse(player, horseId)
+	local horse, errorCode = HorseService.GetPlayerHorse(player, horseId)
 	if not horse then
 		return nil, errorCode or "HorseNotOwned"
 	end
@@ -773,26 +820,7 @@ function HorseService.GetRaceReadiness(player: Player, horseId: string)
 	return evaluate_race_readiness(horse, os.time()), nil
 end
 
-function HorseService.GetEquippedHorse(player)
-	local horses, owned = get_owned_horses_state(player)
-	if not horses or not owned then
-		return nil
-	end
-
-	local equippedHorseId = horses.EquippedHorseId or ""
-	if equippedHorseId ~= "" and owned[equippedHorseId] then
-		return owned[equippedHorseId]
-	end
-
-	local fallbackHorseId = get_first_owned_horse_id(horses)
-	if fallbackHorseId then
-		return owned[fallbackHorseId]
-	end
-
-	return nil
-end
-
-function HorseService.create_horse_for_player(player: Player, catalogId: string, options): (any, string)
+function HorseService.CreateHorseForPlayer(player: Player, catalogId: string, options): (any, string)
 	options = options or {}
 
 	local horses = DataUtility.server.get(player, "Horses")
@@ -804,7 +832,8 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 		return nil, "DataUnavailable"
 	end
 
-	if not HorseCatalog.GetDefinition(catalogId) then
+	local definition = HorseCatalog.GetDefinition(catalogId)
+	if not definition then
 		return nil, "UnknownHorseCatalogId"
 	end
 
@@ -822,15 +851,10 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 
 	horses.NextHorseInstanceId = (horses.NextHorseInstanceId or 0) + 1
 
-	local horse = HorseFactory.Create(catalogId, horses.NextHorseInstanceId, {
-		OwnerUserId = player.UserId,
-		Nickname = options.Nickname,
-		Source = options.Source,
-		IsStarterGrant = options.IsStarterGrant,
-		ObtainedAt = options.ObtainedAt,
-	})
-	HorseBondService.NormalizeBond(horse, os.time())
-	HorseStatusService.NormalizeHorse(horse, os.time())
+	local horse = create_horse_record(definition, horses.NextHorseInstanceId, player.UserId, options)
+	local obtainedAt = horse.Acquisition.ObtainedAt
+	HorseBondService.NormalizeBond(horse, obtainedAt)
+	HorseStatusService.NormalizeHorse(horse, obtainedAt)
 
 	horses.Owned[horse.Id] = horse
 	TableUtility.InsertUnique(horses.OrderedIds, horse.Id)
@@ -859,7 +883,7 @@ function HorseService.create_horse_for_player(player: Player, catalogId: string,
 	return horse, "Created"
 end
 
-function HorseService.ensure_starter_horse(player: Player): (any, string)
+function HorseService.EnsureStarterHorse(player: Player): (any, string)
 	local horses = DataUtility.server.get(player, "Horses")
 	local progression = DataUtility.server.get(player, "Progression")
 	local stable = DataUtility.server.get(player, "Stable")
@@ -895,13 +919,13 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 			horses = DataUtility.server.get(player, "Horses")
 		end
 
-		local currentHorse = HorseService.get_player_horse(player)
+		local currentHorse = HorseService.GetPlayerHorse(player)
 		return currentHorse, "AlreadyGranted"
 	end
 
 	if not hasAnyHorse then
-		local starterHorseId = HorseCatalog.GetStarterHorseIdForPlayer(player.UserId)
-		local starterHorse, starterError = HorseService.create_horse_for_player(player, starterHorseId, {
+		local starterHorseId = HorseCatalog.RollRouletteHorseId()
+		local starterHorse, starterError = HorseService.CreateHorseForPlayer(player, starterHorseId, {
 			Source = "StarterGrant",
 			IsStarterGrant = true,
 			EquipOnGrant = true,
@@ -926,7 +950,7 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 		save_stable(player, updatedStable)
 	end
 
-	local currentHorse = HorseService.get_player_horse(player)
+	local currentHorse = HorseService.GetPlayerHorse(player)
 	if not currentHorse then
 		return nil, "Granted"
 	end
@@ -934,77 +958,7 @@ function HorseService.ensure_starter_horse(player: Player): (any, string)
 	return currentHorse, "Granted"
 end
 
-function HorseService.set_stable_slot_horse(player: Player, slotName: string, horseId: string): (boolean, string)
-	if not is_valid_slot_name(slotName) then
-		return false, "InvalidSlot"
-	end
-
-	local horses = DataUtility.server.get(player, "Horses")
-	local stable = DataUtility.server.get(player, "Stable")
-
-	if not horses or not stable then
-		return false, "DataUnavailable"
-	end
-
-	if not horses.Owned or not horses.Owned[horseId] then
-		return false, "HorseNotOwned"
-	end
-
-	ensure_stable_state(stable, horses)
-
-	local slotIndex = get_slot_index(slotName)
-	local ownedStalls = get_owned_stalls(stable)
-	if not slotIndex or slotIndex > ownedStalls then
-		return false, "SlotLocked"
-	end
-
-	local horseSlots = stable.HorseSlots
-	local previousHorseId = horseSlots[slotName]
-
-	clear_duplicate_horse_slots(horseSlots, horseId, slotName)
-	horseSlots[slotName] = horseId
-
-	if previousHorseId ~= "" and previousHorseId ~= horseId then
-		local emptySlotName = get_first_empty_slot_name(horseSlots, ownedStalls)
-		if emptySlotName then
-			horseSlots[emptySlotName] = previousHorseId
-		end
-	end
-
-	save_stable(player, stable)
-
-	return true, horseId
-end
-
-function HorseService.clear_stable_slot(player: Player, slotName: string): (boolean, string)
-	if not is_valid_slot_name(slotName) then
-		return false, "InvalidSlot"
-	end
-
-	local horses = DataUtility.server.get(player, "Horses")
-	local stable = DataUtility.server.get(player, "Stable")
-
-	if not horses or not stable then
-		return false, "DataUnavailable"
-	end
-
-	ensure_stable_state(stable, horses)
-	stable.HorseSlots[slotName] = ""
-	save_stable(player, stable)
-
-	return true, slotName
-end
-
-function HorseService.get_owned_stalls(player: Player): (number?, string?)
-	local stable = DataUtility.server.get(player, "Stable")
-	if not stable then
-		return nil, "DataUnavailable"
-	end
-
-	return get_owned_stalls(stable), nil
-end
-
-function HorseService.buy_stable_slot(player: Player, slotName: string): (boolean, string, number?)
+function HorseService.BuyStableSlot(player: Player, slotName: string): (boolean, string, number?)
 	if not is_valid_slot_name(slotName) then
 		return false, "InvalidSlot", nil
 	end
@@ -1066,7 +1020,7 @@ function HorseService.buy_stable_slot(player: Player, slotName: string): (boolea
 	return true, slotName, stable.OwnedStalls
 end
 
-function HorseService.clear_plot_horses(plot: Instance): (boolean, string)
+function HorseService.ClearPlotHorses(plot: Instance): (boolean, string)
 	local horseFolder = plot:FindFirstChild(HORSE_FOLDER_NAME)
 	if not horseFolder then
 		return false, "HorseFolderMissing"
@@ -1079,7 +1033,7 @@ function HorseService.clear_plot_horses(plot: Instance): (boolean, string)
 	return true, "Cleared"
 end
 
-function HorseService.sync_plot_horses(player: Player, plot: Instance): (boolean, string)
+function HorseService.SyncPlotHorses(player: Player, plot: Instance): (boolean, string)
 	local horses = DataUtility.server.get(player, "Horses")
 	local stable = DataUtility.server.get(player, "Stable")
 
@@ -1113,17 +1067,12 @@ function HorseService.sync_plot_horses(player: Player, plot: Instance): (boolean
 	return true, "Synced"
 end
 
-function HorseService.refresh_horse_statuses(player: Player, horseId: string?): (boolean, string)
+function HorseService.RefreshHorseStatuses(player: Player, horseId: string?): (boolean, string)
 	local horses = DataUtility.server.get(player, "Horses")
 	return refresh_owned_horse_statuses(player, horses, horseId)
 end
 
-function HorseService.refresh_all_player_horses(player: Player): boolean
-	local success = HorseService.refresh_horse_statuses(player)
-	return success == true
-end
-
-function HorseService.start_status_decay_loop(): ()
+function HorseService.StartStatusDecayLoop(): ()
 	if statusDecayLoopStarted then
 		return
 	end
@@ -1135,7 +1084,7 @@ function HorseService.start_status_decay_loop(): ()
 			task.wait(STATUS_UPDATE_INTERVAL_SECONDS)
 
 			for _, player: Player in Players:GetPlayers() do
-				HorseService.refresh_horse_statuses(player)
+				HorseService.RefreshHorseStatuses(player)
 			end
 		end
 	end)
@@ -1234,20 +1183,6 @@ function HorseService.RecordRacePlacement(player, horseId, placement, participan
 
 	return true, build_horse_summary(horse, horses.EquippedHorseId, now)
 end
-
-HorseService.EquipHorse = HorseService.equip_horse
-HorseService.CreateHorseForPlayer = HorseService.create_horse_for_player
-HorseService.EnsureStarterHorse = HorseService.ensure_starter_horse
-HorseService.SetStableSlotHorse = HorseService.set_stable_slot_horse
-HorseService.ClearStableSlot = HorseService.clear_stable_slot
-HorseService.GetOwnedStalls = HorseService.get_owned_stalls
-HorseService.BuyStableSlot = HorseService.buy_stable_slot
-HorseService.ClearPlotHorses = HorseService.clear_plot_horses
-HorseService.SyncPlotHorses = HorseService.sync_plot_horses
-HorseService.GetPlayerHorse = HorseService.get_player_horse
-HorseService.RefreshAllPlayerHorses = HorseService.refresh_all_player_horses
-HorseService.RefreshHorseStatuses = HorseService.refresh_horse_statuses
-HorseService.StartStatusDecayLoop = HorseService.start_status_decay_loop
 
 ------------------//INIT
 return HorseService

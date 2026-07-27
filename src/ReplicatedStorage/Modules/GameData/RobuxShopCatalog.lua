@@ -263,18 +263,4 @@ function RobuxShopCatalog.BuildStaticProductPayload(definition)
 	}
 end
 
-function RobuxShopCatalog.GetDefinitionsForSection(sectionId: string, productType: string?)
-	local requestedSectionId = normalize_key(sectionId)
-	local bucket = if productType == "GamePass" then orderedGamePasses else orderedDeveloperProducts
-	local definitions = {}
-
-	for _, definition in ipairs(bucket) do
-		if normalize_key(definition.SectionId) == requestedSectionId then
-			definitions[#definitions + 1] = definition
-		end
-	end
-
-	return definitions
-end
-
 return RobuxShopCatalog

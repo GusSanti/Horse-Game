@@ -97,14 +97,12 @@ HorseViewportRenderer.Presets = {
 }
 
 local catalogTemplateCache = {}
-local sourceTemplateCache = {}
 local snapshotCache = {}
 local preparedCloneCache = {}
 local missingCatalogWarnings = {}
 local queuedByViewport = setmetatable({}, { __mode = "k" })
 local renderQueue = {}
 local prewarmQueued = {}
-local sourceVersions = {}
 local workerRunning = false
 local nextJobId = 0
 
@@ -263,18 +261,6 @@ local function get_catalog_template(catalogId, options)
 	local model = clone_prepared_source(source, silhouette)
 
 	if model then catalogTemplateCache[templateKey] = model end
-	return model, templateKey
-end
-
-local function get_source_template(source, sourceKey, options)
-	options = options or {}
-	local silhouette = options.Silhouette == true
-	local templateKey = table.concat({ "source", tostring(sourceKey), silhouette and "locked" or "unlocked" }, "|")
-	local cached = sourceTemplateCache[templateKey]
-	if cached then return cached, templateKey end
-
-	local model = clone_prepared_source(source, silhouette)
-	if model then sourceTemplateCache[templateKey] = model end
 	return model, templateKey
 end
 
@@ -496,24 +482,6 @@ function HorseViewportRenderer.ApplyCatalog(viewport, catalogId, config, options
 	return apply_snapshot(viewport, snapshot, snapshotKey)
 end
 
-function HorseViewportRenderer.ApplySource(viewport, source, sourceKey, config, options)
-	HorseViewportRenderer.Cancel(viewport)
-	config = config or HorseViewportRenderer.Presets.Stable
-	options = options or {}
-	if not source or sourceKey == nil then
-		HorseViewportRenderer.Clear(viewport)
-		return false
-	end
-
-	local template, templateKey = get_source_template(source, sourceKey, options)
-	if not template then
-		HorseViewportRenderer.Clear(viewport)
-		return false
-	end
-	local snapshot, snapshotKey = get_snapshot(template, templateKey, config, options)
-	return apply_snapshot(viewport, snapshot, snapshotKey)
-end
-
 function HorseViewportRenderer.Cancel(viewport)
 	if viewport then queuedByViewport[viewport] = nil end
 end
@@ -553,15 +521,7 @@ local function start_worker()
 			if job then
 				if job.Kind == "Prewarm" then
 					prewarmQueued[job.Key] = nil
-					if job.Source and job.SourceVersion ~= (sourceVersions[tostring(job.SourceKey)] or 0) then
-						continue
-					end
-					local template, templateKey
-					if job.Source then
-						template, templateKey = get_source_template(job.Source, job.SourceKey, job.Options)
-					else
-						template, templateKey = get_catalog_template(job.CatalogId, job.Options)
-					end
+					local template, templateKey = get_catalog_template(job.CatalogId, job.Options)
 					if template then
 						local snapshot, snapshotKey = get_snapshot(template, templateKey, job.Config, job.Options)
 						if job.Options.PrepareClone == true and not preparedCloneCache[snapshotKey] then
@@ -573,16 +533,9 @@ local function start_worker()
 					and job.Viewport.Parent
 					and queuedByViewport[job.Viewport] == job
 				then
-					local success, scene
-					if job.Kind == "Source" then
-						success, scene = HorseViewportRenderer.ApplySource(
-							job.Viewport, job.Source, job.SourceKey, job.Config, job.Options
-						)
-					else
-						success, scene = HorseViewportRenderer.ApplyCatalog(
-							job.Viewport, job.CatalogId, job.Config, job.Options
-						)
-					end
+					local success, scene = HorseViewportRenderer.ApplyCatalog(
+						job.Viewport, job.CatalogId, job.Config, job.Options
+					)
 					if queuedByViewport[job.Viewport] == job then queuedByViewport[job.Viewport] = nil end
 					if job.Callback then task.defer(job.Callback, success, scene) end
 				end
@@ -611,20 +564,6 @@ function HorseViewportRenderer.QueueCatalog(viewport, catalogId, config, options
 		Kind = "Catalog",
 		Viewport = viewport,
 		CatalogId = catalogId,
-		Config = config or HorseViewportRenderer.Presets.Stable,
-		Options = options,
-		Priority = options.Priority,
-		Callback = options.Callback,
-	})
-end
-
-function HorseViewportRenderer.QueueSource(viewport, source, sourceKey, config, options)
-	options = options or {}
-	return enqueue({
-		Kind = "Source",
-		Viewport = viewport,
-		Source = source,
-		SourceKey = sourceKey,
 		Config = config or HorseViewportRenderer.Presets.Stable,
 		Options = options,
 		Priority = options.Priority,
@@ -663,58 +602,4 @@ function HorseViewportRenderer.PrewarmCatalogs(catalogIds, configs, options)
 	end
 end
 
-function HorseViewportRenderer.PrewarmSource(source, sourceKey, configs, options)
-	if not source or sourceKey == nil then return end
-	options = options or {}
-	configs = configs or { HorseViewportRenderer.Presets.Stable }
-	local normalizedSourceKey = tostring(sourceKey)
-	local sourceVersion = sourceVersions[normalizedSourceKey] or 0
-
-	for _, config in ipairs(configs) do
-		local key = table.concat({
-			"source",
-			normalizedSourceKey,
-			config_signature(config),
-			tostring(options.Silhouette == true),
-			tostring(options.PrepareClone == true),
-		}, "|")
-		if not prewarmQueued[key] then
-			prewarmQueued[key] = true
-			enqueue({
-				Kind = "Prewarm",
-				Key = key,
-				Source = source,
-				SourceKey = sourceKey,
-				SourceVersion = sourceVersion,
-				Config = config,
-				Options = options,
-				Priority = options.Priority or 20,
-			})
-		end
-	end
-end
-
-function HorseViewportRenderer.ForgetSource(sourceKey)
-	local normalizedSourceKey = tostring(sourceKey)
-	local prefix = "source|" .. normalizedSourceKey .. "|"
-	sourceVersions[normalizedSourceKey] = (sourceVersions[normalizedSourceKey] or 0) + 1
-	for key in pairs(prewarmQueued) do
-		if string.sub(key, 1, #prefix) == prefix then prewarmQueued[key] = nil end
-	end
-	for key, template in pairs(sourceTemplateCache) do
-		if string.sub(key, 1, #prefix) == prefix then
-			template:Destroy()
-			sourceTemplateCache[key] = nil
-			for snapshotKey in pairs(snapshotCache) do
-				if string.sub(snapshotKey, 1, #key) == key then
-					snapshotCache[snapshotKey] = nil
-					local preparedClone = preparedCloneCache[snapshotKey]
-					if preparedClone then preparedClone:Destroy() end
-					preparedCloneCache[snapshotKey] = nil
-				end
-			end
-		end
-	end
-end
-
-return HorseViewportRenderer --test
+return HorseViewportRenderer

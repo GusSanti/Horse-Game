@@ -1165,7 +1165,6 @@ end
 
 local function get_control_start_yaw() return cameraController:getControlStartYaw(get_character_root_part, mountedState) end
 local function prepare_camera_for_mount() cameraController:prepareCameraForMount() end
-local function start_camera_transition(mode, duration) cameraController:startCameraTransition(mode, duration) end
 local function cancel_camera_transition() cameraController:cancelCameraTransition() end
 local function restore_camera() cameraController:restoreCamera(get_character_root_part) end
 local function release_camera_after_dismount() cameraController:releaseCameraAfterDismount() end

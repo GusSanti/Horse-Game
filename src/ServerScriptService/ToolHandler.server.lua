@@ -96,7 +96,7 @@ local function use_horse_tool(player: Player, tool: Instance?, itemId: string?, 
 		return false, "ItemMismatch"
 	end
 
-	local horse, resolvedHorseId = horseService.get_player_horse(player, horseId)
+	local horse, resolvedHorseId = horseService.GetPlayerHorse(player, horseId)
 	if not horse or not resolvedHorseId then
 		return false, "HorseNotOwned"
 	end

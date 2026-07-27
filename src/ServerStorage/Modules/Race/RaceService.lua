@@ -80,10 +80,6 @@ local function extract_rotation(cframe)
 	return CFrame.fromMatrix(Vector3.zero, cframe.XVector, cframe.YVector, cframe.ZVector)
 end
 
-local function round_to_tenths(value)
-	return math.floor(value * 10 + 0.5) / 10
-end
-
 local function make_round_id()
 	return ("race_%d_%d"):format(os.time(), math.random(1000, 9999))
 end
@@ -447,15 +443,6 @@ local function capture_part_offsets(model)
 	end
 
 	return offsets
-end
-
-local function build_pivot_from_progress(participant, progress)
-	local startPosition = participant.StartPivot.Position
-	return CFrame.new(
-		startPosition.X,
-		startPosition.Y,
-		startPosition.Z - progress
-	) * participant.StartRotation
 end
 
 local function clear_participant_tweens(participant)

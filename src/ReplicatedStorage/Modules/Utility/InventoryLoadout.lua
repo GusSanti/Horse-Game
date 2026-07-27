@@ -175,16 +175,6 @@ function InventoryLoadout.GetDefaultItemIds()
 	return itemIds
 end
 
-function InventoryLoadout.IsDefaultGenericToolName(toolName)
-	for _, definition in ipairs(InventoryLoadout.DEFAULT_GENERIC_TOOL_DEFINITIONS) do
-		if normalize_generic_tool_name(definition.ToolName) == normalize_generic_tool_name(toolName) then
-			return true
-		end
-	end
-
-	return false
-end
-
 function InventoryLoadout.GetDefaultGenericToolDefinitions()
 	local definitions = {}
 

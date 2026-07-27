@@ -383,32 +383,6 @@ function HorseStatusService.NormalizeHorse(horse, now: number?): boolean
 	return changed
 end
 
-function HorseStatusService.GetOwnedHorseIds(player: Player?): {string}
-	local horses = get_horses_container(player)
-	if not horses or type(horses.Owned) ~= "table" then
-		return {}
-	end
-
-	local orderedHorseIds = {}
-	local addedHorseIds = {}
-
-	for _, horseId: string in ipairs(horses.OrderedIds or {}) do
-		if horses.Owned[horseId] and not addedHorseIds[horseId] then
-			addedHorseIds[horseId] = true
-			orderedHorseIds[#orderedHorseIds + 1] = horseId
-		end
-	end
-
-	for horseId in horses.Owned do
-		if not addedHorseIds[horseId] then
-			addedHorseIds[horseId] = true
-			orderedHorseIds[#orderedHorseIds + 1] = horseId
-		end
-	end
-
-	return orderedHorseIds
-end
-
 function HorseStatusService.GetComputedStatuses(horse, now: number?)
 	if type(horse) ~= "table" then
 		return nil
@@ -443,85 +417,6 @@ function HorseStatusService.GetComputedStatuses(horse, now: number?)
 	apply_zero_need_penalties(horse, statuses, lastUpdatedAt, timestamp)
 
 	return statuses
-end
-
-function HorseStatusService.ApplyDecay(horse, now: number?): (boolean, {[string]: number}?)
-	if type(horse) ~= "table" then
-		return false, nil
-	end
-
-	local timestamp = if type(now) == "number" then now else os.time()
-	local changed = HorseStatusService.NormalizeHorse(horse, timestamp)
-	local lastUpdatedAt = get_last_updated_at(horse, timestamp)
-	local statuses = HorseStatusService.GetComputedStatuses(horse, timestamp)
-	local needs = horse.Needs
-
-	for _, statusName: string in ipairs(STATUS_ORDER) do
-		local nextValue = statuses[statusName]
-
-		if needs.Values[statusName] ~= nextValue then
-			needs.Values[statusName] = nextValue
-			changed = true
-		end
-	end
-
-	if type(needs.Modifiers) == "table" then
-		for statusName, modifier in pairs(needs.Modifiers) do
-			if type(modifier) ~= "table" or type(modifier.ExpiresAt) ~= "number" or modifier.ExpiresAt <= timestamp then
-				needs.Modifiers[statusName] = nil
-				changed = true
-			end
-		end
-	end
-
-	if type(needs.ActiveEffects) == "table" then
-		local keptEffects = {}
-
-		for _, effect in ipairs(needs.ActiveEffects) do
-			if type(effect) == "table" and effect.Type == "HealthOverTime" then
-				local expiresAt = tonumber(effect.ExpiresAt) or timestamp
-				local lastTickAt = tonumber(effect.LastTickAt) or lastUpdatedAt
-				local remainingGain = math.max(0, tonumber(effect.RemainingGain) or 0)
-				local ratePerSecond = math.max(0, tonumber(effect.RatePerSecond) or 0)
-				local effectEnd = math.min(timestamp, expiresAt)
-				local elapsedSeconds = math.max(0, effectEnd - lastTickAt)
-				local appliedGain = math.min(remainingGain, ratePerSecond * elapsedSeconds)
-
-				if appliedGain > 0 then
-					effect.RemainingGain = remainingGain - appliedGain
-					changed = true
-				end
-
-				if effect.LastTickAt ~= effectEnd then
-					effect.LastTickAt = effectEnd
-					changed = true
-				end
-
-				if (effect.RemainingGain or 0) > 0.05 and expiresAt > effectEnd then
-					keptEffects[#keptEffects + 1] = effect
-				else
-					changed = true
-				end
-			else
-				changed = true
-			end
-		end
-
-		if #keptEffects ~= #needs.ActiveEffects then
-			needs.ActiveEffects = keptEffects
-		end
-	end
-
-	if needs.LastUpdatedAt ~= timestamp then
-		needs.LastUpdatedAt = timestamp
-		changed = true
-	end
-
-	if sync_dirty_state(horse) then
-		changed = true
-	end
-
-	return changed, statuses
 end
 
 function HorseStatusService.GetHorse(playerOrHorseId, horseId: string?): (any?, string?)
@@ -585,30 +480,6 @@ function HorseStatusService.GetStatuses(target, horseIdOrNow, now: number?)
 	end
 
 	return HorseStatusService.GetComputedStatuses(horse, resolvedNow)
-end
-
-function HorseStatusService.GetStatus(target, horseIdOrStatusName, statusNameOrNow, now: number?): number?
-	local statusName = nil
-	local statuses = nil
-
-	if type(target) == "table" then
-		statusName = horseIdOrStatusName
-		local resolvedNow = if type(statusNameOrNow) == "number" then statusNameOrNow else now
-		statuses = HorseStatusService.GetComputedStatuses(target, resolvedNow)
-	elseif RunService:IsServer() then
-		statusName = statusNameOrNow
-		statuses = HorseStatusService.GetStatuses(target, horseIdOrStatusName, now)
-	else
-		statusName = horseIdOrStatusName
-		local resolvedNow = if type(statusNameOrNow) == "number" then statusNameOrNow else now
-		statuses = HorseStatusService.GetStatuses(target, resolvedNow)
-	end
-
-	if type(statusName) ~= "string" or not statuses then
-		return nil
-	end
-
-	return statuses[statusName]
 end
 
 return HorseStatusService

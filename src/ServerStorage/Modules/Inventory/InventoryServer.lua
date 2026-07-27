@@ -11,8 +11,6 @@ local InventoryLoadoutService = require(script.Parent:WaitForChild("InventoryLoa
 
 local InventoryService = {}
 
-InventoryService.ManagedToolAttribute = "InventoryManaged"
-
 local function normalize_inventory_path(path: string?): string?
 	if type(path) ~= "string" then
 		return nil
@@ -98,39 +96,6 @@ function InventoryService.AddItemCount(player: Player, itemDefinitionOrId, amoun
 	end
 
 	return updatedCount
-end
-
-function InventoryService.ConsumeItem(player: Player, itemDefinitionOrId, amount: number?): (boolean, number)
-	local itemDefinition = resolve_item_definition(itemDefinitionOrId)
-	if not itemDefinition then
-		return false, 0
-	end
-
-	local consumeAmount = math.max(1, math.floor(amount or 1))
-	local currentCount = InventoryService.GetItemCount(player, itemDefinition)
-	if currentCount < consumeAmount then
-		return false, currentCount
-	end
-
-	local updatedCount = InventoryService.SetItemCount(player, itemDefinition, currentCount - consumeAmount)
-	return true, updatedCount
-end
-
-function InventoryService.IsManagedTool(tool: Tool?): boolean
-	return tool ~= nil and tool:GetAttribute(InventoryService.ManagedToolAttribute) == true
-end
-
-function InventoryService.ConsumeManagedTool(
-	player: Player,
-	tool: Tool?,
-	itemDefinitionOrId,
-	amount: number?
-): (boolean, number)
-	if not InventoryService.IsManagedTool(tool) then
-		return true, InventoryService.GetItemCount(player, itemDefinitionOrId)
-	end
-
-	return InventoryService.ConsumeItem(player, itemDefinitionOrId, amount)
 end
 
 return InventoryService

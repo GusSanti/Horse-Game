@@ -249,10 +249,6 @@ local function hide_reward_gui()
 	end
 end
 
-local function clear_viewport(viewportFrame)
-	HorseViewportRenderer.Clear(viewportFrame)
-end
-
 local function prewarm_preview_snapshots()
 	HorseViewportRenderer.PrewarmCatalogs(horseOptions, { SLOT_CAMERA_CONFIG, RESULT_CAMERA_CONFIG })
 end

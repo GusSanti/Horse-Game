@@ -25,7 +25,6 @@ local PlayerSettingsService = require(PlayerModules:WaitForChild("PlayerSettings
 local PersistentToolService = require(InventoryModules:WaitForChild("PersistentToolService"))
 local QuestService = require(QuestModules:WaitForChild("QuestService"))
 local RaceService = require(RaceModules:WaitForChild("RaceService"))
-local SoundUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("SoundUtility"))
 
 local function safe_require_module(moduleScript: ModuleScript, moduleName: string)
 	local success, result = pcall(require, moduleScript)
@@ -80,15 +79,14 @@ local function bootstrap_player(player: Player): ()
 
 		InventoryLoadoutService.SyncPlayerTools(player)
 		update_login_data(player)
-		HorseService.ensure_starter_horse(player)
-		HorseService.refresh_horse_statuses(player)
+		HorseService.EnsureStarterHorse(player)
+		HorseService.RefreshHorseStatuses(player)
 		QuestService.EnsureDailyQuest(player)
 		RaceService.SyncPlayer(player)
 	end)
 end
 
 safe_init_service("CookingService", CookingService)
-safe_init_service("SoundUtility", SoundUtility)
 FarmingShopService.Init()
 HorseIndexService.Init()
 ConsumableToolService.Init()
@@ -100,7 +98,7 @@ PlayerSettingsService.Init()
 QuestService.Init()
 RaceService.Init()
 HorseMountService.Init()
-HorseService.start_status_decay_loop()
+HorseService.StartStatusDecayLoop()
 
 for _, player in Players:GetPlayers() do
 	bootstrap_player(player)

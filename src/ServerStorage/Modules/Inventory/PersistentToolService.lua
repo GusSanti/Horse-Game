@@ -825,10 +825,6 @@ function PersistentToolService.SyncPlayerTools(player)
 	sync_player_tools(player)
 end
 
-function PersistentToolService.RefreshPlayerTools(player)
-	refresh_saved_tools(player)
-end
-
 function PersistentToolService.Init()
 	if initialized then
 		return

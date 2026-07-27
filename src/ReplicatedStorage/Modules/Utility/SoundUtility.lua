@@ -335,23 +335,9 @@ local function playMusicQueueTrack(index, fadeIn, fadeOutCurrent)
 	return playMusicTrack(soundId, fadeIn, not hasMultipleTracks, onEnded)
 end
 
-function SoundController.Init()
+local function initialize()
 	createSoundGroups()
 	ensure_remote_sfx_event()
-end
-
-function SoundController.GetGameSFX(effectName)
-	local definition, resolvedName = get_game_sfx_definition(effectName)
-	if not definition then
-		return nil
-	end
-
-	return {
-		Name = resolvedName,
-		SoundId = definition.SoundId,
-		Volume = definition.Volume,
-		Pitch = definition.Pitch,
-	}
 end
 
 function SoundController.PlayGameSFX(effectName, parent, volume, pitch)
@@ -368,11 +354,7 @@ function SoundController.PlayGameSFX(effectName, parent, volume, pitch)
 	)
 end
 
-function SoundController.InitRemoteSFX()
-	return ensure_remote_sfx_event()
-end
-
-function SoundController.BindRemoteSFX()
+local function bind_remote_sfx()
 	if not RunService:IsClient() then
 		return nil
 	end
@@ -438,21 +420,6 @@ function SoundController.PlayGameSFXForPlayer(player, effectName, options)
 	return true
 end
 
-function SoundController.PlayMusic(soundId, fadeIn, loop)
-	if typeof(soundId) == "table" then
-		return SoundController.PlayMusicQueue(soundId, fadeIn)
-	end
-
-	fadeIn = fadeIn or false
-	loop = loop ~= false
-
-	musicQueue = nil
-	musicQueueIndex = 0
-	stopCurrentMusic(fadeIn)
-
-	return playMusicTrack(soundId, fadeIn, loop, nil)
-end
-
 function SoundController.PlayMusicQueue(soundIds, fadeIn)
 	local normalizedQueue = normalizeMusicQueue(soundIds)
 	if not normalizedQueue then
@@ -465,25 +432,6 @@ function SoundController.PlayMusicQueue(soundIds, fadeIn)
 	musicQueueIndex = 1
 
 	return playMusicQueueTrack(musicQueueIndex, fadeIn, fadeIn)
-end
-
-function SoundController.StopMusic(fadeOut)
-	fadeOut = fadeOut or false
-	musicQueue = nil
-	musicQueueIndex = 0
-	stopCurrentMusic(fadeOut)
-end
-
-function SoundController.PauseMusic()
-	if currentMusic and currentMusic.Playing then
-		currentMusic:Pause()
-	end
-end
-
-function SoundController.ResumeMusic()
-	if currentMusic and not currentMusic.Playing then
-		currentMusic:Resume()
-	end
 end
 
 function SoundController.PlaySFX(soundId, parent, volume, pitch)
@@ -538,14 +486,6 @@ function SoundController.SetSFXVolume(volume)
 	sfxGroup.Volume = get_effective_sfx_volume()
 end
 
-function SoundController.GetMusicVolume()
-	return musicVolume
-end
-
-function SoundController.GetSFXVolume()
-	return sfxVolume
-end
-
 function SoundController.MuteMusic(mute)
 	isMusicMuted = mute
 	musicGroup.Volume = get_effective_music_volume()
@@ -560,20 +500,8 @@ function SoundController.MuteSFX(mute)
 	end
 end
 
-function SoundController.IsMusicMuted()
-	return isMusicMuted
-end
-
 function SoundController.IsSFXMuted()
 	return isSFXMuted
-end
-
-function SoundController.GetCurrentMusic()
-	return currentMusic
-end
-
-function SoundController.GetMusicSoundGroup()
-	return musicGroup
 end
 
 function SoundController.GetSFXSoundGroup()
@@ -582,10 +510,10 @@ end
 
 -- INIT
 apply_initial_client_settings()
-SoundController.Init()
+initialize()
 if RunService:IsClient() then
 	task.defer(function()
-		SoundController.BindRemoteSFX()
+		bind_remote_sfx()
 	end)
 end
 

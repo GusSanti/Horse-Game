@@ -201,15 +201,6 @@ local function mount_horse_from_stable(horseId: string): ()
 	end)
 end
 
-local function find_frame(root: Instance?, aliases: {string}, recursive: boolean?): Frame?
-	local instance = find_named_instance(root, aliases, "Frame", recursive)
-	if instance then
-		return instance :: Frame
-	end
-
-	return nil
-end
-
 local function clear_viewport_descendants(root: Instance?): ()
 	if not root then
 		return

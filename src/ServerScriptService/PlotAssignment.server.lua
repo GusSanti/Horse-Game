@@ -154,7 +154,7 @@ end
 local function release_plot(player: Player): ()
 	local plotData = assignedPlotByPlayer[player]
 	if plotData then
-		HorseService.clear_plot_horses(plotData.instance)
+		HorseService.ClearPlotHorses(plotData.instance)
 		disable_plot_slot_prompts(plotData.instance)
 
 		if plotOwnerByInstance[plotData.instance] == player then
@@ -187,7 +187,7 @@ local function sync_plot_horses(player: Player): ()
 		return
 	end
 
-	HorseService.sync_plot_horses(player, plotData.instance)
+	HorseService.SyncPlotHorses(player, plotData.instance)
 end
 
 local function get_owned_stalls_from_stable(stable): number

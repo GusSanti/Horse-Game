@@ -230,16 +230,6 @@ local function resolve_definition(source)
 	return type(source) == "table" and source or nil
 end
 
-local function has_food_tag(itemDefinition)
-	for _, tag in ipairs(itemDefinition and itemDefinition.Tags or {}) do
-		if type(tag) == "string" and string.lower(tag) == "food" then
-			return true
-		end
-	end
-
-	return false
-end
-
 local function build_effect_lines(itemDefinition)
 	local effects = itemDefinition and itemDefinition.Effects or {}
 	local lines = {}
@@ -291,10 +281,6 @@ end
 function FoodHoverTooltip.HasTooltip(source)
 	local itemDefinition = resolve_definition(source)
 	if not itemDefinition then
-		return false
-	end
-
-	if itemDefinition.ToolCategory ~= "Food" and itemDefinition.CareType ~= "Food" and not has_food_tag(itemDefinition) then
 		return false
 	end
 

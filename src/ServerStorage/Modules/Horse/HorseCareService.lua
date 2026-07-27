@@ -612,43 +612,6 @@ function HorseCareService.RefreshHorse(horse, now)
 	return true
 end
 
-function HorseCareService.RefreshPlayerHorse(player, horseId)
-	local horses = DataUtility.server.get(player, "Horses")
-	if not horses or not horses.Owned or not horses.Owned[horseId] then
-		return nil, false
-	end
-
-	local horse = horses.Owned[horseId]
-	local changed = HorseCareService.RefreshHorse(horse, os.time())
-	if changed then
-		DataUtility.server.set(player, "Horses", horses)
-	end
-
-	return horse, changed
-end
-
-function HorseCareService.RefreshAllPlayerHorses(player)
-	local horses = DataUtility.server.get(player, "Horses")
-	if not horses or not horses.Owned then
-		return false
-	end
-
-	local changed = false
-	local now = os.time()
-
-	for _, horse in pairs(horses.Owned) do
-		if HorseCareService.RefreshHorse(horse, now) then
-			changed = true
-		end
-	end
-
-	if changed then
-		DataUtility.server.set(player, "Horses", horses)
-	end
-
-	return changed
-end
-
 function HorseCareService.UseCareItem(player, horseId, itemId, tool)
 	local itemDefinition = CareItemCatalog.GetItemDefinition(itemId)
 	if not itemDefinition then

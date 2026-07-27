@@ -79,17 +79,6 @@ function ToolRegistry.get_definition(itemId: string): any
 	return cachedDefinitions[normalizedItemId]
 end
 
-function ToolRegistry.get_all_definitions(): {[string]: any}
-	ensure_cache()
-
-	local definitions: {[string]: any} = {}
-	for itemId: string, definition: any in cachedDefinitions do
-		definitions[itemId] = definition
-	end
-
-	return definitions
-end
-
 function ToolRegistry.resolve_tool_item_id(tool: Tool?): string?
 	if not tool or not tool:IsA("Tool") then
 		return nil

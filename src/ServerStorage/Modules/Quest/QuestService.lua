@@ -1,15 +1,17 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local InventoryModules = ServerStorage:WaitForChild("Modules"):WaitForChild("Inventory")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local InventoryService = require(InventoryModules:WaitForChild("InventoryServer"))
 local Net = require(Libraries:WaitForChild("Net"))
 local QuestCatalog = require(GameData:WaitForChild("QuestCatalog"))
-local ShopCatalog = require(GameData:WaitForChild("ShopCatalog"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 
 local QuestService = {}
@@ -17,70 +19,6 @@ local QuestService = {}
 local initialized = false
 local claimInFlight = {}
 local DAILY_ROLLOVER_CHECK_SECONDS = 30
-
-local function normalize_inventory_path(path: string?): string?
-	if type(path) ~= "string" then
-		return nil
-	end
-
-	local trimmedPath = string.gsub(path, "^%s*(.-)%s*$", "%1")
-	if trimmedPath == "" then
-		return nil
-	end
-
-	if string.sub(trimmedPath, 1, #"Inventory.") == "Inventory." then
-		return trimmedPath
-	end
-
-	return ("Inventory.%s"):format(trimmedPath)
-end
-
-local function get_inventory_path(itemDefinition): string?
-	if not itemDefinition then
-		return nil
-	end
-
-	return normalize_inventory_path(itemDefinition.InventoryPath)
-end
-
-local function get_item_count(player: Player, itemDefinition): number
-	local inventoryPath = get_inventory_path(itemDefinition)
-	if not inventoryPath then
-		return 0
-	end
-
-	local bucket = DataUtility.server.get(player, inventoryPath)
-	if type(bucket) ~= "table" then
-		return 0
-	end
-
-	return bucket[itemDefinition.ItemId] or 0
-end
-
-local function set_item_count(player: Player, itemDefinition, amount: number): number
-	local inventoryPath = get_inventory_path(itemDefinition)
-	local profileData = DataUtility.server.get(player)
-
-	if not inventoryPath or not profileData then
-		return 0
-	end
-
-	local bucket = TableUtility.EnsurePath(profileData, inventoryPath)
-	local normalizedAmount = math.max(0, math.floor(amount or 0))
-
-	if normalizedAmount > 0 then
-		bucket[itemDefinition.ItemId] = normalizedAmount
-	else
-		bucket[itemDefinition.ItemId] = nil
-	end
-
-	DataUtility.server.set(player, inventoryPath, bucket)
-	return normalizedAmount
-end
-
-local function add_item_count(player: Player, itemDefinition, amount: number): number
-	return set_item_count(player, itemDefinition, get_item_count(player, itemDefinition) + (amount or 0))
-end
 
 local function build_daily_quest_state(player, questId, now)
 	local questDefinition = QuestCatalog.GetDefinition(questId)
@@ -121,12 +59,12 @@ local function resolve_daily_progress(player, questState)
 end
 
 local function grant_item_reward(player, collection, itemId, amount)
-	local itemDefinition = ShopCatalog.GetItemDefinition(itemId)
+	local itemDefinition = InventoryService.GetItemDefinition(itemId)
 	if not itemDefinition then
 		return nil
 	end
 
-	add_item_count(player, itemDefinition, amount)
+	InventoryService.AddItemCount(player, itemDefinition, amount)
 
 	if itemDefinition.InventoryPath == "Cosmetics" then
 		TableUtility.InsertUnique(collection.UnlockedCosmeticIds, itemId)

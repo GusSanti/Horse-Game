@@ -65,14 +65,4 @@ function TableUtility.EnsurePath(root, path)
 	return current
 end
 
-function TableUtility.CountKeys(map)
-	local total = 0
-
-	for _ in pairs(map) do
-		total += 1
-	end
-
-	return total
-end
-
 return TableUtility

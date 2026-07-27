@@ -1,7 +1,6 @@
 local ProfileSessionService = {}
 
 local activeStore = nil
-local profilesByUserId = {}
 local messageHandlers = {}
 
 local function normalize_user_id(value): number
@@ -23,38 +22,15 @@ function ProfileSessionService.SetStore(profileStore)
 	activeStore = profileStore
 end
 
-function ProfileSessionService.GetStore()
-	return activeStore
-end
-
 function ProfileSessionService.RegisterProfile(player: Player, profile)
 	local userId = normalize_user_id(player and player.UserId)
 	if userId <= 0 or not profile then
 		return
 	end
 
-	profilesByUserId[userId] = profile
-
 	profile:MessageHandler(function(message, processed)
 		dispatch_profile_message(player, profile, message, processed)
 	end)
-end
-
-function ProfileSessionService.UnregisterProfile(player: Player)
-	local userId = normalize_user_id(player and player.UserId)
-	if userId <= 0 then
-		return
-	end
-
-	profilesByUserId[userId] = nil
-end
-
-function ProfileSessionService.GetProfile(playerOrUserId)
-	if typeof(playerOrUserId) == "Instance" and playerOrUserId:IsA("Player") then
-		return profilesByUserId[normalize_user_id(playerOrUserId.UserId)]
-	end
-
-	return profilesByUserId[normalize_user_id(playerOrUserId)]
 end
 
 function ProfileSessionService.AddMessageHandler(handlerId: string, fn)
@@ -67,10 +43,6 @@ function ProfileSessionService.AddMessageHandler(handlerId: string, fn)
 	end
 
 	messageHandlers[handlerId] = fn
-end
-
-function ProfileSessionService.RemoveMessageHandler(handlerId: string)
-	messageHandlers[handlerId] = nil
 end
 
 function ProfileSessionService.SendMessageToUserId(userId: number, message)

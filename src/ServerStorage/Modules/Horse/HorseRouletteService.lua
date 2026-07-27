@@ -90,7 +90,7 @@ function HorseRouletteService.Roll(player)
 	)
 
 	local grantedHorse, grantCode = HorseService.CreateHorseForPlayer(player, catalogId, {
-		Source = "AdminHorseRoulette",
+		Source = "HorseRoulette",
 		EquipOnGrant = false,
 	})
 

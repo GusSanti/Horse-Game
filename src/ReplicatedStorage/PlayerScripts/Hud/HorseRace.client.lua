@@ -324,22 +324,6 @@ local function clear_viewport(viewport)
 	viewport.CurrentCamera = nil
 end
 
-local function render_horse_viewport(viewport, entry)
-	if not viewport or not entry then
-		return
-	end
-
-	HorseViewportRenderer.QueueCatalog(
-		viewport,
-		entry.CatalogId or entry.HorseId or entry.Id,
-		HorseViewportRenderer.Presets.Race,
-		{
-			ModelKey = entry.PlaceholderModelKey,
-			Priority = 3,
-		}
-	)
-end
-
 local function render_player_viewport(viewport, userId)
 	if not viewport then
 		return
@@ -611,35 +595,6 @@ local function refresh_horse_options()
 			selectedHorseId = horse.Id
 			return
 		end
-	end
-end
-
-local function submit_leave_request()
-	if requestInFlight or not state.RoundId then
-		return
-	end
-
-	requestInFlight = true
-	local ok, response = pcall(function()
-		return Net.Function.RaceAction:Call({
-			Action = "Leave",
-			RoundId = state.RoundId,
-		})
-	end)
-	requestInFlight = false
-
-	if ok and response and response.Success then
-		state.LocalJoined = false
-		state.LocalWatchingRace = false
-		if os.clock() < state.InviteDeadline then
-			state.Phase = "Invite"
-		else
-			state.Phase = "Idle"
-		end
-		unlock_camera()
-		sync_race_visuals()
-		update_visibility()
-		update_dynamic_text()
 	end
 end
 

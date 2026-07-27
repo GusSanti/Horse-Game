@@ -49,13 +49,11 @@ local function attach_player_profile(player)
 
 	profile.OnSessionEnd:Connect(function()
 		DataUtility.server.detach_profile(player)
-		ProfileSessionService.UnregisterProfile(player)
 		profilesByUserId[player.UserId] = nil
 	end)
 end
 
 local function release_player_profile(player: Player): ()
-	ProfileSessionService.UnregisterProfile(player)
 	local profile = profilesByUserId[player.UserId]
 	if profile then
 		profile:EndSession()

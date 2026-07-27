@@ -141,10 +141,6 @@ function ToolItemCatalog.GetToolCategory(itemDefinition)
 	return get_tool_category(itemDefinition)
 end
 
-function ToolItemCatalog.IsToolItem(itemId)
-	return ToolItemCatalog.GetItemDefinition(itemId) ~= nil
-end
-
 function ToolItemCatalog.GetCategories()
 	return ToolItems.GetCategories()
 end

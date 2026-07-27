@@ -148,10 +148,6 @@ local function build_angle_y(cframe)
 	return math.atan2(-lookVector.X, -lookVector.Z)
 end
 
-local function build_yaw_from_direction(direction)
-	return math.atan2(-direction.X, -direction.Z)
-end
-
 local function wrap_angle(angle)
 	return math.atan2(math.sin(angle), math.cos(angle))
 end
@@ -383,18 +379,6 @@ local function debug_mount_alignment_report(player, stage, payload)
 	end
 
 	warn(table.concat(lines, "\n"))
-end
-
-local function move_towards(current, target, maxDelta)
-	if math.abs(target - current) <= maxDelta then
-		return target
-	end
-
-	if target > current then
-		return current + maxDelta
-	end
-
-	return current - maxDelta
 end
 
 local function build_horse_summary(horse)
@@ -1071,12 +1055,6 @@ local function clear_mount_state(player, reason, options)
 
 	send_unmounted_state(player, reason)
 	return true
-end
-
-local function get_forward_start_speed(movement)
-	local trotSpeed = movement.TrotSpeed or 18
-	local canterSpeed = movement.CanterSpeed or 22
-	return math.max(trotSpeed, canterSpeed)
 end
 
 local function validate_mount_state(mountState)

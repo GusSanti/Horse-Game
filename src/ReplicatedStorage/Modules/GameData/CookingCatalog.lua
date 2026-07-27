@@ -184,18 +184,4 @@ function CookingCatalog.GetRecipes()
 	return shallow_copy_array(orderedRecipes)
 end
 
-function CookingCatalog.GetFoodDefinition(recipeOrId)
-	local recipe = recipeOrId
-
-	if type(recipeOrId) ~= "table" then
-		recipe = CookingCatalog.GetRecipe(recipeOrId)
-	end
-
-	return recipe and recipe.FoodDefinition or nil
-end
-
-function CookingCatalog.GetIngredientDefinition(itemId)
-	return resolve_item_definition(itemId)
-end
-
 return CookingCatalog
