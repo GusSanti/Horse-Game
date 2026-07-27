@@ -5,11 +5,13 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local ServerModules = ServerStorage:WaitForChild("Modules")
+local InventoryModules = ServerModules:WaitForChild("Inventory")
 
 local CookingCatalog = require(GameData:WaitForChild("CookingCatalog"))
 local Net = require(Libraries:WaitForChild("Net"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local InventoryService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("InventoryServer"))
+local InventoryService = require(InventoryModules:WaitForChild("InventoryServer"))
 
 local CookingService = {}
 

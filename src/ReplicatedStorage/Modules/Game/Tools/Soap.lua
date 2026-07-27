@@ -57,9 +57,11 @@ local function get_server_modules()
 	end
 
 	local modulesFolder = ServerStorage:WaitForChild("Modules")
+	local horseModules = modulesFolder:WaitForChild("Horse")
+	local questModules = modulesFolder:WaitForChild("Quest")
 	cachedServerModules = {
-		HorseCareService = require(modulesFolder:WaitForChild("HorseCareService")),
-		QuestService = require(modulesFolder:WaitForChild("QuestService")),
+		HorseCareService = require(horseModules:WaitForChild("HorseCareService")),
+		QuestService = require(questModules:WaitForChild("QuestService")),
 	}
 
 	return cachedServerModules

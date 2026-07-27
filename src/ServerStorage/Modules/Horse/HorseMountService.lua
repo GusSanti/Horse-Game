@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -9,15 +8,16 @@ local Dictionary = Modules:WaitForChild("Dictionary")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local HorseModules = script.Parent
 
 local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
 local Net = require(Libraries:WaitForChild("Net"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
-local HorseMountAnimation = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseMountAnimation"))
-local HorseMountCharacter = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseMountCharacter"))
-local HorseMountGeometry = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseMountGeometry"))
-local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+local HorseMountAnimation = require(HorseModules:WaitForChild("HorseMountAnimation"))
+local HorseMountCharacter = require(HorseModules:WaitForChild("HorseMountCharacter"))
+local HorseMountGeometry = require(HorseModules:WaitForChild("HorseMountGeometry"))
+local HorseService = require(HorseModules:WaitForChild("HorseService"))
 
 local HorseMountAction = Net.Function.HorseMountAction
 local HorseMountInput = Net.Event.HorseMountInput

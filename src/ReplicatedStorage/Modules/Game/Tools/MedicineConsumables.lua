@@ -24,7 +24,7 @@ for _, itemDefinition in ipairs(ToolItemCatalog.GetItemsByToolCategory("Medicine
 		},
 		consumeOnUse = true,
 		onUse = function(context)
-			local HorseCareService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseCareService"))
+			local HorseCareService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("Horse"):WaitForChild("HorseCareService"))
 			return HorseCareService.UseMedicalItem(context.player, context.horseId, itemDefinition.ItemId)
 		end,
 	}

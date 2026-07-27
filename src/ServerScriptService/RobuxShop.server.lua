@@ -15,7 +15,7 @@ local Net = require(Libraries:WaitForChild("Net"))
 local RobuxShopCatalog = require(GameData:WaitForChild("RobuxShopCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
-local ProfileSessionService = require(serverModules:WaitForChild("ProfileSessionService"))
+local ProfileSessionService = require(serverModules:WaitForChild("DataStore"):WaitForChild("ProfileSessionService"))
 
 local GIFT_MESSAGE_TYPE = "RobuxProductGift"
 local GIFT_INTENT_EXPIRATION_SECONDS = 180

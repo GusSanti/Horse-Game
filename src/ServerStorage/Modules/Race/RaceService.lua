@@ -8,14 +8,18 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local ServerModules = ServerStorage:WaitForChild("Modules")
+local HorseModules = ServerModules:WaitForChild("Horse")
+local InventoryModules = ServerModules:WaitForChild("Inventory")
+local QuestModules = ServerModules:WaitForChild("Quest")
 
 local Net = require(Libraries:WaitForChild("Net"))
 local RaceConfig = require(GameData:WaitForChild("RaceConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
-local InventoryService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("InventoryServer"))
-local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
+local HorseService = require(HorseModules:WaitForChild("HorseService"))
+local InventoryService = require(InventoryModules:WaitForChild("InventoryServer"))
+local QuestService = require(QuestModules:WaitForChild("QuestService"))
 local RaceStateEvent = Net.Event.RaceState
 local RaceActionFunction = Net.Function.RaceAction
 

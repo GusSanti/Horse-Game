@@ -20,10 +20,12 @@ local UPDATE_LOADOUT_REMOTE_NAME = "UpdateInventoryLoadout"
 
 local function get_server_modules()
 	local modulesFolder = ServerStorage:WaitForChild("Modules")
+	local farmingModules = modulesFolder:WaitForChild("Farming")
+	local inventoryModules = modulesFolder:WaitForChild("Inventory")
 	return {
-		ConsumableToolService = require(modulesFolder:WaitForChild("ConsumableToolService")),
-		FarmingShopService = require(modulesFolder:WaitForChild("FarmingShopService")),
-		PersistentToolService = require(modulesFolder:WaitForChild("PersistentToolService")),
+		ConsumableToolService = require(inventoryModules:WaitForChild("ConsumableToolService")),
+		FarmingShopService = require(farmingModules:WaitForChild("FarmingShopService")),
+		PersistentToolService = require(inventoryModules:WaitForChild("PersistentToolService")),
 	}
 end
 

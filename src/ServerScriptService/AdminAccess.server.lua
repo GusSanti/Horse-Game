@@ -1,7 +1,9 @@
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 
-local AdminAccessService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("AdminAccessService"))
+local serverModules = ServerStorage:WaitForChild("Modules")
+local adminModules = serverModules:WaitForChild("Admin")
+local AdminAccessService = require(adminModules:WaitForChild("AdminAccessService"))
 
 AdminAccessService.RefreshAllPlayers()
 

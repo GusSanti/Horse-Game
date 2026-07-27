@@ -5,6 +5,8 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local ServerModules = script.Parent.Parent
+local InventoryModules = ServerModules:WaitForChild("Inventory")
 
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Net = require(Libraries:WaitForChild("Net"))
@@ -14,7 +16,7 @@ local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
-local InventoryLoadoutService = require(script.Parent:WaitForChild("InventoryLoadoutService"))
+local InventoryLoadoutService = require(InventoryModules:WaitForChild("InventoryLoadoutService"))
 
 local FarmingShopService = {}
 

@@ -13,7 +13,7 @@ local dataStoreModules = serverModules:WaitForChild("DataStore")
 local ProfileStore = require(dataStoreModules:WaitForChild("ProfileStore"))
 local ProfileTemplate = require(dataStoreModules:WaitForChild("DataTemplate"))
 local DataUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("DataUtility"))
-local ProfileSessionService = require(serverModules:WaitForChild("ProfileSessionService"))
+local ProfileSessionService = require(dataStoreModules:WaitForChild("ProfileSessionService"))
 
 local store = ProfileStore.New(STORE_NAME, ProfileTemplate)
 local profilesByUserId: {[number]: any} = {}

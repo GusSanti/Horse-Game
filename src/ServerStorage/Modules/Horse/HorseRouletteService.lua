@@ -1,5 +1,4 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ServerStorage = game:GetService("ServerStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
@@ -8,7 +7,7 @@ local Utility = Modules:WaitForChild("Utility")
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
-local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+local HorseService = require(script.Parent:WaitForChild("HorseService"))
 
 local HorseRouletteService = {}
 

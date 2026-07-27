@@ -8,10 +8,11 @@ local modules: Folder = ReplicatedStorage:WaitForChild("Modules")
 local dictionary: Folder = modules:WaitForChild("Dictionary")
 local gameModules: Folder = modules:WaitForChild("Game")
 local serverModules: Folder = ServerStorage:WaitForChild("Modules")
+local horseModules: Folder = serverModules:WaitForChild("Horse")
 
 local toolDictionary = require(dictionary:WaitForChild("ToolDictionary"))
 local toolRegistry = require(gameModules:WaitForChild("Tools"):WaitForChild("Registry"))
-local horseService = require(serverModules:WaitForChild("HorseService"))
+local horseService = require(horseModules:WaitForChild("HorseService"))
 
 local TOOL_REMOTES_FOLDER_NAME: string = toolDictionary.ToolRemotesFolderName
 local USE_HORSE_TOOL_REMOTE_NAME: string = toolDictionary.UseHorseToolRemoteName

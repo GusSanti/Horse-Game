@@ -24,9 +24,11 @@ type PlotData = {
 ------------------//VARIABLES
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Libraries = Modules:WaitForChild("Libraries")
+local ServerModules = ServerStorage:WaitForChild("Modules")
+local HorseModules = ServerModules:WaitForChild("Horse")
 local StableDictionary = require(Modules:WaitForChild("Dictionary"):WaitForChild("StableDictionary"))
 local DataUtility = require(Modules:WaitForChild("Utility"):WaitForChild("DataUtility"))
-local HorseService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseService"))
+local HorseService = require(HorseModules:WaitForChild("HorseService"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 
 local stablesFolder: Instance = workspace:WaitForChild(STABLES_FOLDER_NAME)

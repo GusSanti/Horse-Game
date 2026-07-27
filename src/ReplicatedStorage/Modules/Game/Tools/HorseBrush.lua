@@ -29,8 +29,9 @@ local horseBrush = {
 	},
 	consumeOnUse = true,
 	onUse = function(context)
-		local QuestService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("QuestService"))
-		local HorseCareService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseCareService"))
+		local serverModules = ServerStorage:WaitForChild("Modules")
+		local QuestService = require(serverModules:WaitForChild("Quest"):WaitForChild("QuestService"))
+		local HorseCareService = require(serverModules:WaitForChild("Horse"):WaitForChild("HorseCareService"))
 
 		local itemDefinition = ToolItemCatalog.GetItemDefinition(HORSE_BRUSH_ITEM_ID)
 		if not itemDefinition then

@@ -6,13 +6,15 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local ServerModules = ServerStorage:WaitForChild("Modules")
+local InventoryModules = ServerModules:WaitForChild("Inventory")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
-local ConsumableToolService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("ConsumableToolService"))
-local InventoryLoadoutService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("InventoryLoadoutService"))
+local ConsumableToolService = require(InventoryModules:WaitForChild("ConsumableToolService"))
+local InventoryLoadoutService = require(InventoryModules:WaitForChild("InventoryLoadoutService"))
 
 local NpcShopService = {}
 local initialized = false

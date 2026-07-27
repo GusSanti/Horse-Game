@@ -3,12 +3,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
+local ServerModules = script.Parent.Parent
 
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local FarmingShopService = require(script.Parent:WaitForChild("FarmingShopService"))
-local QuestService = require(script.Parent:WaitForChild("QuestService"))
+local QuestService = require(ServerModules:WaitForChild("Quest"):WaitForChild("QuestService"))
 
 local FarmingService = {}
 
