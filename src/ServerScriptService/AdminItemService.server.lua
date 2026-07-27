@@ -3,12 +3,11 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
-local Services = Modules:WaitForChild("Services")
 local Utility = Modules:WaitForChild("Utility")
 
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
-local HorseStatusService = require(Services:WaitForChild("HorseStatusService"))
+local HorseStatusService = require(Utility:WaitForChild("HorseStatusService"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local AdminAccessService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("AdminAccessService"))
 local HorseRouletteService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("HorseRouletteService"))

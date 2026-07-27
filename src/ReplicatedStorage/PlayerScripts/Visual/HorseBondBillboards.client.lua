@@ -19,11 +19,10 @@ local EXTRA_STUDS_OFFSET = 1.75
 local localPlayer: Player = Players.LocalPlayer
 local modules: Folder = ReplicatedStorage:WaitForChild("Modules")
 local gameData: Folder = modules:WaitForChild("GameData")
-local services: Folder = modules:WaitForChild("Services")
 local utility: Folder = modules:WaitForChild("Utility")
 
 local DataUtility = require(utility:WaitForChild("DataUtility"))
-local HorseBondService = require(services:WaitForChild("HorseBondService"))
+local HorseBondService = require(utility:WaitForChild("HorseBondService"))
 local HorseStatusBillboardConfig = require(gameData:WaitForChild("HorseStatusBillboardConfig"))
 
 local plotValue: ObjectValue = localPlayer:WaitForChild(PLOT_VALUE_NAME)
