@@ -16,7 +16,7 @@ local function build_angle_y(cframe)
 end
 
 local function build_eased_alpha(alpha)
-	return 1 - math.pow(1 - alpha, 3)
+	return alpha * alpha * (3 - (2 * alpha))
 end
 
 local function get_camera_subject_position(cameraSubject)
@@ -275,6 +275,11 @@ function HorseMountCamera:buildCameraTargetCFrame(getCharacterRootPart, yaw, foc
 end
 
 function HorseMountCamera:getTransitionRootCFrame(mountedState, getCharacterRootPart)
+	local rootPart = getCharacterRootPart()
+	if rootPart then
+		return rootPart.CFrame
+	end
+
 	local startRootCFrame = mountedState.TransitionStartRootCFrame
 	local targetRootCFrame = mountedState.TransitionTargetRootCFrame
 	if typeof(startRootCFrame) == "CFrame" and typeof(targetRootCFrame) == "CFrame" then
@@ -283,8 +288,7 @@ function HorseMountCamera:getTransitionRootCFrame(mountedState, getCharacterRoot
 		return startRootCFrame:Lerp(targetRootCFrame, build_eased_alpha(alpha))
 	end
 
-	local rootPart = getCharacterRootPart()
-	return rootPart and rootPart.CFrame or nil
+	return nil
 end
 
 function HorseMountCamera:getTransitionCameraCFrame(mountedState, getCharacterRootPart)

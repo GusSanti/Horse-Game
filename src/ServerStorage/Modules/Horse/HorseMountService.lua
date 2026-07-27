@@ -32,6 +32,7 @@ local MOUNTED_USER_ID_ATTRIBUTE = ToolDictionary.MountedUserIdAttribute
 local MOUNTED_VISUALS_FOLDER_NAME = "MountedHorseVisuals"
 local MOUNT_ROOT_NAME = "HorseMountRoot"
 local MOUNT_SEAT_NAME = "HorseMountSeat"
+local MOUNT_RIDER_WELD_NAME = "HorseMountRiderWeld"
 local MOUNT_DRIVER_ATTACHMENT_NAME = "HorseMountDriverAttachment"
 local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
 local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
@@ -55,14 +56,11 @@ local playerConnections = {}
 
 local function capture_character_state(character, humanoid) return HorseMountCharacter.captureCharacterState(character, humanoid, MOUNT_DISABLED_STATES) end
 local function apply_character_mount_state(character, humanoid) return HorseMountCharacter.applyCharacterMountState(character, humanoid, MOUNT_DISABLED_STATES) end
-local restore_character_state, capture_transition_state, apply_character_transition_state, restore_transition_state =
+local restore_character_state, apply_character_transition_state =
 	HorseMountCharacter.restoreCharacterState,
-	HorseMountCharacter.captureTransitionState,
-	HorseMountCharacter.applyCharacterTransitionState,
-	HorseMountCharacter.restoreTransitionState
-local build_character_pivot_from_root, smooth_character_to_root_cframe, apply_mounted_humanoid_pose =
+	HorseMountCharacter.applyCharacterTransitionState
+local build_character_pivot_from_root, apply_mounted_humanoid_pose =
 	HorseMountCharacter.buildCharacterPivotFromRoot,
-	HorseMountCharacter.smoothCharacterToRootCFrame,
 	HorseMountCharacter.applyMountedHumanoidPose
 
 local function capture_horse_state(horseVisual, baseParts) return HorseMountGeometry.captureHorseState(horseVisual, baseParts) end
@@ -493,17 +491,25 @@ local function assign_network_owner(rootPart, player)
 		return
 	end
 
+	local canAssign = false
+	pcall(function()
+		canAssign = rootPart:CanSetNetworkOwnership()
+	end)
+	if not canAssign then
+		return
+	end
+
+	local currentOwner = nil
+	pcall(function()
+		currentOwner = rootPart:GetNetworkOwner()
+	end)
+	if currentOwner == player then
+		return
+	end
+
 	pcall(function()
 		rootPart:SetNetworkOwner(player)
 	end)
-end
-
-local function assign_network_owner_to_parts(player, parts)
-	for _, part in ipairs(parts or {}) do
-		if part and part:IsA("BasePart") and part.Parent and not part.Anchored then
-			assign_network_owner(part, player)
-		end
-	end
 end
 
 local function zero_assembly_velocity(basePart)
@@ -573,11 +579,13 @@ local function update_anti_gravity_force(mountState)
 end
 
 local function assign_network_owner_to_mount(mountState)
-	if not mountState or not mountState.Player then
+	if not mountState or not mountState.Player or not mountState.MountRoot then
 		return
 	end
 
-	assign_network_owner_to_parts(mountState.Player, mountState.MountParts)
+	-- Every welded horse part belongs to the same physics assembly. Assigning
+	-- only its root avoids repeatedly reevaluating ownership for every visual part.
+	assign_network_owner(mountState.MountRoot, mountState.Player)
 end
 
 local function create_mount_assembly(player, horseVisual, baseParts, seatOffset, initialRootCFrame)
@@ -634,7 +642,7 @@ local function create_mount_assembly(player, horseVisual, baseParts, seatOffset,
 	local antiGravityForce = create_anti_gravity_force(mountRoot)
 	local driverAttachment, linearVelocity, alignOrientation = create_driver_constraints(mountRoot, initialRootCFrame)
 	antiGravityForce.Force = Vector3.new(0, mountRoot.AssemblyMass * Workspace.Gravity, 0)
-	assign_network_owner_to_parts(player, mountParts)
+	assign_network_owner(mountRoot, player)
 	return mountRoot, mountSeat, welds, antiGravityForce, mountParts, driverAttachment, linearVelocity, alignOrientation
 end
 
@@ -888,13 +896,11 @@ local function begin_dismount_transition(player, reason)
 		mountState.MountRoot.AssemblyAngularVelocity = Vector3.zero
 	end
 
-	stop_mount_animations(mountState)
+	mountState.InputX = 0
+	mountState.InputZ = 0
+	mountState.Sprinting = false
+	play_horse_idle_animation(mountState.AnimationState)
 	set_horse_run_dust_enabled(mountState.DustEmitters, false)
-	destroy_instances({ mountState.RiderWeld })
-
-	if mountState.Character and mountState.Character.Parent and mountState.Humanoid and mountState.Humanoid.Parent then
-		restore_character_state(mountState.Character, mountState.Humanoid, mountState.CharacterState)
-	end
 
 	mountState.DismountCFrame = dismountCFrame
 
@@ -997,8 +1003,8 @@ local function convert_seat_to_rider_weld(mountState)
 	mountSeat.Disabled = true
 	mountSeat.CanTouch = false
 	mountState.RiderWeld = create_offset_weld(mountSeat, rootPart, riderOffset, CFrame.identity, mountSeat)
+	mountState.RiderWeld.Name = MOUNT_RIDER_WELD_NAME
 	apply_mounted_humanoid_pose(mountState)
-	assign_network_owner_to_mount(mountState)
 	update_anti_gravity_force(mountState)
 	stabilize_mount_physics(mountState)
 	debug_mount_alignment_report(mountState.Player, "RiderWeld", {
@@ -1098,7 +1104,6 @@ local function update_mount(mountState, deltaTime)
 		convert_seat_to_rider_weld(mountState)
 	end
 
-	assign_network_owner_to_mount(mountState)
 	update_anti_gravity_force(mountState)
 	update_rider_weld_offset(mountState, deltaTime)
 	apply_mounted_humanoid_pose(mountState)
@@ -1240,17 +1245,6 @@ local function mount_player(player, payload)
 		horseVisual:PivotTo(initialRootCFrame)
 	end
 	set_visual_mount_marker(horseVisual, player.UserId)
-	character:PivotTo(build_character_pivot_from_root(character, rootPart, riderRootCFrame))
-	rootPart.AssemblyLinearVelocity = Vector3.zero
-	rootPart.AssemblyAngularVelocity = Vector3.zero
-	debug_mount_alignment_report(player, "MountSetup", {
-		HorseRootCFrame = initialRootCFrame,
-		SeatOffset = seatOffset,
-		ConfiguredSeatSideOffset = HorseMountConfig.SeatSideOffset or 0,
-		ExpectedSeatCFrame = seatRootCFrame,
-		RiderRootCFrame = rootPart.CFrame,
-		AllowRiderHeightOffset = true,
-	})
 
 	local mountingAnimationState = create_mount_animation_state(humanoid, horseVisual)
 	if mountingAnimationState then
@@ -1261,15 +1255,20 @@ local function mount_player(player, payload)
 		})
 	end
 
+	apply_character_mount_state(character, humanoid)
+	local mountDuration = math.max(HorseMountConfig.MountTransitionDuration or 1.8, 0.05)
+	local mountStartedAt = Workspace:GetServerTimeNow()
 	HorseMountState:Fire(player, {
 		Kind = "Mounting",
-		Duration = HorseMountConfig.MountTransitionDuration or 1.8,
+		Duration = mountDuration,
+		StartedAt = mountStartedAt,
+		EndsAt = mountStartedAt + mountDuration,
 		CameraYaw = cameraYaw,
 		HorseId = horseId,
+		StartCFrame = rootPart.CFrame,
 		TargetCFrame = riderRootCFrame,
 	})
-	apply_character_transition_state(humanoid, rootPart)
-	task.wait(HorseMountConfig.MountTransitionDuration or 1.8)
+	task.wait(mountDuration)
 
 	local currentCharacter, currentHumanoid, currentRootPart = get_character_parts(player)
 	if currentCharacter ~= character or currentHumanoid ~= humanoid or currentRootPart ~= rootPart or humanoid.Health <= 0 then
@@ -1290,7 +1289,6 @@ local function mount_player(player, payload)
 		}
 	end
 
-	apply_character_mount_state(character, humanoid)
 	character:PivotTo(build_character_pivot_from_root(character, rootPart, riderRootCFrame))
 	rootPart.AssemblyLinearVelocity = Vector3.zero
 	rootPart.AssemblyAngularVelocity = Vector3.zero
@@ -1405,12 +1403,27 @@ local function dismount_player(player)
 	local didUnmount = mountState ~= nil
 
 	if didUnmount then
+		local animationDuration = math.max(HorseMountConfig.DismountTransitionDuration or 0.95, 0.05)
+		local releaseDelay = math.clamp(
+			HorseMountConfig.DismountReleaseDelay or 0.12,
+			0,
+			math.max(animationDuration - 0.08, 0)
+		)
+		local moveDuration = math.max(animationDuration - releaseDelay, 0.08)
+		local groundHoldDuration = math.max(HorseMountConfig.DismountSettleDuration or 0.1, 0)
+		local transitionDuration = animationDuration + groundHoldDuration
+		local transitionStartedAt = Workspace:GetServerTimeNow()
+
 		HorseMountState:Fire(player, {
 			Kind = "Dismounting",
-			Duration = (HorseMountConfig.DismountTransitionDuration or 0.95)
-				+ (HorseMountConfig.DismountSettleDuration or 0.12),
-			AnimationDuration = HorseMountConfig.DismountTransitionDuration or 0.95,
-			SettleDuration = HorseMountConfig.DismountSettleDuration or 0.12,
+			Duration = transitionDuration,
+			AnimationDuration = animationDuration,
+			MoveDelay = releaseDelay,
+			MoveDuration = moveDuration,
+			StartedAt = transitionStartedAt,
+			ReleaseAt = transitionStartedAt + releaseDelay,
+			AnimationEndsAt = transitionStartedAt + animationDuration,
+			EndsAt = transitionStartedAt + transitionDuration,
 			StartCFrame = mountState.RootPart and mountState.RootPart.CFrame or mountState.RiderRootCFrame,
 			TargetCFrame = mountState.DismountCFrame,
 		})
@@ -1419,23 +1432,41 @@ local function dismount_player(player)
 			local character = mountState.Character
 			local humanoid = mountState.Humanoid
 			local rootPart = mountState.RootPart
-			local fadeDuration = HorseMountConfig.DismountTransitionDuration or 0.95
-			local settleDuration = HorseMountConfig.DismountSettleDuration or 0.12
 
 			task.spawn(function()
-				fade_out_horse_visual(mountState, fadeDuration)
+				fade_out_horse_visual(mountState, animationDuration)
 			end)
 
-			if character and character.Parent and humanoid and humanoid.Parent and rootPart and rootPart.Parent and humanoid.Health > 0 then
-				local transitionState = capture_transition_state(humanoid)
-				apply_character_transition_state(humanoid, rootPart)
-				task.wait(fadeDuration)
+			if releaseDelay > 0 then
+				task.wait(releaseDelay)
+			end
 
-				if character.Parent and rootPart.Parent and mountState.DismountCFrame then
-					smooth_character_to_root_cframe(character, rootPart, mountState.DismountCFrame, settleDuration)
+			if character and character.Parent and humanoid and humanoid.Parent and rootPart and rootPart.Parent and humanoid.Health > 0 then
+				destroy_instances({ mountState.RiderWeld })
+				mountState.RiderWeld = nil
+				humanoid.Sit = false
+				apply_character_transition_state(humanoid, rootPart)
+
+				if moveDuration > 0 then
+					task.wait(moveDuration)
 				end
 
-				restore_transition_state(humanoid, transitionState)
+				if character.Parent and rootPart.Parent and mountState.DismountCFrame then
+					character:PivotTo(build_character_pivot_from_root(character, rootPart, mountState.DismountCFrame))
+					rootPart.AssemblyLinearVelocity = Vector3.zero
+					rootPart.AssemblyAngularVelocity = Vector3.zero
+				end
+			else
+				task.wait(math.max(animationDuration - releaseDelay, 0))
+			end
+
+			if groundHoldDuration > 0 then
+				task.wait(groundHoldDuration)
+			end
+
+			stop_mount_animations(mountState)
+			if character and character.Parent and humanoid and humanoid.Parent then
+				restore_character_state(character, humanoid, mountState.CharacterState)
 			end
 
 			cleanup_mount_horse(mountState)

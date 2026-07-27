@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
+local ContentProvider = game:GetService("ContentProvider")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -25,6 +26,7 @@ local plotValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName)
 
 local MOUNT_ROOT_NAME = "HorseMountRoot"
 local MOUNT_SEAT_NAME = "HorseMountSeat"
+local MOUNT_RIDER_WELD_NAME = "HorseMountRiderWeld"
 local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
 local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
 local MOUNT_MOVEMENT_SOUND_NAME = "HorseMovement"
@@ -91,6 +93,13 @@ local riderAnimationState = {
 	Mode = "None",
 	TransitionToken = 0,
 	SettleToken = 0,
+}
+local localHorseAnimationState = {
+	HorseVisual = nil,
+	Animator = nil,
+	Tracks = {},
+	Resources = {},
+	Mode = "None",
 }
 local cameraController = HorseMountCamera.new(localPlayer, HorseMountConfig)
 
@@ -193,6 +202,16 @@ local function adjust_local_track_speed(track, speed)
 	end)
 end
 
+local function adjust_local_track_weight(track, weight, fadeTime)
+	if not track then
+		return
+	end
+
+	pcall(function()
+		track:AdjustWeight(weight or 1, fadeTime or HorseMountConfig.HorseAnimationBlendTime or 0.24)
+	end)
+end
+
 local function get_local_rider_animation_state()
 	local humanoid = get_default_camera_subject()
 	local character = humanoid and humanoid.Parent or nil
@@ -254,6 +273,135 @@ local function get_local_rider_animation_state()
 	end
 
 	return riderAnimationState
+end
+
+local function preload_local_rider_animations()
+	task.spawn(function()
+		local animationState = nil
+		local deadline = os.clock() + 5
+		repeat
+			animationState = get_local_rider_animation_state()
+			if not animationState then
+				task.wait()
+			end
+		until animationState or os.clock() >= deadline
+
+		if not animationState then
+			return
+		end
+
+		local preloadResources = {}
+		for _, animation in ipairs(animationState.Resources) do
+			preloadResources[#preloadResources + 1] = animation
+		end
+
+		local temporaryAnimations = {}
+		for _, animationId in ipairs({
+			HorseMountConfig.HorseIdleAnimationId,
+			HorseMountConfig.HorseWalkAnimationId,
+			HorseMountConfig.HorseRunAnimationId,
+		}) do
+			local normalizedAnimationId = normalize_animation_id(animationId)
+			if normalizedAnimationId then
+				local animation = Instance.new("Animation")
+				animation.AnimationId = normalizedAnimationId
+				temporaryAnimations[#temporaryAnimations + 1] = animation
+				preloadResources[#preloadResources + 1] = animation
+			end
+		end
+
+		pcall(function()
+			ContentProvider:PreloadAsync(preloadResources)
+		end)
+
+		for _, animation in ipairs(temporaryAnimations) do
+			animation:Destroy()
+		end
+	end)
+end
+
+local function clear_local_horse_animation_state()
+	for _, track in pairs(localHorseAnimationState.Tracks) do
+		stop_local_track(track, 0.08)
+	end
+
+	for _, animation in ipairs(localHorseAnimationState.Resources) do
+		animation:Destroy()
+	end
+
+	localHorseAnimationState.HorseVisual = nil
+	localHorseAnimationState.Animator = nil
+	localHorseAnimationState.Tracks = {}
+	localHorseAnimationState.Resources = {}
+	localHorseAnimationState.Mode = "None"
+end
+
+local function get_local_horse_animation_state(horseVisual)
+	if not horseVisual or not horseVisual.Parent then
+		return nil
+	end
+
+	if localHorseAnimationState.HorseVisual == horseVisual
+		and localHorseAnimationState.Animator
+		and localHorseAnimationState.Animator.Parent
+	then
+		return localHorseAnimationState
+	end
+
+	clear_local_horse_animation_state()
+	local animator = horseVisual:FindFirstChildWhichIsA("Animator", true)
+	if not animator then
+		return nil
+	end
+
+	localHorseAnimationState.HorseVisual = horseVisual
+	localHorseAnimationState.Animator = animator
+	local trackSpecs = {
+		Idle = HorseMountConfig.HorseIdleAnimationId,
+		Walk = HorseMountConfig.HorseWalkAnimationId,
+		Run = HorseMountConfig.HorseRunAnimationId,
+	}
+
+	for trackName, animationId in pairs(trackSpecs) do
+		local track, animation = load_local_animation_track(
+			animator,
+			animationId,
+			Enum.AnimationPriority.Action2,
+			true
+		)
+		localHorseAnimationState.Tracks[trackName] = track
+		if animation then
+			localHorseAnimationState.Resources[#localHorseAnimationState.Resources + 1] = animation
+		end
+	end
+
+	return localHorseAnimationState
+end
+
+local function set_local_horse_animation_mode(horseVisual, mode)
+	local animationState = get_local_horse_animation_state(horseVisual)
+	if not animationState then
+		return
+	end
+
+	local targetTrack = animationState.Tracks[mode]
+	if animationState.Mode == mode and targetTrack and targetTrack.IsPlaying then
+		return
+	end
+
+	local blendTime = HorseMountConfig.HorseAnimationBlendTime or 0.24
+	for trackName, track in pairs(animationState.Tracks) do
+		if trackName == mode then
+			if track and not track.IsPlaying then
+				play_local_track(track, blendTime, 1, 1)
+			end
+			adjust_local_track_weight(track, 1, blendTime)
+		else
+			stop_local_track(track, blendTime)
+		end
+	end
+
+	animationState.Mode = mode
 end
 
 local function stop_local_rider_tracks(fadeTime)
@@ -400,7 +548,7 @@ local function set_local_rider_mode(mode)
 	animationState.Mode = mode
 end
 
-local function smooth_local_character_to_root_cframe(targetRootCFrame, duration)
+local function smooth_local_character_to_root_cframe(targetRootCFrame, duration, arcHeight)
 	if not targetRootCFrame then
 		return
 	end
@@ -441,6 +589,10 @@ local function smooth_local_character_to_root_cframe(targetRootCFrame, duration)
 			local alpha = math.clamp((os.clock() - startedAt) / blendDuration, 0, 1)
 			local easedAlpha = alpha * alpha * (3 - (2 * alpha))
 			local nextRootCFrame = startRootCFrame:Lerp(targetRootCFrame, easedAlpha)
+			local resolvedArcHeight = math.max(arcHeight or 0, 0)
+			if resolvedArcHeight > 0 then
+				nextRootCFrame += Vector3.new(0, math.sin(alpha * math.pi) * resolvedArcHeight, 0)
+			end
 			character:PivotTo(build_character_pivot_from_root(character, rootPart, nextRootCFrame))
 			rootPart.AssemblyLinearVelocity = Vector3.zero
 			rootPart.AssemblyAngularVelocity = Vector3.zero
@@ -466,7 +618,9 @@ local function play_local_mount_transition(duration, targetCFrame)
 	stop_local_track(tracks.HopOff, 0.05)
 	stop_local_track(tracks.Idle, 0.05)
 	stop_local_track(tracks.Ride, 0.05)
-	play_local_track(tracks.HopOn, 0.05, 1, 1)
+	local configuredDuration = math.max(HorseMountConfig.MountTransitionDuration or duration or 1.8, 0.05)
+	local resolvedDuration = math.max(duration or configuredDuration, 0.05)
+	play_local_track(tracks.HopOn, 0.05, 1, configuredDuration / resolvedDuration)
 	animationState.Mode = "Mounting"
 
 	-- Start the seated idle pose just before the hop-on track finishes so the
@@ -484,25 +638,15 @@ local function play_local_mount_transition(duration, targetCFrame)
 	end)
 
 	if targetCFrame then
-		task.spawn(function()
-			local moveDelay = math.min(0.08, math.max(duration or 0, 0) * 0.12)
-			if moveDelay > 0 then
-				task.wait(moveDelay)
-			end
-
-			if transitionToken ~= animationState.TransitionToken then
-				return
-			end
-
-			smooth_local_character_to_root_cframe(
-				targetCFrame,
-				math.max((duration or HorseMountConfig.MountTransitionDuration or 1.8) - moveDelay, 0.12)
-			)
-		end)
+		smooth_local_character_to_root_cframe(
+			targetCFrame,
+			resolvedDuration,
+			HorseMountConfig.MountTransitionArcHeight or 0
+		)
 	end
 end
 
-local function play_local_dismount_transition(animationDuration, settleDuration, targetCFrame)
+local function play_local_dismount_transition(animationDuration, moveDelay, moveDuration, moveEndsAt, targetCFrame)
 	local animationState = get_local_rider_animation_state()
 	if not animationState then
 		return
@@ -514,23 +658,52 @@ local function play_local_dismount_transition(animationDuration, settleDuration,
 	stop_local_track(tracks.HopOn, 0.05)
 	stop_local_track(tracks.Idle, 0.05)
 	stop_local_track(tracks.Ride, 0.05)
-	play_local_track(tracks.HopOff, 0.05, 1, 1)
+	local configuredDuration = math.max(HorseMountConfig.DismountTransitionDuration or animationDuration or 0.95, 0.05)
+	local resolvedAnimationDuration = math.max(animationDuration or configuredDuration, 0.05)
+	play_local_track(tracks.HopOff, 0.05, 1, configuredDuration / resolvedAnimationDuration)
 	animationState.Mode = "Dismounting"
 
 	task.spawn(function()
-		local leadTime = math.max(HorseMountConfig.DismountFinalPoseLeadTime or 0, 0)
 		local holdTime = math.max(HorseMountConfig.DismountFinalPoseHoldTime or 0, 0)
-		local waitTime = math.max((animationDuration or 0) - leadTime, 0)
-		if waitTime > 0 then
-			task.wait(waitTime)
+		local resolvedMoveDelay = math.max(moveDelay or 0, 0)
+		if resolvedMoveDelay > 0 then
+			task.wait(resolvedMoveDelay)
 		end
 
 		if transitionToken ~= animationState.TransitionToken then
 			return
 		end
 
+		local mountRoot = localPrediction.MountRoot
+		local mountParent = mountRoot and mountRoot.Parent or nil
+		local mountSeat = mountParent and mountParent:FindFirstChild(MOUNT_SEAT_NAME, true) or nil
+		if mountSeat then
+			local releaseWaitDeadline = math.min(
+				is_finite_number(moveEndsAt) and moveEndsAt or (Workspace:GetServerTimeNow() + 0.2),
+				Workspace:GetServerTimeNow() + 0.2
+			)
+			while mountSeat:FindFirstChild(MOUNT_RIDER_WELD_NAME)
+				and Workspace:GetServerTimeNow() < releaseWaitDeadline
+			do
+				RunService.Heartbeat:Wait()
+			end
+		end
+
+		local resolvedMoveDuration = math.max(moveDuration or (resolvedAnimationDuration - resolvedMoveDelay), 0.08)
+		if is_finite_number(moveEndsAt) then
+			resolvedMoveDuration = math.max(moveEndsAt - Workspace:GetServerTimeNow(), 0.08)
+		end
+
 		if targetCFrame then
-			smooth_local_character_to_root_cframe(targetCFrame, math.max(settleDuration or 0, 0.08))
+			smooth_local_character_to_root_cframe(
+				targetCFrame,
+				resolvedMoveDuration,
+				HorseMountConfig.DismountTransitionArcHeight or 0
+			)
+		end
+
+		if resolvedMoveDuration > 0 then
+			task.wait(resolvedMoveDuration)
 		end
 
 		if holdTime > 0 then
@@ -912,6 +1085,7 @@ local function is_sprint_input_active()
 end
 
 local function reset_local_prediction()
+	clear_local_horse_animation_state()
 	localPrediction.HorseVisual = nil
 	localPrediction.MountRoot = nil
 	localPrediction.LinearVelocity = nil
@@ -1163,11 +1337,40 @@ local function update_local_mount_prediction(deltaTime)
 	localPrediction.Position = currentPosition
 end
 
+local function update_local_horse_animation()
+	local horseVisual = localPrediction.HorseVisual
+	if not mountedState.Active or mountedState.TransitionMode ~= nil or not horseVisual or not horseVisual.Parent then
+		return
+	end
+
+	local moveX, moveZ = get_move_vector()
+	local inputMagnitude = math.sqrt((moveX * moveX) + (moveZ * moveZ))
+	local moving = (localPrediction.CurrentSpeed or 0) > 0.25
+		or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
+	local mode = "Idle"
+	if moving then
+		mode = is_sprint_input_active() and "Run" or "Walk"
+	end
+
+	set_local_horse_animation_mode(horseVisual, mode)
+	if localHorseAnimationState.HorseVisual == horseVisual then
+		local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
+		local referenceSpeed = mode == "Run"
+			and (movement.SprintSpeed or 26)
+			or (movement.WalkSpeed or 14)
+		local playbackSpeed = 1
+		if mode ~= "Idle" and referenceSpeed > 0 then
+			playbackSpeed = math.clamp((localPrediction.CurrentSpeed or 0) / referenceSpeed, 0.7, 1.25)
+		end
+		adjust_local_track_speed(localHorseAnimationState.Tracks[mode], playbackSpeed)
+	end
+end
+
 local function get_control_start_yaw() return cameraController:getControlStartYaw(get_character_root_part, mountedState) end
 local function prepare_camera_for_mount() cameraController:prepareCameraForMount() end
+local function start_camera_transition(mode, duration) cameraController:startCameraTransition(mode, duration) end
 local function cancel_camera_transition() cameraController:cancelCameraTransition() end
 local function restore_camera() cameraController:restoreCamera(get_character_root_part) end
-local function release_camera_after_dismount() cameraController:releaseCameraAfterDismount() end
 local function update_camera_restore(deltaTime) cameraController:updateCameraRestore(deltaTime, get_character_root_part) end
 local function update_camera_transition(deltaTime) cameraController:updateCameraTransition(deltaTime, mountedState, get_character_root_part) end
 local function update_camera_fov(deltaTime) cameraController:updateCameraFov(deltaTime, mountedState, localPrediction, get_prediction_movement, is_sprint_input_active) end
@@ -1244,7 +1447,7 @@ sync_mount_state_from_server = function(statePayload)
 			task.spawn(function()
 				RunService.Heartbeat:Wait()
 				if not mountedState.Active then
-					release_camera_after_dismount()
+					restore_camera()
 				end
 			end)
 		else
@@ -1281,7 +1484,16 @@ request_mount = function(horseId)
 
 	requestInFlight = false
 
-	if not success or not response or response.Success ~= true then
+	if success and response and response.Success == true and response.State and not mountedState.Active then
+		sync_mount_state_from_server(response.State)
+	elseif not success or not response or response.Success ~= true then
+		riderAnimationState.TransitionToken += 1
+		riderAnimationState.SettleToken += 1
+		mountedState.TransitionMode = nil
+		clear_transition_root_targets()
+		cancel_camera_transition()
+		stop_local_rider_tracks(0.08)
+		restore_camera()
 		refresh_stable_mount_prompts()
 	end
 end
@@ -1324,6 +1536,7 @@ end)
 localPlayer.CharacterAdded:Connect(function()
 	watch_stable_mount_prompt_tools(localPlayer.Character)
 	clear_local_rider_animation_state()
+	preload_local_rider_animations()
 	task.defer(function()
 		if not mountedState.Active then
 			restore_camera()
@@ -1355,14 +1568,28 @@ Net.Event.HorseMountState:Connect(function(payload)
 	end
 
 	if payload.Kind == "Mounting" then
+		local now = Workspace:GetServerTimeNow()
+		local duration = payload.Duration or HorseMountConfig.MountTransitionDuration or 1.8
+		if is_finite_number(payload.EndsAt) then
+			duration = math.max(payload.EndsAt - now, 0.05)
+		end
+
 		if is_finite_number(payload.CameraYaw) then
 			mountedState.CameraYaw = payload.CameraYaw
 		end
 
+		local rootPart = get_character_root_part()
 		mountedState.TransitionMode = "Mounting"
-		clear_transition_root_targets()
+		mountedState.TransitionStartRootCFrame = typeof(payload.StartCFrame) == "CFrame"
+			and payload.StartCFrame
+			or (rootPart and rootPart.CFrame or nil)
+		mountedState.TransitionTargetRootCFrame = typeof(payload.TargetCFrame) == "CFrame"
+			and payload.TargetCFrame
+			or nil
+		prepare_camera_for_mount()
+		start_camera_transition("Mounting", duration)
 		play_local_mount_transition(
-			payload.Duration or HorseMountConfig.MountTransitionDuration or 1.8,
+			duration,
 			payload.TargetCFrame
 		)
 		refresh_stable_mount_prompts()
@@ -1370,13 +1597,43 @@ Net.Event.HorseMountState:Connect(function(payload)
 		sync_mount_state_from_server(payload.State)
 	elseif payload.Kind == "Dismounting" then
 		if mountedState.Active then
+			local now = Workspace:GetServerTimeNow()
+			local transitionDuration = payload.Duration
+				or ((HorseMountConfig.DismountTransitionDuration or 0.95)
+					+ (HorseMountConfig.DismountSettleDuration or 0.1))
+			if is_finite_number(payload.EndsAt) then
+				transitionDuration = math.max(payload.EndsAt - now, 0.05)
+			end
+
+			local animationDuration = payload.AnimationDuration
+				or HorseMountConfig.DismountTransitionDuration
+				or 0.95
+			if is_finite_number(payload.AnimationEndsAt) then
+				animationDuration = math.max(payload.AnimationEndsAt - now, 0.05)
+			end
+
+			local moveDelay = payload.MoveDelay or HorseMountConfig.DismountReleaseDelay or 0.12
+			if is_finite_number(payload.ReleaseAt) then
+				moveDelay = math.max(payload.ReleaseAt - now, 0)
+			end
+
+			local moveDuration = math.max(animationDuration - moveDelay, 0.08)
+			local rootPart = get_character_root_part()
 			mountedState.TransitionMode = "Dismounting"
-			clear_transition_root_targets()
+			mountedState.TransitionStartRootCFrame = typeof(payload.StartCFrame) == "CFrame"
+				and payload.StartCFrame
+				or (rootPart and rootPart.CFrame or nil)
+			mountedState.TransitionTargetRootCFrame = typeof(payload.TargetCFrame) == "CFrame"
+				and payload.TargetCFrame
+				or nil
 			unbind_dismount_action()
-			release_camera_after_dismount()
+			set_local_horse_animation_mode(localPrediction.HorseVisual, "Idle")
+			start_camera_transition("Dismounting", transitionDuration)
 			play_local_dismount_transition(
-				payload.AnimationDuration or HorseMountConfig.DismountTransitionDuration or 0.95,
-				payload.SettleDuration or HorseMountConfig.DismountSettleDuration or 0.12,
+				animationDuration,
+				moveDelay,
+				moveDuration,
+				payload.AnimationEndsAt,
 				payload.TargetCFrame
 			)
 		end
@@ -1390,6 +1647,7 @@ end)
 plotValue:GetPropertyChangedSignal("Value"):Connect(watch_stable_mount_prompt_horses)
 watch_stable_mount_prompt_horses()
 watch_stable_mount_prompt_tools(localPlayer.Character)
+preload_local_rider_animations()
 
 task.spawn(function()
 	local success, response = pcall(function()
@@ -1423,6 +1681,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	)
 
 	update_local_mount_prediction(deltaTime)
+	update_local_horse_animation()
 	update_mount_movement_sound()
 
 	local rootPart = get_character_root_part()
