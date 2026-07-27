@@ -1,3 +1,9 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local GameData = Modules:WaitForChild("GameData")
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+
 local FarmingCatalog = {}
 
 local function normalize_key(value): string?
@@ -15,48 +21,12 @@ local function normalize_key(value): string?
 end
 
 local function push_unique_string(list, value, seenLookup)
-	if type(value) ~= "string" or value == "" then
-		return
-	end
-
-	if seenLookup[value] then
+	if type(value) ~= "string" or value == "" or seenLookup[value] then
 		return
 	end
 
 	seenLookup[value] = true
 	list[#list + 1] = value
-end
-
-local function build_seed_legacy_names(cropId: string, seedToolName: string, displayName: string, extraAliases)
-	local names = {}
-	local seen = {}
-
-	for _, value in ipairs(extraAliases or {}) do
-		push_unique_string(names, value, seen)
-	end
-
-	push_unique_string(names, seedToolName, seen)
-	push_unique_string(names, ("Seed%s"):format(cropId), seen)
-	push_unique_string(names, ("%sSeed"):format(cropId), seen)
-	push_unique_string(names, ("%s Seed"):format(displayName), seen)
-	push_unique_string(names, ("%s Seeds"):format(displayName), seen)
-
-	return names
-end
-
-local function build_fruit_legacy_names(cropId: string, fruitToolName: string, displayName: string, extraAliases)
-	local names = {}
-	local seen = {}
-
-	for _, value in ipairs(extraAliases or {}) do
-		push_unique_string(names, value, seen)
-	end
-
-	push_unique_string(names, fruitToolName, seen)
-	push_unique_string(names, displayName, seen)
-	push_unique_string(names, ("Fruit%s"):format(cropId), seen)
-
-	return names
 end
 
 local function build_stage_folder_aliases(cropId: string, explicitAliases)
@@ -76,11 +46,32 @@ local function clamp_number(value: number, minValue: number, maxValue: number): 
 	return math.max(minValue, math.min(maxValue, value))
 end
 
+local function resolve_linked_item(cropId: string, itemId: string, expectedKind: string)
+	local itemDefinition = ToolItemCatalog.GetItemDefinition(itemId)
+	assert(itemDefinition ~= nil, ("Farming crop '%s' references missing item '%s'"):format(cropId, tostring(itemId)))
+	assert(
+		itemDefinition.Kind == expectedKind,
+		("Farming crop '%s' item '%s' must be kind '%s'"):format(cropId, tostring(itemId), expectedKind)
+	)
+	assert(
+		normalize_key(itemDefinition.CropId) == normalize_key(cropId),
+		("Farming crop '%s' item '%s' is linked to crop '%s'"):format(
+			cropId,
+			tostring(itemId),
+			tostring(itemDefinition.CropId)
+		)
+	)
+
+	return itemDefinition
+end
+
 local function build_crop_definition(config)
 	local cropId = config.CropId
-	local displayName = config.DisplayName or cropId
-	local seedToolName = config.SeedToolName or ("%sSeed"):format(cropId)
-	local fruitToolName = config.FruitToolName or cropId
+	local seedItemId = config.SeedItemId or ("%s_seed"):format(string.lower(cropId))
+	local fruitItemId = config.FruitItemId or ("%s_fruit"):format(string.lower(cropId))
+	local seedItem = resolve_linked_item(cropId, seedItemId, "Seed")
+	local fruitItem = resolve_linked_item(cropId, fruitItemId, "Fruit")
+	local displayName = config.DisplayName or fruitItem.CropDisplayName or fruitItem.DisplayName or cropId
 	local stageFolderName = config.StageFolderName or cropId
 	local stageAssetPrefix = config.StageAssetPrefix or ("SM_%s"):format(cropId)
 	local maxStage = math.max(1, math.floor(tonumber(config.MaxStage) or 4))
@@ -90,237 +81,163 @@ local function build_crop_definition(config)
 
 	return {
 		CropId = cropId,
+		NormalizedCropId = normalize_key(cropId),
 		DisplayName = displayName,
+		SeedItemId = seedItem.ItemId,
+		FruitItemId = fruitItem.ItemId,
+		Seed = seedItem,
+		Fruit = fruitItem,
 		StageFolderName = stageFolderName,
 		StageFolderAliases = build_stage_folder_aliases(cropId, config.StageFolderAliases),
 		StageAssetPrefix = stageAssetPrefix,
-		SortOrder = math.max(0, math.floor(tonumber(config.SortOrder) or 0)),
+		SortOrder = math.max(0, math.floor(tonumber(config.SortOrder or seedItem.SortOrder or fruitItem.SortOrder) or 0)),
 		MaxStage = maxStage,
 		InitialWaterDelaySeconds = initialWaterDelaySeconds,
 		WaterIntervalSeconds = waterIntervalSeconds,
 		StageAdvanceRatio = stageAdvanceRatio,
-		Seed = {
-			ItemId = config.SeedItemId or ("%s_seed"):format(string.lower(cropId)),
-			DisplayName = config.SeedDisplayName or ("%s Seed"):format(displayName),
-			ToolName = seedToolName,
-			InventoryPath = "Inventory.Seeds",
-			Price = math.max(0, math.floor(tonumber(config.SeedPrice) or 0)),
-			AssetPath = config.SeedAssetPath or { "Seeds", seedToolName },
-			ViewportAssetPath = config.SeedViewportAssetPath or { "Seeds", seedToolName },
-			LegacyToolNames = build_seed_legacy_names(
-				cropId,
-				seedToolName,
-				displayName,
-				config.LegacySeedToolNames
-			),
-		},
-		Fruit = {
-			ItemId = config.FruitItemId or ("%s_fruit"):format(string.lower(cropId)),
-			DisplayName = config.FruitDisplayName or displayName,
-			ToolName = fruitToolName,
-			InventoryPath = "Inventory.Fruits",
-			SellPrice = math.max(0, math.floor(tonumber(config.FruitSellPrice) or 0)),
-			HarvestYield = math.max(1, math.floor(tonumber(config.HarvestYield) or 1)),
-			AssetPath = config.FruitAssetPath or { "Fruits", fruitToolName },
-			ViewportAssetPath = config.FruitViewportAssetPath or { "Fruits", fruitToolName },
-			LegacyInventoryItems = config.LegacyInventoryItems or {},
-			LegacyToolNames = build_fruit_legacy_names(
-				cropId,
-				fruitToolName,
-				displayName,
-				config.LegacyFruitToolNames
-			),
-		},
 	}
 end
 
 local cropDefinitions = {
 	build_crop_definition({
 		CropId = "Beetroot",
+		SeedItemId = "beetroot_seed",
+		FruitItemId = "beetroot_fruit",
 		SortOrder = 10,
-		SeedPrice = 1,
-		FruitSellPrice = 5,
 		WaterIntervalSeconds = 300,
 	}),
 	build_crop_definition({
 		CropId = "Carrot",
+		SeedItemId = "carrot_seed",
+		FruitItemId = "carrot_fruit",
 		SortOrder = 20,
-		SeedPrice = 1,
-		FruitSellPrice = 5,
 		WaterIntervalSeconds = 7,
 		StageFolderAliases = { "CarrotStage" },
-		LegacySeedToolNames = { "SeedCarrot", "Seed" },
-		LegacyFruitToolNames = { "Carrot Bunch" },
-		LegacyInventoryItems = { "carrot_bunch" },
 	}),
 	build_crop_definition({
 		CropId = "Corn",
+		SeedItemId = "corn_seed",
+		FruitItemId = "corn_fruit",
 		SortOrder = 30,
-		SeedPrice = 2,
-		FruitSellPrice = 6,
 		WaterIntervalSeconds = 420,
 	}),
 	build_crop_definition({
 		CropId = "Eggplant",
+		SeedItemId = "eggplant_seed",
+		FruitItemId = "eggplant_fruit",
 		SortOrder = 40,
-		SeedPrice = 2,
-		FruitSellPrice = 7,
 		WaterIntervalSeconds = 480,
 	}),
 	build_crop_definition({
 		CropId = "Garlic",
+		SeedItemId = "garlic_seed",
+		FruitItemId = "garlic_fruit",
 		SortOrder = 50,
-		SeedPrice = 2,
-		FruitSellPrice = 7,
 		WaterIntervalSeconds = 360,
 	}),
 	build_crop_definition({
 		CropId = "Grape",
+		SeedItemId = "grape_seed",
+		FruitItemId = "grape_fruit",
 		SortOrder = 60,
-		SeedPrice = 3,
-		FruitSellPrice = 8,
 		WaterIntervalSeconds = 600,
 	}),
 	build_crop_definition({
 		CropId = "Lettuce",
+		SeedItemId = "lettuce_seed",
+		FruitItemId = "lettuce_fruit",
 		SortOrder = 70,
-		SeedPrice = 1,
-		FruitSellPrice = 4,
 		WaterIntervalSeconds = 180,
 	}),
 	build_crop_definition({
 		CropId = "Pepper",
+		SeedItemId = "pepper_seed",
+		FruitItemId = "pepper_fruit",
 		SortOrder = 80,
-		SeedPrice = 3,
-		FruitSellPrice = 8,
 		WaterIntervalSeconds = 420,
 	}),
 	build_crop_definition({
 		CropId = "Pineapple",
+		SeedItemId = "pineapple_seed",
+		FruitItemId = "pineapple_fruit",
 		SortOrder = 90,
-		SeedPrice = 4,
-		FruitSellPrice = 10,
 		WaterIntervalSeconds = 720,
 	}),
 	build_crop_definition({
 		CropId = "Potato",
+		SeedItemId = "potato_seed",
+		FruitItemId = "potato_fruit",
 		SortOrder = 100,
-		SeedPrice = 2,
-		FruitSellPrice = 6,
 		WaterIntervalSeconds = 300,
 	}),
 	build_crop_definition({
 		CropId = "Pumpkin",
+		SeedItemId = "pumpkin_seed",
+		FruitItemId = "pumpkin_fruit",
 		SortOrder = 110,
-		SeedPrice = 4,
-		FruitSellPrice = 10,
 		WaterIntervalSeconds = 720,
 	}),
 	build_crop_definition({
 		CropId = "Radish",
+		SeedItemId = "radish_seed",
+		FruitItemId = "radish_fruit",
 		SortOrder = 120,
-		SeedPrice = 1,
-		FruitSellPrice = 4,
 		WaterIntervalSeconds = 150,
 	}),
 	build_crop_definition({
 		CropId = "Strawberry",
+		SeedItemId = "strawberry_seed",
+		FruitItemId = "strawberry_fruit",
 		SortOrder = 130,
-		SeedPrice = 3,
-		FruitSellPrice = 9,
 		WaterIntervalSeconds = 360,
 	}),
 	build_crop_definition({
 		CropId = "Tomato",
+		SeedItemId = "tomato_seed",
+		FruitItemId = "tomato_fruit",
 		SortOrder = 140,
-		SeedPrice = 2,
-		FruitSellPrice = 7,
 		WaterIntervalSeconds = 420,
 	}),
 	build_crop_definition({
 		CropId = "Wheat",
+		SeedItemId = "wheat_seed",
+		FruitItemId = "wheat_fruit",
 		SortOrder = 150,
-		SeedPrice = 1,
-		FruitSellPrice = 4,
 		WaterIntervalSeconds = 240,
 	}),
 }
 
 local cropsById = {}
-local itemsById = {}
 local seedItems = {}
-local fruitItems = {}
+local seedItemsById = {}
 
 for _, cropDefinition in ipairs(cropDefinitions) do
-	local normalizedCropId = normalize_key(cropDefinition.CropId)
-	cropDefinition.NormalizedCropId = normalizedCropId
-	cropsById[normalizedCropId] = cropDefinition
+	cropsById[cropDefinition.NormalizedCropId] = cropDefinition
 
-	for itemKind, itemDefinition in pairs({
-		Seed = cropDefinition.Seed,
-		Fruit = cropDefinition.Fruit,
-	}) do
-		itemDefinition.Kind = itemKind
-		itemDefinition.CropId = cropDefinition.CropId
-		itemDefinition.CropDisplayName = cropDefinition.DisplayName
-		itemDefinition.StageFolderName = cropDefinition.StageFolderName
-		itemDefinition.StageFolderAliases = cropDefinition.StageFolderAliases
-		itemDefinition.StageAssetPrefix = cropDefinition.StageAssetPrefix
-		itemDefinition.SortOrder = cropDefinition.SortOrder
-		itemDefinition.MaxStage = cropDefinition.MaxStage
-
-		local normalizedItemId = normalize_key(itemDefinition.ItemId)
-		itemDefinition.NormalizedItemId = normalizedItemId
-		itemsById[normalizedItemId] = itemDefinition
-
-		if itemKind == "Seed" then
-			seedItems[#seedItems + 1] = itemDefinition
-		else
-			fruitItems[#fruitItems + 1] = itemDefinition
-		end
-	end
+	seedItems[#seedItems + 1] = cropDefinition.Seed
+	seedItemsById[normalize_key(cropDefinition.Seed.ItemId)] = cropDefinition.Seed
 end
 
 table.sort(seedItems, function(left, right)
 	return (left.SortOrder or 0) < (right.SortOrder or 0)
 end)
 
-table.sort(fruitItems, function(left, right)
-	return (left.SortOrder or 0) < (right.SortOrder or 0)
-end)
-
 FarmingCatalog.Crops = cropDefinitions
-FarmingCatalog.Seeds = seedItems
-FarmingCatalog.Fruits = fruitItems
-FarmingCatalog.Seed = seedItems[1]
-FarmingCatalog.Fruit = fruitItems[1]
 
 function FarmingCatalog.NormalizeKey(value): string?
 	return normalize_key(value)
-end
-
-function FarmingCatalog.GetItemCount(bucket, itemId)
-	if type(bucket) ~= "table" then
-		return 0
-	end
-
-	return bucket[itemId] or 0
 end
 
 function FarmingCatalog.GetCrop(cropId)
 	return cropsById[normalize_key(cropId)]
 end
 
-function FarmingCatalog.GetItem(itemId)
-	return itemsById[normalize_key(itemId)]
+function FarmingCatalog.GetSeedItem(itemId)
+	return seedItemsById[normalize_key(itemId)]
 end
 
 function FarmingCatalog.GetSeedItems()
 	return seedItems
-end
-
-function FarmingCatalog.GetFruitItems()
-	return fruitItems
 end
 
 return FarmingCatalog

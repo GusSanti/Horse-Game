@@ -12,7 +12,6 @@ local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local Net = require(Libraries:WaitForChild("Net"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
-local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 
 local InventoryLoadoutService = {}
 
@@ -51,7 +50,7 @@ local function get_inventory_item_count(player, itemDefinition)
 end
 
 local function resolve_item_definition(itemId)
-	return ToolItemCatalog.GetItemDefinition(itemId) or FarmingCatalog.GetItem(itemId)
+	return ToolItemCatalog.GetItemDefinition(itemId)
 end
 
 local function for_each_tool_in_container(container, callback)
@@ -75,18 +74,6 @@ local function collect_owned_tool_item_ids(player)
 		end
 	end
 
-	for _, farmingDefinition in ipairs(FarmingCatalog.GetSeedItems() or {}) do
-		if get_inventory_item_count(player, farmingDefinition) > 0 then
-			ownedItemIds[farmingDefinition.ItemId] = true
-		end
-	end
-
-	for _, farmingDefinition in ipairs(FarmingCatalog.GetFruitItems() or {}) do
-		if get_inventory_item_count(player, farmingDefinition) > 0 then
-			ownedItemIds[farmingDefinition.ItemId] = true
-		end
-	end
-
 	for _, itemId in ipairs(InventoryLoadout.GetDefaultItemIds()) do
 		local itemDefinition = ToolItemCatalog.GetItemDefinition(itemId)
 		if itemDefinition then
@@ -103,7 +90,6 @@ local function collect_owned_tool_item_ids(player)
 	for _, container in ipairs(containers) do
 		for_each_tool_in_container(container, function(tool)
 			local itemDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
-				or FarmingCatalog.GetItem(tool:GetAttribute("FarmingItemId"))
 			if itemDefinition then
 				ownedItemIds[itemDefinition.ItemId] = true
 			end
@@ -225,7 +211,6 @@ local function player_has_access_to_item(player, itemDefinition)
 			end
 
 			local resolvedItemDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
-				or FarmingCatalog.GetItem(tool:GetAttribute("FarmingItemId"))
 			if resolvedItemDefinition and resolvedItemDefinition.ItemId == itemDefinition.ItemId then
 				hasAccess = true
 			end
@@ -322,7 +307,6 @@ end
 
 local function is_tool_for_item(tool: Tool, itemDefinition): boolean
 	local resolvedItemDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
-		or FarmingCatalog.GetItem(tool:GetAttribute("FarmingItemId"))
 
 	return resolvedItemDefinition ~= nil and resolvedItemDefinition.ItemId == itemDefinition.ItemId
 end

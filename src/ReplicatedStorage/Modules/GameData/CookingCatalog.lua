@@ -1,4 +1,3 @@
-local FarmingCatalog = require(script.Parent:WaitForChild("FarmingCatalog"))
 local ToolItemCatalog = require(script.Parent:WaitForChild("ToolItemCatalog"))
 
 local CookingCatalog = {}
@@ -44,7 +43,7 @@ local function shallow_copy_array(values)
 end
 
 local function resolve_item_definition(itemId)
-	return ToolItemCatalog.GetItemDefinition(itemId) or FarmingCatalog.GetItem(itemId)
+	return ToolItemCatalog.GetItemDefinition(itemId)
 end
 
 local rawRecipes = {

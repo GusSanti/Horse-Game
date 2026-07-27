@@ -1,6 +1,7 @@
 return {
 	Order = {
 		"Food",
+		"Fruits",
 		"Water",
 		"Grooming",
 		"Misc",
@@ -16,6 +17,12 @@ return {
 			DisplayName = "Food",
 			FolderName = "Food",
 			InventoryPath = "Consumables.Food",
+		},
+		Fruits = {
+			CategoryId = "Fruits",
+			DisplayName = "Fruits",
+			FolderName = "Fruits",
+			InventoryPath = "Fruits",
 		},
 		Water = {
 			CategoryId = "Water",

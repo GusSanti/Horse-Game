@@ -6,7 +6,7 @@ local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
-local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
@@ -70,6 +70,27 @@ local function normalize_key(value): string?
 	return normalizedValue
 end
 
+local function normalize_inventory_path(path: string?): string?
+	if type(path) ~= "string" then
+		return nil
+	end
+
+	local trimmedPath = string.gsub(path, "^%s*(.-)%s*$", "%1")
+	if trimmedPath == "" then
+		return nil
+	end
+
+	if string.sub(trimmedPath, 1, #"Inventory.") == "Inventory." then
+		return trimmedPath
+	end
+
+	return ("Inventory.%s"):format(trimmedPath)
+end
+
+local function get_inventory_path(itemDefinition): string?
+	return normalize_inventory_path(itemDefinition and itemDefinition.InventoryPath)
+end
+
 local function get_string_attribute(instance: Instance, attributeName: string): string?
 	local value = instance:GetAttribute(attributeName)
 	if type(value) == "string" then
@@ -122,8 +143,20 @@ local function get_by_path(root, path)
 	return current
 end
 
-local seedItems = if type(FarmingCatalog.GetSeedItems) == "function" then (FarmingCatalog.GetSeedItems() or {}) else (type(FarmingCatalog.Seeds) == "table" and FarmingCatalog.Seeds or {})
-local fruitItems = if type(FarmingCatalog.GetFruitItems) == "function" then (FarmingCatalog.GetFruitItems() or {}) else (type(FarmingCatalog.Fruits) == "table" and FarmingCatalog.Fruits or {})
+local function get_farming_items(toolCategory: string, kind: string)
+	local items = {}
+
+	for _, itemDefinition in ipairs(ToolItemCatalog.GetItemsByToolCategory(toolCategory) or {}) do
+		if itemDefinition.Kind == kind then
+			items[#items + 1] = itemDefinition
+		end
+	end
+
+	return items
+end
+
+local seedItems = get_farming_items("Seeds", "Seed")
+local fruitItems = get_farming_items("Fruits", "Fruit")
 local itemDefinitionsById = {}
 
 for _, itemDefinition in ipairs(seedItems) do
@@ -154,10 +187,6 @@ local function get_item_definition(itemId)
 end
 
 local function get_bucket_item_count(bucket, itemId): number
-	if type(FarmingCatalog.GetItemCount) == "function" then
-		return FarmingCatalog.GetItemCount(bucket, itemId)
-	end
-
 	if type(bucket) ~= "table" then
 		return 0
 	end
@@ -201,12 +230,12 @@ local function resolve_item_definition(itemOrId, expectedKind: string?)
 end
 
 local function get_item_count(player: Player, itemDefinition): number
-	local bucket = DataUtility.server.get(player, itemDefinition.InventoryPath)
+	local bucket = DataUtility.server.get(player, get_inventory_path(itemDefinition))
 	return get_bucket_item_count(bucket, itemDefinition.ItemId)
 end
 
 local function get_item_count_from_profile(profileData, itemDefinition): number
-	return get_bucket_item_count(get_by_path(profileData, itemDefinition.InventoryPath), itemDefinition.ItemId)
+	return get_bucket_item_count(get_by_path(profileData, get_inventory_path(itemDefinition)), itemDefinition.ItemId)
 end
 
 local function is_item_selected_for_hotbar(player: Player, itemDefinition): boolean
@@ -242,7 +271,8 @@ local function get_total_count_from_profile(profileData, itemDefinitions): numbe
 end
 
 local function write_item_count(profileData, itemDefinition, amount: number): (table, number)
-	local bucket = ensure_path(profileData, itemDefinition.InventoryPath)
+	local inventoryPath = get_inventory_path(itemDefinition)
+	local bucket = ensure_path(profileData, inventoryPath)
 	local normalizedAmount = math.max(0, math.floor(amount))
 
 	if normalizedAmount > 0 then
@@ -863,7 +893,7 @@ function FarmingShopService.BuySeed(player: Player, itemId)
 
 	DataUtility.server.set_many(player, {
 		{ Path = "Currencies.Horseshoes", Value = currentHorseshoes - itemDefinition.Price },
-		{ Path = itemDefinition.InventoryPath, Value = bucket },
+		{ Path = get_inventory_path(itemDefinition), Value = bucket },
 	})
 
 	InventoryLoadoutService.TryAutoEquipNewItem(player, itemDefinition.ItemId, previousCount)
@@ -891,7 +921,7 @@ function FarmingShopService.SellFruit(player: Player, itemId)
 	local bucket = select(1, write_item_count(profileData, itemDefinition, currentFruitCount - 1))
 
 	DataUtility.server.set_many(player, {
-		{ Path = itemDefinition.InventoryPath, Value = bucket },
+		{ Path = get_inventory_path(itemDefinition), Value = bucket },
 		{ Path = "Currencies.Horseshoes", Value = get_horseshoes_from_profile(profileData) + itemDefinition.SellPrice },
 	})
 	SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
@@ -918,7 +948,7 @@ function FarmingShopService.ConsumeSeed(player: Player, itemId)
 	local bucket = select(1, write_item_count(profileData, itemDefinition, currentSeedCount - 1))
 
 	DataUtility.server.set_many(player, {
-		{ Path = itemDefinition.InventoryPath, Value = bucket },
+		{ Path = get_inventory_path(itemDefinition), Value = bucket },
 	})
 
 	return true, create_state_payload(player, true, "SeedConsumed", itemDefinition, profileData)
@@ -943,7 +973,7 @@ function FarmingShopService.AwardHarvest(player: Player, itemId, amount: number?
 	))
 
 	DataUtility.server.set_many(player, {
-		{ Path = itemDefinition.InventoryPath, Value = bucket },
+		{ Path = get_inventory_path(itemDefinition), Value = bucket },
 	})
 
 	InventoryLoadoutService.TryAutoEquipNewItem(player, itemDefinition.ItemId, previousCount)

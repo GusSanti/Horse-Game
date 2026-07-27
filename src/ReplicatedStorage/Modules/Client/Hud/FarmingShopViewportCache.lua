@@ -4,7 +4,7 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
-local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 
 local FarmingShopViewportCache = {}
@@ -54,22 +54,6 @@ local function normalize_key(value): string?
 	return normalizedValue
 end
 
-local function get_seed_items()
-	if type(FarmingCatalog.GetSeedItems) == "function" then
-		return FarmingCatalog.GetSeedItems() or {}
-	end
-
-	return type(FarmingCatalog.Seeds) == "table" and FarmingCatalog.Seeds or {}
-end
-
-local function get_fruit_items()
-	if type(FarmingCatalog.GetFruitItems) == "function" then
-		return FarmingCatalog.GetFruitItems() or {}
-	end
-
-	return type(FarmingCatalog.Fruits) == "table" and FarmingCatalog.Fruits or {}
-end
-
 local function get_all_item_definitions()
 	if allItemDefinitions then
 		return allItemDefinitions
@@ -77,14 +61,13 @@ local function get_all_item_definitions()
 
 	allItemDefinitions = {}
 
-	for _, itemDefinition in ipairs(get_seed_items()) do
-		itemDefinitionsById[normalize_key(itemDefinition.ItemId)] = itemDefinition
-		allItemDefinitions[#allItemDefinitions + 1] = itemDefinition
-	end
-
-	for _, itemDefinition in ipairs(get_fruit_items()) do
-		itemDefinitionsById[normalize_key(itemDefinition.ItemId)] = itemDefinition
-		allItemDefinitions[#allItemDefinitions + 1] = itemDefinition
+	for _, toolCategory in ipairs({ "Seeds", "Fruits" }) do
+		for _, itemDefinition in ipairs(ToolItemCatalog.GetItemsByToolCategory(toolCategory) or {}) do
+			if itemDefinition.Kind == "Seed" or itemDefinition.Kind == "Fruit" then
+				itemDefinitionsById[normalize_key(itemDefinition.ItemId)] = itemDefinition
+				allItemDefinitions[#allItemDefinitions + 1] = itemDefinition
+			end
+		end
 	end
 
 	return allItemDefinitions

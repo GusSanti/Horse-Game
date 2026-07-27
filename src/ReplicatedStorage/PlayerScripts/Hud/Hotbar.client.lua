@@ -9,7 +9,6 @@ local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
-local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
@@ -1085,7 +1084,15 @@ local function get_catalog_render_source(itemDefinition): Instance?
 end
 
 local function get_farming_render_source(itemDefinition): Instance?
+	if not itemDefinition then
+		return nil
+	end
+
 	return FarmingUtility.GetViewportAsset(itemDefinition) or FarmingUtility.GetItemAsset(itemDefinition)
+end
+
+local function is_farming_item_definition(itemDefinition): boolean
+	return itemDefinition ~= nil and (itemDefinition.Kind == "Seed" or itemDefinition.Kind == "Fruit")
 end
 
 local function get_tool_key(tool: Tool): string
@@ -1106,15 +1113,13 @@ end
 local function resolve_tool_metadata(tool: Tool)
 	local farmingItemId = tool:GetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE)
 	if type(farmingItemId) == "string" and farmingItemId ~= "" then
-		local farmingDefinition = FarmingCatalog.GetItem(farmingItemId)
-		if farmingDefinition then
+		local farmingDefinition = ToolItemCatalog.GetItemDefinition(farmingItemId)
+		if is_farming_item_definition(farmingDefinition) then
 			local quantity = get_inventory_quantity(farmingDefinition.ItemId, farmingDefinition.InventoryPath)
 			return {
 				Key = farmingDefinition.ItemId,
 				DisplayName = farmingDefinition.DisplayName or tool.Name,
-				SortCategory = farmingDefinition.Kind == "Seed"
-					and (categoryOrderLookup.Seeds or math.huge)
-					or (categoryOrderLookup.Food or math.huge),
+				SortCategory = categoryOrderLookup[farmingDefinition.ToolCategory] or math.huge,
 				SortOrder = farmingDefinition.SortOrder or math.huge,
 				RenderSource = get_farming_render_source(farmingDefinition) or tool,
 				FarmingDefinition = farmingDefinition,
@@ -1127,6 +1132,7 @@ local function resolve_tool_metadata(tool: Tool)
 
 	local toolDefinition = ToolItemCatalog.ResolveDefinitionFromTool(tool)
 	if toolDefinition then
+		local farmingDefinition = if is_farming_item_definition(toolDefinition) then toolDefinition else nil
 		local quantity = get_inventory_quantity(toolDefinition.ItemId, toolDefinition.InventoryPath)
 		local isDefaultItem = InventoryLoadout.IsDefaultItemId(toolDefinition.ItemId)
 		return {
@@ -1134,10 +1140,11 @@ local function resolve_tool_metadata(tool: Tool)
 			DisplayName = toolDefinition.DisplayName or tool.Name,
 			SortCategory = categoryOrderLookup[toolDefinition.ToolCategory] or math.huge,
 			SortOrder = toolDefinition.SortOrder or math.huge,
-			RenderSource = get_catalog_render_source(toolDefinition) or tool,
+			RenderSource = get_farming_render_source(farmingDefinition) or get_catalog_render_source(toolDefinition) or tool,
+			FarmingDefinition = farmingDefinition,
 			Quantity = math.max(quantity, 1),
 			ShowsQuantity = not isDefaultItem and quantity > 1,
-			IsSeed = false,
+			IsSeed = toolDefinition.Kind == "Seed",
 		}
 	end
 
@@ -1389,7 +1396,8 @@ local function render_viewport(
 
 	local cachedFarmingDefinition = farmingDefinition
 	if not cachedFarmingDefinition and type(itemKey) == "string" then
-		cachedFarmingDefinition = FarmingCatalog.GetItem(itemKey)
+		local itemDefinition = ToolItemCatalog.GetItemDefinition(itemKey)
+		cachedFarmingDefinition = if is_farming_item_definition(itemDefinition) then itemDefinition else nil
 	end
 
 	if cachedFarmingDefinition then

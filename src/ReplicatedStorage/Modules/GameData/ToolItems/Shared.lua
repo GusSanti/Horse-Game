@@ -135,10 +135,26 @@ end
 
 function Shared.CreateSeeds(config)
 	return create_item({
+		Kind = "Seed",
 		ToolCategory = "Seeds",
 		InventoryPath = "Seeds",
-		ShopId = "OutdoorStore",
-		Tags = { "Seed" },
+		ShopId = false,
+		Tags = { "Seed", "Farming" },
+	}, config)
+end
+
+function Shared.CreateFruit(config)
+	config = deep_copy(config)
+	config.Price = config.Price or config.SellPrice or 0
+	config.PriceLabel = config.PriceLabel or ("%d horseshoes"):format(config.SellPrice or config.Price or 0)
+
+	return create_item({
+		Kind = "Fruit",
+		ToolCategory = "Fruits",
+		InventoryPath = "Fruits",
+		ShopId = false,
+		HarvestYield = 1,
+		Tags = { "Fruit", "Farming" },
 	}, config)
 end
 

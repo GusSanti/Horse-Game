@@ -26,6 +26,7 @@ local SAVED_GENERIC_COUNTS_PATH = "SavedTools.GenericCounts"
 
 local TOOL_COLOR_BY_CATEGORY = {
 	Food = Color3.fromRGB(231, 175, 87),
+	Fruits = Color3.fromRGB(209, 106, 62),
 	Water = Color3.fromRGB(98, 175, 255),
 	Grooming = Color3.fromRGB(225, 157, 188),
 	Misc = Color3.fromRGB(201, 201, 201),

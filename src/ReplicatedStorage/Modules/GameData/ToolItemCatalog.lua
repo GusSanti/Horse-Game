@@ -14,6 +14,7 @@ local ToolItemCatalog = {
 local orderedDefinitions = ToolItems.GetOrderedItems()
 local definitionsById = {}
 local definitionsByDisplayName = {}
+local definitionsByToolName = {}
 
 local function normalize_key(value)
 	if type(value) ~= "string" then
@@ -92,6 +93,11 @@ for _, definition in ipairs(orderedDefinitions) do
 
 		definitionsById[itemId] = definition
 		definitionsByDisplayName[normalize_key(definition.DisplayName)] = definition
+
+		local normalizedToolName = normalize_key(definition.ToolName)
+		if normalizedToolName then
+			definitionsByToolName[normalizedToolName] = definition
+		end
 	end
 end
 
@@ -160,6 +166,11 @@ function ToolItemCatalog.ResolveDefinitionFromTool(tool)
 		return nil
 	end
 
+	local farmingItemId = normalize_key(tool:GetAttribute("FarmingItemId"))
+	if farmingItemId and definitionsById[farmingItemId] then
+		return definitionsById[farmingItemId]
+	end
+
 	local explicitItemId = normalize_key(tool:GetAttribute("ToolItemId"))
 	if explicitItemId and definitionsById[explicitItemId] then
 		return definitionsById[explicitItemId]
@@ -171,6 +182,10 @@ function ToolItemCatalog.ResolveDefinitionFromTool(tool)
 	end
 
 	local normalizedToolName = normalize_key(tool.Name)
+	if normalizedToolName and definitionsByToolName[normalizedToolName] then
+		return definitionsByToolName[normalizedToolName]
+	end
+
 	if normalizedToolName and definitionsByDisplayName[normalizedToolName] then
 		return definitionsByDisplayName[normalizedToolName]
 	end

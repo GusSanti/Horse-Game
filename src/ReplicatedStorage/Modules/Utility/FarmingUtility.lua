@@ -40,63 +40,15 @@ local function normalize_asset_name(value): string?
 end
 
 local function get_seed_items()
-	if type(FarmingCatalog.GetSeedItems) == "function" then
-		return FarmingCatalog.GetSeedItems() or {}
-	end
-
-	return type(FarmingCatalog.Seeds) == "table" and FarmingCatalog.Seeds or {}
-end
-
-local function get_fruit_items()
-	if type(FarmingCatalog.GetFruitItems) == "function" then
-		return FarmingCatalog.GetFruitItems() or {}
-	end
-
-	return type(FarmingCatalog.Fruits) == "table" and FarmingCatalog.Fruits or {}
+	return FarmingCatalog.GetSeedItems() or {}
 end
 
 local function get_item_definition(itemId)
-	if type(FarmingCatalog.GetItem) == "function" then
-		return FarmingCatalog.GetItem(itemId)
-	end
-
-	local normalizedItemId = normalize_key(itemId)
-	if not normalizedItemId then
-		return nil
-	end
-
-	for _, seedDefinition in ipairs(get_seed_items()) do
-		if normalize_key(seedDefinition.ItemId) == normalizedItemId then
-			return seedDefinition
-		end
-	end
-
-	for _, fruitDefinition in ipairs(get_fruit_items()) do
-		if normalize_key(fruitDefinition.ItemId) == normalizedItemId then
-			return fruitDefinition
-		end
-	end
-
-	return nil
+	return FarmingCatalog.GetSeedItem(itemId)
 end
 
 local function get_crop_definition(cropId)
-	if type(FarmingCatalog.GetCrop) == "function" then
-		return FarmingCatalog.GetCrop(cropId)
-	end
-
-	local normalizedCropId = normalize_key(cropId)
-	if not normalizedCropId then
-		return nil
-	end
-
-	for _, cropDefinition in ipairs(type(FarmingCatalog.Crops) == "table" and FarmingCatalog.Crops or {}) do
-		if normalize_key(cropDefinition.CropId) == normalizedCropId then
-			return cropDefinition
-		end
-	end
-
-	return nil
+	return FarmingCatalog.GetCrop(cropId)
 end
 
 local function get_nested_child(root: Instance?, pathParts): Instance?

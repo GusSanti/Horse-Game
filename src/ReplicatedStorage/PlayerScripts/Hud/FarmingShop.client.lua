@@ -7,7 +7,7 @@ local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
-local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
+local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local FarmingShopViewportCache = require(ClientModules:WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Net = require(Libraries:WaitForChild("Net"))
@@ -102,8 +102,20 @@ local currentUiConnections = {}
 local activeTab = "Seed"
 local requestInFlight = false
 
-local seedItems = if type(FarmingCatalog.GetSeedItems) == "function" then (FarmingCatalog.GetSeedItems() or {}) else (type(FarmingCatalog.Seeds) == "table" and FarmingCatalog.Seeds or {})
-local fruitItems = if type(FarmingCatalog.GetFruitItems) == "function" then (FarmingCatalog.GetFruitItems() or {}) else (type(FarmingCatalog.Fruits) == "table" and FarmingCatalog.Fruits or {})
+local function get_farming_items(toolCategory: string, kind: string)
+	local items = {}
+
+	for _, itemDefinition in ipairs(ToolItemCatalog.GetItemsByToolCategory(toolCategory) or {}) do
+		if itemDefinition.Kind == kind then
+			items[#items + 1] = itemDefinition
+		end
+	end
+
+	return items
+end
+
+local seedItems = get_farming_items("Seeds", "Seed")
+local fruitItems = get_farming_items("Fruits", "Fruit")
 local itemDefinitionsByKind = {
 	Seed = seedItems,
 	Fruit = fruitItems,
@@ -257,10 +269,6 @@ local function get_inventory_path(kind: string): string
 end
 
 local function get_item_count(bucket, itemId): number
-	if type(FarmingCatalog.GetItemCount) == "function" then
-		return FarmingCatalog.GetItemCount(bucket, itemId)
-	end
-
 	if type(bucket) ~= "table" then
 		return 0
 	end

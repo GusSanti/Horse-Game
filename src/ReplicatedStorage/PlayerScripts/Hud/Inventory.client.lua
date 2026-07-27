@@ -48,7 +48,7 @@ local CATEGORY_BUTTON_NAMES = {
 local CATEGORY_TOOL_CATEGORIES = {
     Utility = { "Water", "Grooming", "Misc", "Medicine" },
     Seeds = { "Seeds" },
-    Foods = { "Food" },
+    Foods = { "Food", "Fruits" },
 }
 
 local RELEVANT_INVENTORY_PATHS = {
@@ -78,7 +78,6 @@ local DETAILS_VIEWPORT_CONFIG = {
 }
 
 -- VARIABLES
-local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
@@ -740,6 +739,10 @@ local function get_farming_render_source(itemDefinition)
     return FarmingUtility.GetViewportAsset(itemDefinition) or FarmingUtility.GetItemAsset(itemDefinition)
 end
 
+local function is_farming_item_definition(itemDefinition)
+    return itemDefinition ~= nil and (itemDefinition.Kind == "Seed" or itemDefinition.Kind == "Fruit")
+end
+
 local function find_named_asset(root, searchNames)
     if not root then return nil end
 
@@ -880,7 +883,8 @@ local function render_viewport(viewportFrame, entry, cameraConfig, cameraKey)
 
     local farmingDefinition = entry and entry.FarmingDefinition
     if not farmingDefinition and entry and type(entry.ItemId) == "string" then
-        farmingDefinition = FarmingCatalog.GetItem(entry.ItemId)
+        local itemDefinition = ToolItemCatalog.GetItemDefinition(entry.ItemId)
+        farmingDefinition = if is_farming_item_definition(itemDefinition) then itemDefinition else nil
     end
 
     if farmingDefinition then
@@ -997,25 +1001,8 @@ local function push_tool_category_entries(entries, seenEntryKeys, toolCategory)
         if count <= 0 and not isDefaultItem then continue end
 
         seenEntryKeys[entryKey] = true
-        entries[#entries + 1] = create_item_entry(itemDefinition, FarmingCatalog.GetItem(itemId), count)
-    end
-end
-
-local function push_missing_farming_entries(entries, seenEntryKeys, farmingItems, inventoryPath)
-    local bucket = DataUtility.client.get(inventoryPath)
-    for _, farmingDefinition in ipairs(farmingItems or {}) do
-        local entryKey = get_entry_key_from_item_id(farmingDefinition.ItemId)
-        if not entryKey or seenEntryKeys[entryKey] then continue end
-
-        local count = get_bucket_item_count(bucket, farmingDefinition.ItemId)
-        if count <= 0 then continue end
-
-        seenEntryKeys[entryKey] = true
-        entries[#entries + 1] = create_item_entry(
-            ToolItemCatalog.GetItemDefinition(farmingDefinition.ItemId),
-            farmingDefinition,
-            count
-        )
+        local farmingDefinition = if is_farming_item_definition(itemDefinition) then itemDefinition else nil
+        entries[#entries + 1] = create_item_entry(itemDefinition, farmingDefinition, count)
     end
 end
 
@@ -1039,10 +1026,6 @@ local function build_category_entries(categoryId)
 
     if categoryId == "Utility" then
         push_default_generic_entries(entries, seenEntryKeys)
-    elseif categoryId == "Seeds" then
-        push_missing_farming_entries(entries, seenEntryKeys, FarmingCatalog.GetSeedItems(), "Inventory.Seeds")
-    elseif categoryId == "Foods" then
-        push_missing_farming_entries(entries, seenEntryKeys, FarmingCatalog.GetFruitItems(), "Inventory.Fruits")
     end
 
     table.sort(entries, function(left, right)
@@ -1057,7 +1040,7 @@ end
 local function resolve_tool_loadout_entry(tool)
     local farmingItemId = normalize_key(tool:GetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE))
     if farmingItemId then
-        local farmingDefinition = FarmingCatalog.GetItem(farmingItemId)
+        local farmingDefinition = ToolItemCatalog.GetItemDefinition(farmingItemId)
         if farmingDefinition then
             return {
                 EntryKey = get_entry_key_from_item_id(farmingDefinition.ItemId),
@@ -1078,7 +1061,7 @@ local function resolve_tool_loadout_entry(tool)
 
     local explicitItemId = normalize_key(tool:GetAttribute("ToolItemId"))
         or normalize_key(tool:GetAttribute("ItemId"))
-    local explicitDefinition = explicitItemId and (ToolItemCatalog.GetItemDefinition(explicitItemId) or FarmingCatalog.GetItem(explicitItemId))
+    local explicitDefinition = explicitItemId and ToolItemCatalog.GetItemDefinition(explicitItemId)
     if explicitDefinition then
         return {
             EntryKey = get_entry_key_from_item_id(explicitDefinition.ItemId),
