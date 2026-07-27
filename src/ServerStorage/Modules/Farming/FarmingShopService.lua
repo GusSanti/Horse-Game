@@ -16,6 +16,7 @@ local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
+local CropRarityUtility = require(Utility:WaitForChild("CropRarityUtility"))
 local InventoryLoadoutService = require(InventoryModules:WaitForChild("InventoryLoadoutService"))
 
 local FarmingShopService = {}
@@ -529,6 +530,7 @@ local function sanitize_tool(tool: Tool, itemDefinition)
 	tool:SetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE, itemDefinition.ItemId)
 	tool:SetAttribute(FarmingUtility.FARMING_CROP_ATTRIBUTE, itemDefinition.CropId)
 	tool:SetAttribute(FarmingUtility.FARMING_KIND_ATTRIBUTE, itemDefinition.Kind)
+	tool:SetAttribute(FarmingUtility.FARMING_RARITY_ATTRIBUTE, itemDefinition.Rarity or "")
 
 	local directHandle = tool:FindFirstChild("Handle")
 	local handle = FarmingUtility.GetToolHandle(tool)
@@ -576,7 +578,21 @@ local function clone_item_tool(itemDefinition): Tool
 
 	strip_tool_scripts(tool)
 	sanitize_tool(tool, itemDefinition)
+	CropRarityUtility.ApplyToInstance(tool, itemDefinition)
 	return tool
+end
+
+local function refresh_item_tool(tool: Tool, itemDefinition)
+	sanitize_tool(tool, itemDefinition)
+	CropRarityUtility.ApplyToInstance(tool, itemDefinition)
+end
+
+local function refresh_item_tools(tools: { Tool }, itemDefinition)
+	for _, tool in ipairs(tools) do
+		if tool and tool.Parent then
+			refresh_item_tool(tool, itemDefinition)
+		end
+	end
 end
 
 local function collect_matching_tools(container: Instance?, itemDefinition): {Tool}
@@ -624,6 +640,8 @@ local function sync_item_tools(player: Player, itemDefinition)
 	local backpackTools = remove_stale_seed_tools(collect_matching_tools(backpack, itemDefinition), itemDefinition)
 	local characterTools = remove_stale_seed_tools(collect_matching_tools(character, itemDefinition), itemDefinition)
 	local liveCount = #backpackTools + #characterTools
+	refresh_item_tools(backpackTools, itemDefinition)
+	refresh_item_tools(characterTools, itemDefinition)
 
 	if liveCount > desiredCount then
 		local overflow = liveCount - desiredCount
@@ -652,6 +670,7 @@ local function sync_item_tools(player: Player, itemDefinition)
 	local starterGear = player:FindFirstChild("StarterGear") or player:WaitForChild("StarterGear", 5)
 	if starterGear then
 		local starterTools = remove_stale_seed_tools(collect_matching_tools(starterGear, itemDefinition), itemDefinition)
+		refresh_item_tools(starterTools, itemDefinition)
 		if #starterTools > desiredCount then
 			for index = 1, #starterTools - desiredCount do
 				local tool = starterTools[#starterTools - index + 1]
@@ -880,7 +899,7 @@ end
 
 function FarmingShopService.SellFruit(player: Player, itemId)
 	local itemDefinition = resolve_item_definition(itemId, "Fruit")
-	if not itemDefinition then
+	if not itemDefinition or itemDefinition.CanSell == false then
 		return create_state_payload(player, false, "UnknownFruit", nil)
 	end
 

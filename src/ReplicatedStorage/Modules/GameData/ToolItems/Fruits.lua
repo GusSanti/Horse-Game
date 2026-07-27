@@ -1,5 +1,20 @@
 local Shared = require(script.Parent:WaitForChild("Shared"))
 
+local RARITY_CONFIGS = {
+	{
+		Name = "Gold",
+		SortOffset = 1,
+		VFXName = "StarsGold",
+		TextColor = Color3.fromRGB(255, 211, 64),
+	},
+	{
+		Name = "Diamond",
+		SortOffset = 2,
+		VFXName = "StarsDiamond",
+		TextColor = Color3.fromRGB(73, 191, 255),
+	},
+}
+
 local function push_unique(list, seen, value)
 	if type(value) ~= "string" or value == "" or seen[value] then
 		return
@@ -49,7 +64,36 @@ local function create_fruit(config)
 	})
 end
 
-return {
+local function create_rare_fruit(baseFruit, rarityConfig)
+	local rarityName = rarityConfig.Name
+	local rarityKey = string.lower(rarityName)
+
+	return Shared.CreateFruit({
+		ItemId = ("%s_%s"):format(baseFruit.ItemId, rarityKey),
+		CropId = baseFruit.CropId,
+		CropDisplayName = baseFruit.CropDisplayName,
+		DisplayName = ("%s %s"):format(baseFruit.DisplayName, rarityName),
+		ToolName = ("%s %s"):format(baseFruit.ToolName, rarityName),
+		Description = ("%s with %s rarity."):format(baseFruit.DisplayName, rarityName),
+		SellPrice = 0,
+		SortOrder = (baseFruit.SortOrder or 0) + rarityConfig.SortOffset,
+		HarvestYield = baseFruit.HarvestYield,
+		EffectsSummary = ("%s rarity farming produce"):format(rarityName),
+		AssetPath = baseFruit.AssetPath,
+		ViewportAssetPath = baseFruit.ViewportAssetPath,
+		LegacyInventoryItems = {},
+		LegacyToolNames = {},
+		Tags = { "Crop", "Farming", "Produce", "RareCrop", rarityName },
+		Rarity = rarityName,
+		RarityVFXName = rarityConfig.VFXName,
+		RarityColor = rarityConfig.TextColor,
+		BaseItemId = baseFruit.ItemId,
+		FarmingShopVisible = false,
+		CanSell = false,
+	})
+end
+
+local baseFruits = {
 	create_fruit({
 		ItemId = "beetroot_fruit",
 		CropId = "Beetroot",
@@ -143,3 +187,18 @@ return {
 		SellPrice = 4,
 	}),
 }
+
+local fruits = {}
+
+for _, baseFruit in ipairs(baseFruits) do
+	fruits[#fruits + 1] = baseFruit
+	baseFruit.RareItemIds = {}
+
+	for _, rarityConfig in ipairs(RARITY_CONFIGS) do
+		local rareFruit = create_rare_fruit(baseFruit, rarityConfig)
+		baseFruit.RareItemIds[rarityConfig.Name] = rareFruit.ItemId
+		fruits[#fruits + 1] = rareFruit
+	end
+end
+
+return fruits

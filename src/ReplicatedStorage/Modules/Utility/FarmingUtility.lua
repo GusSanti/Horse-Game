@@ -15,6 +15,7 @@ FarmingUtility.STAGE_FOLDER_NAME = "StagePlants"
 FarmingUtility.FARMING_ITEM_ATTRIBUTE = "FarmingItemId"
 FarmingUtility.FARMING_CROP_ATTRIBUTE = "FarmingCropId"
 FarmingUtility.FARMING_KIND_ATTRIBUTE = "FarmingToolKind"
+FarmingUtility.FARMING_RARITY_ATTRIBUTE = "FarmingRarity"
 FarmingUtility.MAX_STAGE = 4
 
 local function normalize_key(value): string?

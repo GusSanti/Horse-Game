@@ -12,6 +12,7 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
+local CropRarityUtility = require(Utility:WaitForChild("CropRarityUtility"))
 
 local PersistentToolService = {}
 
@@ -336,6 +337,17 @@ local function create_placeholder_tool(itemDefinition)
 	return tool
 end
 
+local function refresh_saved_item_tool(tool: Tool, itemDefinition)
+	ToolItemCatalog.ApplyToolMetadata(tool, itemDefinition)
+	tool.RequiresHandle = false
+	tool.CanBeDropped = false
+	tool:SetAttribute(MANAGED_TOOL_ATTRIBUTE, nil)
+	tool:SetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE, nil)
+	tool:SetAttribute(FarmingUtility.FARMING_CROP_ATTRIBUTE, nil)
+	tool:SetAttribute(FarmingUtility.FARMING_KIND_ATTRIBUTE, nil)
+	CropRarityUtility.ApplyToInstance(tool, itemDefinition)
+end
+
 local function clone_saved_item_tool(itemDefinition)
 	local template = get_item_tool_template(itemDefinition)
 	local tool = nil
@@ -349,13 +361,7 @@ local function clone_saved_item_tool(itemDefinition)
 		tool = create_placeholder_tool(itemDefinition)
 	end
 
-	ToolItemCatalog.ApplyToolMetadata(tool, itemDefinition)
-	tool.RequiresHandle = false
-	tool.CanBeDropped = false
-	tool:SetAttribute(MANAGED_TOOL_ATTRIBUTE, nil)
-	tool:SetAttribute(FarmingUtility.FARMING_ITEM_ATTRIBUTE, nil)
-	tool:SetAttribute(FarmingUtility.FARMING_CROP_ATTRIBUTE, nil)
-	tool:SetAttribute(FarmingUtility.FARMING_KIND_ATTRIBUTE, nil)
+	refresh_saved_item_tool(tool, itemDefinition)
 	return tool
 end
 
@@ -507,6 +513,12 @@ local function sync_saved_item_definition(player, itemDefinition, desiredCount)
 		return is_matching_saved_item_tool(tool, itemDefinition)
 	end)
 	local liveCount = #backpackTools + #characterTools
+	for _, tool in ipairs(backpackTools) do
+		refresh_saved_item_tool(tool, itemDefinition)
+	end
+	for _, tool in ipairs(characterTools) do
+		refresh_saved_item_tool(tool, itemDefinition)
+	end
 
 	if liveCount > desiredCount then
 		local overflow = liveCount - desiredCount
@@ -536,6 +548,9 @@ local function sync_saved_item_definition(player, itemDefinition, desiredCount)
 		local starterTools = collect_matching_tools(starterGear, function(tool)
 			return is_matching_saved_item_tool(tool, itemDefinition)
 		end)
+		for _, tool in ipairs(starterTools) do
+			refresh_saved_item_tool(tool, itemDefinition)
+		end
 
 		if #starterTools > desiredCount then
 			for index = 1, #starterTools - desiredCount do

@@ -1,10 +1,13 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 local ServerModules = script.Parent.Parent
 
+local FarmingCatalog = require(GameData:WaitForChild("FarmingCatalog"))
+local CropRarityUtility = require(Utility:WaitForChild("CropRarityUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
@@ -101,7 +104,8 @@ local function set_plant_attributes(instance: Instance, state)
 	instance:SetAttribute("FarmPlantOwnerUserId", state.OwnerUserId)
 	instance:SetAttribute("FarmCropId", state.Crop.CropId)
 	instance:SetAttribute("FarmSeedItemId", state.Crop.Seed.ItemId)
-	instance:SetAttribute("FarmFruitItemId", state.Crop.Fruit.ItemId)
+	instance:SetAttribute("FarmFruitItemId", state.HarvestItem.ItemId)
+	instance:SetAttribute("FarmCropRarity", state.Rarity or "")
 end
 
 local function get_crop_max_stage(cropDefinition): number
@@ -305,7 +309,7 @@ local function attach_harvest_prompt(state)
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "HarvestPrompt"
 	prompt.ActionText = "Colher"
-	prompt.ObjectText = state.Crop.Fruit.DisplayName
+	prompt.ObjectText = state.HarvestItem.DisplayName
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 10
 	prompt.RequiresLineOfSight = false
@@ -325,7 +329,7 @@ local function attach_harvest_prompt(state)
 			harvestHandle:Destroy()
 		end
 
-		FarmingShopService.AwardHarvest(player, state.Crop.Fruit)
+		FarmingShopService.AwardHarvest(player, state.HarvestItem)
 		QuestService.IncrementStat(player, "Stats.TotalCropsHarvested", 1)
 
 		clear_plant(state)
@@ -371,6 +375,7 @@ local function make_plant_harvestable(state)
 	state.NextWaterAt = nil
 	state.StageAdvanceAt = nil
 	destroy_water_indicator(state)
+	CropRarityUtility.ApplyToInstance(state.Model, state.HarvestItem)
 	attach_harvest_prompt(state)
 end
 
@@ -488,10 +493,14 @@ function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
 
 	nextPlantId += 1
 
+	local rarity = FarmingCatalog.RollHarvestRarity()
+	local harvestItem = FarmingCatalog.GetHarvestItem(cropDefinition, rarity) or cropDefinition.Fruit
 	local state = {
 		Id = nextPlantId,
 		OwnerUserId = player.UserId,
 		Crop = cropDefinition,
+		HarvestItem = harvestItem,
+		Rarity = rarity,
 		Soil = placement.Soil,
 		LocalPoint = placement.LocalPoint,
 		Stage = 0,

@@ -1700,6 +1700,14 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 		amountShadowLabel.Visible = showsQuantity
 	end
 
+	local rarityIcon = find_named_instance(slot, { "rarity" }, "ImageLabel", true)
+	if rarityIcon and rarityIcon:IsA("ImageLabel") then
+		local rarityKey = normalize_key(group.FarmingDefinition and group.FarmingDefinition.Rarity)
+		local rarityImage = if rarityKey == "diamond" or rarityKey == "gold" then "rbxassetid://71853979751019" else nil
+		rarityIcon.Image = rarityImage or ""
+		rarityIcon.Visible = rarityImage ~= nil
+	end
+
 	local viewportFrame = get_slot_viewport(slot)
 	local previewKey = get_preview_cache_key(group.Key, group.RenderSource, group.IsSeed == true)
 	if slot:GetAttribute("HotbarPreviewReady") ~= true or slot:GetAttribute("HotbarPreviewKey") ~= previewKey then

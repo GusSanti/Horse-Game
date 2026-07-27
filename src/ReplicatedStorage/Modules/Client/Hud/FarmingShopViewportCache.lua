@@ -5,6 +5,7 @@ local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local CropRarityUtility = require(Utility:WaitForChild("CropRarityUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 
 local FarmingShopViewportCache = {}
@@ -268,7 +269,8 @@ function FarmingShopViewportCache.ApplyToViewport(viewportFrame: ViewportFrame, 
 		return false
 	end
 
-	local cachedViewport = FarmingShopViewportCache.Get(itemDefinitionOrId)
+	local itemDefinition = resolve_item_definition(itemDefinitionOrId)
+	local cachedViewport = FarmingShopViewportCache.Get(itemDefinition)
 	if not cachedViewport then
 		return false
 	end
@@ -294,6 +296,7 @@ function FarmingShopViewportCache.ApplyToViewport(viewportFrame: ViewportFrame, 
 	viewportFrame.BackgroundTransparency = 1
 	viewportFrame.Ambient = Color3.fromRGB(220, 220, 220)
 	viewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
+	CropRarityUtility.ApplyToViewport(viewportFrame, itemDefinition)
 
 	return true
 end

@@ -6,6 +6,24 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 
 local FarmingCatalog = {}
 
+local rarityDefinitions = {
+	Diamond = {
+		Name = "Diamond",
+		Chance = 1,
+	},
+	Gold = {
+		Name = "Gold",
+		Chance = 0.05,
+	},
+}
+
+local rarityRollOrder = {
+	rarityDefinitions.Diamond,
+	rarityDefinitions.Gold,
+}
+
+local rarityRandom = Random.new()
+
 local function normalize_key(value): string?
 	if type(value) ~= "string" then
 		return nil
@@ -71,6 +89,17 @@ local function build_crop_definition(config)
 	local fruitItemId = config.FruitItemId or ("%s_fruit"):format(string.lower(cropId))
 	local seedItem = resolve_linked_item(cropId, seedItemId, "Seed")
 	local fruitItem = resolve_linked_item(cropId, fruitItemId, "Fruit")
+	local rareFruits = {}
+
+	for rarityName, rareItemId in pairs(fruitItem.RareItemIds or {}) do
+		local rareFruit = resolve_linked_item(cropId, rareItemId, "Fruit")
+		assert(
+			rareFruit.Rarity == rarityName,
+			("Farming crop '%s' rare item '%s' must use rarity '%s'"):format(cropId, rareItemId, rarityName)
+		)
+		rareFruits[rarityName] = rareFruit
+	end
+
 	local displayName = config.DisplayName or fruitItem.CropDisplayName or fruitItem.DisplayName or cropId
 	local stageFolderName = config.StageFolderName or cropId
 	local stageAssetPrefix = config.StageAssetPrefix or ("SM_%s"):format(cropId)
@@ -87,6 +116,7 @@ local function build_crop_definition(config)
 		FruitItemId = fruitItem.ItemId,
 		Seed = seedItem,
 		Fruit = fruitItem,
+		RareFruits = rareFruits,
 		StageFolderName = stageFolderName,
 		StageFolderAliases = build_stage_folder_aliases(cropId, config.StageFolderAliases),
 		StageAssetPrefix = stageAssetPrefix,
@@ -223,6 +253,7 @@ table.sort(seedItems, function(left, right)
 end)
 
 FarmingCatalog.Crops = cropDefinitions
+FarmingCatalog.RarityDefinitions = rarityDefinitions
 
 function FarmingCatalog.NormalizeKey(value): string?
 	return normalize_key(value)
@@ -238,6 +269,50 @@ end
 
 function FarmingCatalog.GetSeedItems()
 	return seedItems
+end
+
+function FarmingCatalog.GetRarityDefinition(rarityName)
+	if type(rarityName) ~= "string" then
+		return nil
+	end
+
+	for name, rarityDefinition in pairs(rarityDefinitions) do
+		if normalize_key(name) == normalize_key(rarityName) then
+			return rarityDefinition
+		end
+	end
+
+	return nil
+end
+
+function FarmingCatalog.RollHarvestRarity(randomGenerator)
+	local roll = if randomGenerator then randomGenerator:NextNumber() else rarityRandom:NextNumber()
+	local cumulativeChance = 0
+
+	for _, rarityDefinition in ipairs(rarityRollOrder) do
+		cumulativeChance += rarityDefinition.Chance
+		if roll < cumulativeChance then
+			return rarityDefinition.Name
+		end
+	end
+
+	return nil
+end
+
+function FarmingCatalog.GetHarvestItem(cropDefinitionOrId, rarityName)
+	local cropDefinition = if type(cropDefinitionOrId) == "table"
+		then cropDefinitionOrId
+		else FarmingCatalog.GetCrop(cropDefinitionOrId)
+	if not cropDefinition then
+		return nil
+	end
+
+	local rarityDefinition = FarmingCatalog.GetRarityDefinition(rarityName)
+	if rarityDefinition then
+		return cropDefinition.RareFruits[rarityDefinition.Name] or cropDefinition.Fruit
+	end
+
+	return cropDefinition.Fruit
 end
 
 return FarmingCatalog

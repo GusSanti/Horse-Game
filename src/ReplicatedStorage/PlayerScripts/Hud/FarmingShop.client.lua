@@ -106,7 +106,7 @@ local function get_farming_items(toolCategory: string, kind: string)
 	local items = {}
 
 	for _, itemDefinition in ipairs(ToolItemCatalog.GetItemsByToolCategory(toolCategory) or {}) do
-		if itemDefinition.Kind == kind then
+		if itemDefinition.Kind == kind and itemDefinition.FarmingShopVisible ~= false then
 			items[#items + 1] = itemDefinition
 		end
 	end

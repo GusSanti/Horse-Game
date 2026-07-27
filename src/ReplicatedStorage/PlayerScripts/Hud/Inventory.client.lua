@@ -29,6 +29,8 @@ local DETAILS_IMAGE_NAMES = { "HorseImage", "ItemImage", "ImageItem", "ImageLabe
 local DETAILS_TEXT_NAMES = { "DetailsTX", "DetailTX", "DescriptionTX" }
 local DETAILS_NAME_NAMES = { "ItemNameTX", "ItemTX", "ItemName" }
 local DETAILS_NAME_SHADOW_NAMES = { "ItemNameShadowTX" }
+local RARITY_LABEL_NAMES = { "Rarity" }
+local RARITY_ICON_NAMES = { "rarity" }
 local BUTTONS_ROOT_NAMES = { "ButtonsFR" }
 local EQUIP_BUTTON_NAMES = { "EquipBT" }
 local UNEQUIP_BUTTON_NAMES = { "UnequipBT" }
@@ -37,6 +39,16 @@ local EQUIP_SHADOW_TEXT_NAMES = { "EquipShadowTX" }
 local UNEQUIP_TEXT_NAMES = { "UnequipTX", "DeleteTX" }
 local UNEQUIP_SHADOW_TEXT_NAMES = { "UnequipShadowTX", "DeleteShadowTX" }
 local CLOSE_BUTTON_NAMES = { "ExitBT", "CloseBT" }
+
+local DEFAULT_RARITY_COLORS = {
+    Diamond = Color3.fromRGB(73, 191, 255),
+    Gold = Color3.fromRGB(255, 211, 64),
+}
+
+local RARITY_ICON_IMAGE_BY_KEY = {
+    diamond = "rbxassetid://71853979751019",
+    gold = "rbxassetid://71853979751019",
+}
 
 local CATEGORY_BUTTON_NAMES = {
     Utility = { "Utility" },
@@ -130,6 +142,15 @@ local function normalize_key(value)
     return normalizedValue
 end
 
+local function get_rarity_icon_image(rarity)
+    local rarityKey = normalize_key(rarity)
+    if not rarityKey then
+        return nil
+    end
+
+    return RARITY_ICON_IMAGE_BY_KEY[rarityKey]
+end
+
 local function normalize_inventory_path(path)
     if type(path) ~= "string" then return nil end
     local trimmedPath = string.gsub(path, "^%s*(.-)%s*$", "%1")
@@ -194,6 +215,16 @@ end
 
 local function find_text_label(root, aliases, recursive)
     return find_named_instance(root, aliases, "TextLabel", recursive)
+end
+
+local function set_rarity_icon(root, rarity)
+    local rarityIcon = find_named_instance(root, RARITY_ICON_NAMES, "ImageLabel", true)
+    local rarityImage = get_rarity_icon_image(rarity)
+
+    if rarityIcon and rarityIcon:IsA("ImageLabel") then
+        rarityIcon.Image = rarityImage or ""
+        rarityIcon.Visible = rarityImage ~= nil
+    end
 end
 
 local function find_viewport_frame(root)
@@ -699,6 +730,9 @@ local function create_item_entry(itemDefinition, farmingDefinition, count)
         FarmingDefinition = farmingDefinition,
         DisplayName = itemDefinition and itemDefinition.DisplayName or farmingDefinition and farmingDefinition.DisplayName or "",
         Description = get_item_description(itemDefinition, farmingDefinition),
+        Rarity = (itemDefinition and itemDefinition.Rarity) or (farmingDefinition and farmingDefinition.Rarity),
+        RarityColor = (itemDefinition and itemDefinition.RarityColor)
+            or (farmingDefinition and farmingDefinition.RarityColor),
         Count = displayCount,
         SortOrder = (itemDefinition and itemDefinition.SortOrder)
             or (farmingDefinition and farmingDefinition.SortOrder)
@@ -959,6 +993,15 @@ local function render_details(entry)
     if currentUi.DetailsNameLabel then currentUi.DetailsNameLabel.Text = nameText end
     if currentUi.DetailsNameShadowLabel then currentUi.DetailsNameShadowLabel.Text = nameText end
     if currentUi.DetailsTextLabel then currentUi.DetailsTextLabel.Text = detailsText end
+    if currentUi.DetailsRarityLabel then
+        local rarity = entry and entry.Rarity or nil
+        currentUi.DetailsRarityLabel.Text = rarity or ""
+        currentUi.DetailsRarityLabel.TextColor3 = (entry and entry.RarityColor)
+            or DEFAULT_RARITY_COLORS[rarity]
+            or Color3.new(1, 1, 1)
+        currentUi.DetailsRarityLabel.Visible = rarity ~= nil
+    end
+    set_rarity_icon(currentUi.DetailsRoot, entry and entry.Rarity or nil)
 
     if currentUi.DetailsViewport then
         if entry then
@@ -1006,11 +1049,20 @@ local function configure_card(card, entry, layoutOrder)
 
     local nameLabel = find_text_label(card, ITEM_NAME_NAMES, true)
     local amountLabel = find_text_label(card, ITEM_AMOUNT_NAMES, true)
+    local rarityLabel = find_text_label(card, RARITY_LABEL_NAMES, true)
     local imageRoot = find_gui_object(card, ITEM_IMAGE_NAMES, true)
     local viewportFrame = find_viewport_frame(imageRoot or card)
 
     if nameLabel then nameLabel.Text = entry.DisplayName end
     if amountLabel then amountLabel.Text = ("x%d"):format(entry.Count) end
+    if rarityLabel then
+        rarityLabel.Text = entry.Rarity or ""
+        rarityLabel.TextColor3 = entry.RarityColor
+            or DEFAULT_RARITY_COLORS[entry.Rarity]
+            or Color3.new(1, 1, 1)
+        rarityLabel.Visible = entry.Rarity ~= nil
+    end
+    set_rarity_icon(card, entry.Rarity)
 
     return viewportFrame
 end
@@ -1188,6 +1240,7 @@ local function get_inventory_ui(inventoryRoot)
     local detailsNameLabel = find_text_label(detailsRoot, DETAILS_NAME_NAMES, true)
     local detailsNameShadowLabel = find_text_label(detailsRoot, DETAILS_NAME_SHADOW_NAMES, true)
     local detailsTextLabel = find_text_label(detailsRoot, DETAILS_TEXT_NAMES, true)
+    local detailsRarityLabel = find_text_label(detailsRoot, RARITY_LABEL_NAMES, true)
     local equipButton = find_gui_button(buttonsRoot, EQUIP_BUTTON_NAMES, true)
     local unequipButton = find_gui_button(buttonsRoot, UNEQUIP_BUTTON_NAMES, true)
 
@@ -1212,6 +1265,7 @@ local function get_inventory_ui(inventoryRoot)
         DetailsNameLabel = detailsNameLabel,
         DetailsNameShadowLabel = detailsNameShadowLabel,
         DetailsTextLabel = detailsTextLabel,
+        DetailsRarityLabel = detailsRarityLabel,
         EquipButton = equipButton,
         UnequipButton = unequipButton,
     }
