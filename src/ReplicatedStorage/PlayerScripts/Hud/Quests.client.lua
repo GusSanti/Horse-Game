@@ -2,14 +2,14 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local ClientModules = Modules:WaitForChild("Client")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
-local Services = Modules:WaitForChild("Services")
 local Utility = Modules:WaitForChild("Utility")
 
 local QuestCatalog = require(GameData:WaitForChild("QuestCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
-local QuestClient = require(Services:WaitForChild("QuestClient"))
+local QuestClient = require(ClientModules:WaitForChild("QuestClient"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 
 local localPlayer = Players.LocalPlayer
