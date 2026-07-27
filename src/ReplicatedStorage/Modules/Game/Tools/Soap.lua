@@ -9,6 +9,7 @@ local Utility: Folder = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 
 local SOAP_ITEM_ID = "soap"
 local MANAGED_TOOL_ATTRIBUTE = "InventoryManaged"
@@ -173,10 +174,12 @@ local soap = {
 		end
 
 		if horse.Needs and horse.Needs.Values and horse.Needs.Max then
+			local natureMultipliers = NatureCatalog.GetCareMultipliers(horse)
 			horse.Needs.Values.Cleanliness = 100
 			horse.Needs.LastUpdatedAt = now
 			horse.Needs.Values.Happiness = math.clamp(
-				(horse.Needs.Values.Happiness or 0) + math.max(2, math.floor(cleanBonus * 0.5)),
+				(horse.Needs.Values.Happiness or 0)
+					+ (math.max(2, math.floor(cleanBonus * 0.5)) * natureMultipliers.HappinessGain),
 				0,
 				horse.Needs.Max.Happiness or 100
 			)
@@ -196,8 +199,9 @@ local soap = {
 		end
 
 		if horse.Bond then
+			local friendshipMultiplier = NatureCatalog.GetCareMultipliers(horse).FriendshipGain
 			horse.Bond.Friendship = math.clamp(
-				(horse.Bond.Friendship or 0) + cleanBonus,
+				(horse.Bond.Friendship or 0) + (cleanBonus * friendshipMultiplier),
 				0,
 				horse.Bond.MaxFriendship or 100
 			)

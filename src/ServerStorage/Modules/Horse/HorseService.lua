@@ -20,6 +20,7 @@ local STATUS_UPDATE_INTERVAL_SECONDS = 60
 ------------------//VARIABLES
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 local HorseBondService = require(Utility:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Utility:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
@@ -50,6 +51,7 @@ end
 
 local function create_horse_record(definition, instanceId: number, ownerUserId: number, options)
 	local obtainedAt = options.ObtainedAt or os.time()
+	local natureId = options.NatureId or NatureCatalog.RollNatureId()
 
 	return {
 		Id = ("horse_%d"):format(instanceId),
@@ -63,6 +65,7 @@ local function create_horse_record(definition, instanceId: number, ownerUserId: 
 		LaunchGroup = definition.LaunchGroup,
 		PlaceholderModelKey = definition.PlaceholderModelKey,
 		Description = definition.Description,
+		Nature = NatureCatalog.BuildRecord(natureId, options.NatureSource or options.Source or "HorseCreation", obtainedAt),
 		OwnerUserId = ownerUserId,
 		Acquisition = {
 			Source = options.Source or "Unknown",
@@ -371,10 +374,11 @@ local function refresh_owned_horse_statuses(player: Player, horses, horseId: str
 	local totalBondXP = 0
 
 	local function refresh_horse(horse): ()
+		local natureChanged = NatureCatalog.NormalizeHorseNature(horse, now)
 		local horseChanged = HorseCareService.RefreshHorse(horse, now)
 		local bondChanged, xpGained = HorseBondService.ApplyPassiveProgress(horse, now)
 
-		changed = changed or horseChanged or bondChanged
+		changed = changed or natureChanged or horseChanged or bondChanged
 		totalBondXP += xpGained or 0
 	end
 
@@ -617,7 +621,9 @@ local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 end
 
 local function build_horse_summary(horse, equippedHorseId, now: number?)
-	local movement = horse.Movement or {}
+	local movement, naturePerformance = NatureCatalog.GetEffectiveMovement(horse)
+	local nature = NatureCatalog.GetHorseNatureDefinition(horse)
+	local natureRecord = type(horse.Nature) == "table" and horse.Nature or {}
 	local stats = horse.Stats or {}
 	local readiness = evaluate_race_readiness(horse, now)
 
@@ -628,6 +634,13 @@ local function build_horse_summary(horse, equippedHorseId, now: number?)
 		DisplayName = horse.DisplayName or horse.CatalogId or horse.Id,
 		Nickname = horse.Nickname or "",
 		PlaceholderModelKey = horse.PlaceholderModelKey or "",
+		NatureId = nature and nature.Id or "",
+		Nature = nature and NatureCatalog.BuildRecord(
+			nature.Id,
+			natureRecord.Source or "Generated",
+			natureRecord.RolledAt or now
+		) or nil,
+		NaturePerformance = naturePerformance,
 		RaceAffinity = movement.RaceAffinity or 0.5,
 		SprintSpeed = movement.SprintSpeed or 24,
 		Acceleration = movement.Acceleration or 0.8,
@@ -664,6 +677,7 @@ local function build_horse_reveal_payload(horse)
 		DisplayName = definition.DisplayName,
 		Rarity = definition.Rarity,
 		ModelKey = definition.PlaceholderModelKey,
+		Nature = horse.Nature,
 		Source = horse.Acquisition and horse.Acquisition.Source or "",
 	}
 end
@@ -736,7 +750,9 @@ function HorseService.GetPlayerHorse(player: Player, horseId: string?): (any?, s
 		end
 
 		local requestedHorse = horses.Owned[horseId]
-		if requestedHorse and HorseCareService.RefreshHorse(requestedHorse, os.time()) then
+		local now = os.time()
+		local natureChanged = requestedHorse and NatureCatalog.NormalizeHorseNature(requestedHorse, now)
+		if requestedHorse and (HorseCareService.RefreshHorse(requestedHorse, now) or natureChanged) then
 			DataUtility.server.set(player, "Horses", horses)
 		end
 
@@ -754,7 +770,9 @@ function HorseService.GetPlayerHorse(player: Player, horseId: string?): (any?, s
 	end
 
 	local horse = horses.Owned[resolvedHorseId]
-	if horse and HorseCareService.RefreshHorse(horse, os.time()) then
+	local now = os.time()
+	local natureChanged = horse and NatureCatalog.NormalizeHorseNature(horse, now)
+	if horse and (HorseCareService.RefreshHorse(horse, now) or natureChanged) then
 		DataUtility.server.set(player, "Horses", horses)
 	end
 
@@ -804,8 +822,13 @@ function HorseService.GetOwnedHorseSummaries(player)
 
 	local summaries = {}
 	local now = os.time()
+	local changed = false
 	for _, horse in ipairs(HorseService.GetOwnedHorses(player)) do
+		changed = NatureCatalog.NormalizeHorseNature(horse, now) or changed
 		summaries[#summaries + 1] = build_horse_summary(horse, horses.EquippedHorseId, now)
+	end
+	if changed then
+		DataUtility.server.set(player, "Horses", horses)
 	end
 
 	return summaries
@@ -1070,6 +1093,27 @@ end
 function HorseService.RefreshHorseStatuses(player: Player, horseId: string?): (boolean, string)
 	local horses = DataUtility.server.get(player, "Horses")
 	return refresh_owned_horse_statuses(player, horses, horseId)
+end
+
+function HorseService.GetEffectiveMovement(horse)
+	return NatureCatalog.GetEffectiveMovement(horse)
+end
+
+function HorseService.SetHorseNature(player: Player, horseId: string, natureId: string, source: string?)
+	local horses = DataUtility.server.get(player, "Horses")
+	local owned = horses and horses.Owned
+	local horse = owned and owned[horseId]
+	if not horse then
+		return nil, "HorseNotOwned"
+	end
+
+	if not NatureCatalog.GetDefinition(natureId) then
+		return nil, "UnknownNatureId"
+	end
+
+	NatureCatalog.SetHorseNature(horse, natureId, source or "NatureRoulette", os.time())
+	DataUtility.server.set(player, "Horses", horses)
+	return build_horse_summary(horse, horses.EquippedHorseId, os.time()), "NatureUpdated"
 end
 
 function HorseService.StartStatusDecayLoop(): ()

@@ -276,7 +276,7 @@ getHorseRouletteStateRemote.OnServerInvoke = function(player)
 	return HorseRouletteService.GetState(player)
 end
 
-rollHorseRouletteRemote.OnServerInvoke = function(player)
+rollHorseRouletteRemote.OnServerInvoke = function(player, request)
 	local hasAccess = AdminAccessService.HasAccess(player)
 	if not hasAccess then
 		return {
@@ -285,7 +285,7 @@ rollHorseRouletteRemote.OnServerInvoke = function(player)
 		}
 	end
 
-	return HorseRouletteService.Roll(player)
+	return HorseRouletteService.Roll(player, request)
 end
 
 restoreEquippedHorseNeedsRemote.OnServerInvoke = function(player)

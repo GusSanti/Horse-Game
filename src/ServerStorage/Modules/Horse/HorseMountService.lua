@@ -380,7 +380,7 @@ local function debug_mount_alignment_report(player, stage, payload)
 end
 
 local function build_horse_summary(horse)
-	local movement = horse and horse.Movement or {}
+	local movement = HorseService.GetEffectiveMovement(horse)
 
 	return {
 		Id = horse.Id,
@@ -389,6 +389,7 @@ local function build_horse_summary(horse)
 		Nickname = horse.Nickname or "",
 		CatalogId = horse.CatalogId,
 		PlaceholderModelKey = horse.PlaceholderModelKey or horse.VisualModelName or horse.CatalogId or "",
+		Nature = horse.Nature,
 		Movement = {
 			WalkSpeed = movement.WalkSpeed or 14,
 			TrotSpeed = movement.TrotSpeed or 18,

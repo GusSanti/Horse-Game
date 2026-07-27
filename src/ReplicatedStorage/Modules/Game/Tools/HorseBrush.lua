@@ -12,6 +12,7 @@ local HORSE_BRUSH_ITEM_ID = "horse_brush"
 ------------------//VARIABLES
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 
 local horseBrush = {
 	id = HORSE_BRUSH_ITEM_ID,
@@ -57,6 +58,7 @@ local horseBrush = {
 
 		local effects = itemDefinition.Effects or {}
 		local happinessGain = math.max(0, effects.HappinessGain or 0)
+			* NatureCatalog.GetCareMultipliers(horse).HappinessGain
 		local maxHappiness = horse.Needs.Max.Happiness or 100
 
 		horse.Needs.Values.Happiness = math.clamp(

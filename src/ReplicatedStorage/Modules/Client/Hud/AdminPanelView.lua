@@ -37,7 +37,7 @@ function AdminPanelView.build(context)
 		BackgroundColor3 = Color3.fromRGB(19, 27, 37),
 		BorderSizePixel = 0,
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(980, 610),
+		Size = UDim2.fromOffset(980, 700),
 		Parent = overlay,
 	})
 
@@ -188,11 +188,6 @@ function AdminPanelView.build(context)
 		Parent = tabBar,
 	})
 
-	horseTabButton.Visible = false
-	horseTabButton.Active = false
-	horseTabButton.Selectable = false
-	horseTabButton.AutoButtonColor = false
-
 	create("UICorner", {
 		CornerRadius = UDim.new(0, 12),
 		Parent = horseTabButton,
@@ -207,7 +202,7 @@ function AdminPanelView.build(context)
 		BackgroundColor3 = Color3.fromRGB(39, 53, 71),
 		BorderSizePixel = 0,
 		Font = Enum.Font.GothamBold,
-		Position = UDim2.fromOffset(128, 0),
+		Position = UDim2.fromOffset(264, 0),
 		Size = UDim2.fromOffset(126, 38),
 		Text = "Care",
 		TextColor3 = Color3.fromRGB(189, 202, 219),
@@ -484,11 +479,11 @@ function AdminPanelView.build(context)
 		Parent = rouletteShell,
 	})
 
-	create("TextLabel", {
+	local rouletteTitleLabel = create("TextLabel", {
 		Name = "HorseTitle",
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
-		Text = "Horse Roulette",
+		Text = "Roleta de Cavalo",
 		TextColor3 = Color3.fromRGB(244, 247, 253),
 		TextSize = 26,
 		TextXAlignment = Enum.TextXAlignment.Left,
@@ -497,11 +492,11 @@ function AdminPanelView.build(context)
 		Parent = rouletteShell,
 	})
 
-	create("TextLabel", {
+	local rouletteSubtitleLabel = create("TextLabel", {
 		Name = "HorseSubtitle",
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
-		Text = "The roulette slows down until it reveals the horse selected by the server.",
+		Text = "Gire um cavalo novo ou escolha um cavalo para trocar sua nature.",
 		TextColor3 = Color3.fromRGB(185, 199, 218),
 		TextSize = 14,
 		TextXAlignment = Enum.TextXAlignment.Left,
@@ -509,6 +504,45 @@ function AdminPanelView.build(context)
 		Size = UDim2.new(1, -280, 0, 18),
 		Parent = rouletteShell,
 	})
+
+	local rouletteModeHorseButton = create("TextButton", {
+		Name = "HorseModeButton",
+		BackgroundColor3 = Color3.fromRGB(76, 121, 163),
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		Position = UDim2.fromOffset(24, 76),
+		Size = UDim2.fromOffset(142, 34),
+		Text = "Novo Cavalo",
+		TextColor3 = Color3.fromRGB(245, 249, 255),
+		TextSize = 13,
+		Parent = rouletteShell,
+	})
+
+	create("UICorner", {
+		CornerRadius = UDim.new(0, 11),
+		Parent = rouletteModeHorseButton,
+	})
+
+	local rouletteModeNatureButton = create("TextButton", {
+		Name = "NatureModeButton",
+		BackgroundColor3 = Color3.fromRGB(39, 53, 71),
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		Position = UDim2.fromOffset(176, 76),
+		Size = UDim2.fromOffset(142, 34),
+		Text = "Nature",
+		TextColor3 = Color3.fromRGB(189, 202, 219),
+		TextSize = 13,
+		Parent = rouletteShell,
+	})
+
+	create("UICorner", {
+		CornerRadius = UDim.new(0, 11),
+		Parent = rouletteModeNatureButton,
+	})
+
+	rouletteModeHorseButton.Activated:Connect(context.onSelectHorseRouletteMode)
+	rouletteModeNatureButton.Activated:Connect(context.onSelectNatureRouletteMode)
 
 	local balanceBadge = create("Frame", {
 		Name = "BalanceBadge",
@@ -548,8 +582,8 @@ function AdminPanelView.build(context)
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundColor3 = Color3.fromRGB(17, 23, 32),
 		BorderSizePixel = 0,
-		Position = UDim2.new(0.5, 0, 0, 88),
-		Size = UDim2.fromOffset(560, 306),
+		Position = UDim2.new(0.5, 0, 0, 118),
+		Size = UDim2.fromOffset(560, 230),
 		Parent = rouletteShell,
 	})
 
@@ -641,7 +675,7 @@ function AdminPanelView.build(context)
 		TextColor3 = Color3.fromRGB(242, 246, 255),
 		TextSize = 24,
 		TextXAlignment = Enum.TextXAlignment.Center,
-		Position = UDim2.new(0.5, -240, 0, 414),
+		Position = UDim2.new(0.5, -240, 0, 354),
 		Size = UDim2.fromOffset(480, 28),
 		Parent = rouletteShell,
 	})
@@ -650,7 +684,7 @@ function AdminPanelView.build(context)
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundColor3 = Color3.fromRGB(42, 70, 48),
 		BorderSizePixel = 0,
-		Position = UDim2.new(0.5, 0, 0, 450),
+		Position = UDim2.new(0.5, 0, 0, 384),
 		Size = UDim2.fromOffset(140, 32),
 		Parent = rouletteShell,
 	})
@@ -678,6 +712,21 @@ function AdminPanelView.build(context)
 		Parent = rouletteRarityBadge,
 	})
 
+	local rouletteNatureDescriptionLabel = create("TextLabel", {
+		Name = "NatureDescription",
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		Text = "",
+		TextColor3 = Color3.fromRGB(202, 211, 224),
+		TextSize = 13,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.new(0.5, -310, 0, 420),
+		Size = UDim2.fromOffset(620, 38),
+		Visible = false,
+		Parent = rouletteShell,
+	})
+
 	local rouletteStatusLabel = create("TextLabel", {
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
@@ -685,7 +734,7 @@ function AdminPanelView.build(context)
 		TextColor3 = Color3.fromRGB(175, 228, 187),
 		TextSize = 14,
 		TextXAlignment = Enum.TextXAlignment.Center,
-		Position = UDim2.new(0.5, -240, 0, 494),
+		Position = UDim2.new(0.5, -240, 0, 460),
 		Size = UDim2.fromOffset(480, 18),
 		Parent = rouletteShell,
 	})
@@ -695,8 +744,8 @@ function AdminPanelView.build(context)
 		BackgroundColor3 = Color3.fromRGB(215, 121, 58),
 		BorderSizePixel = 0,
 		Font = Enum.Font.GothamBold,
-		Position = UDim2.new(0.5, 0, 0, 532),
-		Size = UDim2.fromOffset(270, 48),
+		Position = UDim2.new(0.5, 0, 0, 482),
+		Size = UDim2.fromOffset(270, 44),
 		Text = "Roletar - 500 Horseshoes",
 		TextColor3 = Color3.fromRGB(253, 247, 240),
 		TextSize = 16,
@@ -718,10 +767,46 @@ function AdminPanelView.build(context)
 		TextSize = 13,
 		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Center,
-		Position = UDim2.new(0.5, -240, 0, 584),
-		Size = UDim2.fromOffset(480, 18),
+		Position = UDim2.new(0.5, -310, 0, 530),
+		Size = UDim2.fromOffset(620, 16),
 		Parent = rouletteShell,
 	})
+
+	local rouletteHorseSelectorFrame = create("ScrollingFrame", {
+		Name = "HorseSelector",
+		BackgroundColor3 = Color3.fromRGB(20, 28, 39),
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(18, 118),
+		Size = UDim2.fromOffset(222, 230),
+		CanvasSize = UDim2.fromOffset(0, 0),
+		ScrollBarThickness = 5,
+		Visible = false,
+		Parent = rouletteShell,
+	})
+
+	create("UICorner", {
+		CornerRadius = UDim.new(0, 14),
+		Parent = rouletteHorseSelectorFrame,
+	})
+
+	local rouletteHorseSelectorLayout = create("UIListLayout", {
+		Padding = UDim.new(0, 7),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = rouletteHorseSelectorFrame,
+	})
+
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 8),
+		PaddingBottom = UDim.new(0, 8),
+		PaddingLeft = UDim.new(0, 8),
+		PaddingRight = UDim.new(0, 8),
+		Parent = rouletteHorseSelectorFrame,
+	})
+
+	rouletteHorseSelectorLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		rouletteHorseSelectorFrame.CanvasSize =
+			UDim2.fromOffset(0, rouletteHorseSelectorLayout.AbsoluteContentSize.Y + 16)
+	end)
 
 	local careContentFrame = create("Frame", {
 		Name = "CareContent",
@@ -836,6 +921,13 @@ function AdminPanelView.build(context)
 		EmptyStateLabel = emptyStateLabel,
 		GetAllButton = getAllButton,
 		RouletteBalanceLabel = rouletteBalanceLabel,
+		RouletteTitleLabel = rouletteTitleLabel,
+		RouletteSubtitleLabel = rouletteSubtitleLabel,
+		RouletteModeHorseButton = rouletteModeHorseButton,
+		RouletteModeNatureButton = rouletteModeNatureButton,
+		RouletteHorseSelectorFrame = rouletteHorseSelectorFrame,
+		RouletteHorseSelectorLayout = rouletteHorseSelectorLayout,
+		RouletteViewportCard = viewportCard,
 		RouletteViewportFrame = rouletteViewportFrame,
 		RouletteNameLabel = rouletteNameLabel,
 		RouletteRarityLabel = rouletteRarityLabel,
@@ -844,6 +936,7 @@ function AdminPanelView.build(context)
 		RouletteStatusLabel = rouletteStatusLabel,
 		RouletteRollButton = rouletteRollButton,
 		RouletteRuleLabel = rouletteRuleLabel,
+		RouletteNatureDescriptionLabel = rouletteNatureDescriptionLabel,
 		RouletteDimmer = rouletteDimmer,
 		RouletteRevealLabel = rouletteRevealLabel,
 		RouletteRevealScale = rouletteRevealScale,

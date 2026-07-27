@@ -7,6 +7,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 
 local STATUS_ORDER = {
 	"Happiness",
@@ -411,6 +412,10 @@ function HorseBondService.ApplyPassiveProgress(horse, now: number?): (boolean, n
 	end
 
 	if friendshipGained > 0 then
+		friendshipGained = math.max(
+			1,
+			friendshipGained * NatureCatalog.GetCareMultipliers(horse).FriendshipGain
+		)
 		local updatedFriendship = clamp_number(bond.Friendship + friendshipGained, 0, bond.MaxFriendship)
 		if updatedFriendship ~= bond.Friendship then
 			bond.Friendship = updatedFriendship

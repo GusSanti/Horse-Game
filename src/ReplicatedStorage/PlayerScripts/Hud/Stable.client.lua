@@ -11,6 +11,7 @@ local Utility = Modules:WaitForChild("Utility")
 local Trove = require(Libraries:WaitForChild("Trove"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 local HorseStatusBillboardConfig = require(GameData:WaitForChild("HorseStatusBillboardConfig"))
 local HorseBondService = require(Utility:WaitForChild("HorseBondService"))
 local HorseStatusService = require(Utility:WaitForChild("HorseStatusService"))
@@ -542,17 +543,24 @@ local function build_horse_details_text(horseId: string, horse): string
 
 	local rarity = definition and definition.Rarity or nil
 	local tier = definition and definition.Tier or nil
+	local nature = NatureCatalog.GetHorseNatureDefinition(horse)
+	local natureText = nature and ("Nature: %s"):format(nature.DisplayName) or nil
 
 	if type(rarity) == "string" and rarity ~= "" and type(tier) == "string" and tier ~= "" then
-		return ("%s | %s"):format(rarity, tier)
+		return natureText and ("%s | %s | %s"):format(rarity, tier, natureText)
+			or ("%s | %s"):format(rarity, tier)
 	end
 
 	if type(rarity) == "string" and rarity ~= "" then
-		return rarity
+		return natureText and ("%s | %s"):format(rarity, natureText) or rarity
 	end
 
 	if type(tier) == "string" and tier ~= "" then
-		return tier
+		return natureText and ("%s | %s"):format(tier, natureText) or tier
+	end
+
+	if natureText then
+		return natureText
 	end
 
 	if type(horse) == "table" and type(horse.CatalogId) == "string" and horse.CatalogId ~= "" then

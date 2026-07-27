@@ -5,6 +5,7 @@ local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local HorseService = require(script.Parent:WaitForChild("HorseService"))
@@ -48,6 +49,9 @@ local function build_state_payload(player)
 		Balance = balance,
 		FreeWhenZero = false,
 		Horses = HorseCatalog.GetRouletteHorseOptions(),
+		Natures = NatureCatalog.GetRouletteOptions(),
+		OwnedHorses = HorseService.GetOwnedHorseSummaries(player),
+		NaturePrice = NatureCatalog.RoulettePrice,
 		CanRoll = balance >= price,
 	}
 end
@@ -56,7 +60,88 @@ function HorseRouletteService.GetState(player)
 	return build_state_payload(player)
 end
 
-function HorseRouletteService.Roll(player)
+local function build_nature_payload(horse)
+	local nature = horse and horse.Nature
+	local definition = NatureCatalog.GetHorseNatureDefinition(horse)
+	if not definition then
+		return nil
+	end
+
+	return {
+		NatureId = definition.Id,
+		Id = definition.Id,
+		DisplayName = definition.DisplayName,
+		Rarity = definition.Rarity,
+		Description = definition.Description,
+		EffectText = definition.EffectText,
+		Source = type(nature) == "table" and nature.Source or "",
+		RolledAt = type(nature) == "table" and nature.RolledAt or 0,
+	}
+end
+
+function HorseRouletteService.RollNature(player, horseId)
+	if type(horseId) ~= "string" or horseId == "" then
+		return {
+			Success = false,
+			Code = "HorseMissing",
+			MessageCode = "HorseMissing",
+		}
+	end
+
+	if not HorseService.GetOwnedHorse(player, horseId) then
+		return {
+			Success = false,
+			Code = "HorseNotOwned",
+			MessageCode = "HorseNotOwned",
+		}
+	end
+
+	local price = NatureCatalog.RoulettePrice or 250
+	local balance = get_balance(player)
+	if balance < price then
+		return {
+			Success = false,
+			Code = "InsufficientFunds",
+			MessageCode = "InsufficientFunds",
+			PaidPrice = 0,
+			RemainingHorseshoes = balance,
+		}
+	end
+
+	balance -= price
+	DataUtility.server.set(player, "Currencies.Horseshoes", balance)
+
+	local natureId = NatureCatalog.RollNatureId()
+	local horseSummary, updateCode = HorseService.SetHorseNature(player, horseId, natureId, "NatureRoulette")
+	if not horseSummary then
+		DataUtility.server.set(player, "Currencies.Horseshoes", balance + price)
+		return {
+			Success = false,
+			Code = updateCode or "NatureUpdateFailed",
+			MessageCode = updateCode or "NatureUpdateFailed",
+			PaidPrice = 0,
+			RemainingHorseshoes = balance + price,
+		}
+	end
+
+	SoundUtility.PlayGameSFXForPlayer(player, "MoneyGet")
+	return {
+		Success = true,
+		Code = "NatureUpdated",
+		MessageCode = "NatureUpdated",
+		Mode = "Nature",
+		PaidPrice = price,
+		RemainingHorseshoes = balance,
+		Horse = horseSummary,
+		RolledNature = horseSummary.Nature,
+	}
+end
+
+function HorseRouletteService.Roll(player, request)
+	if type(request) == "table" and request.Mode == "Nature" then
+		return HorseRouletteService.RollNature(player, request.HorseId)
+	end
+
 	local price = HorseCatalog.RoulettePrice or 500
 	local balance = get_balance(player)
 
@@ -106,6 +191,7 @@ function HorseRouletteService.Roll(player)
 			PaidPrice = paidPrice,
 			RemainingHorseshoes = balance,
 			RolledHorse = rolledHorse,
+			RolledNature = build_nature_payload(grantedHorse),
 			GrantedHorseId = grantedHorse.Id,
 			LostBecauseNoSlot = false,
 			AlreadyOwnedCatalog = alreadyOwnedCatalog,

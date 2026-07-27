@@ -7,6 +7,7 @@ local ServerModules = script.Parent.Parent
 
 local CareItemCatalog = require(GameData:WaitForChild("CareItemCatalog"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
@@ -674,9 +675,11 @@ function HorseCareService.UseCareItem(player, horseId, itemId, tool)
 
 	local favoriteBonus = is_item_favorite(horse, itemDefinition) and 1 or 0
 	local overflowHappinessFactor = clamp_number(effects.OverflowHappinessFactor or 0.3, 0.1, 1)
+	local natureMultipliers = NatureCatalog.GetCareMultipliers(horse)
 	local happinessGain = (effects.HappinessGain or 0)
 		* ((1 - overflowShare) + (overflowHappinessFactor * overflowShare))
 		+ (favoriteBonus * 2)
+	happinessGain *= natureMultipliers.HappinessGain
 
 	values.Happiness = math.clamp(
 		(values.Happiness or 0) + happinessGain,
@@ -693,7 +696,11 @@ function HorseCareService.UseCareItem(player, horseId, itemId, tool)
 		maxValues.Health or 100
 	)
 
-	local friendshipGain = math.max(1, math.floor((effects.FriendshipGain or 1) * (overflowPressure > 0 and 0.6 or 1)))
+	local friendshipGain = math.max(1, (
+		(effects.FriendshipGain or 1)
+			* (overflowPressure > 0 and 0.6 or 1)
+			* natureMultipliers.FriendshipGain
+	))
 	if favoriteBonus > 0 then
 		friendshipGain += 1
 	end
@@ -770,8 +777,9 @@ function HorseCareService.UseMedicalItem(player, horseId, itemId, tool)
 		maxValues.Health or 100
 	)
 
+	local natureMultipliers = NatureCatalog.GetCareMultipliers(horse)
 	values.Happiness = math.clamp(
-		(values.Happiness or 0) + (effects.HappinessGain or 0),
+		(values.Happiness or 0) + ((effects.HappinessGain or 0) * natureMultipliers.HappinessGain),
 		0,
 		maxValues.Happiness or 100
 	)
@@ -780,7 +788,9 @@ function HorseCareService.UseMedicalItem(player, horseId, itemId, tool)
 	apply_overflow_relief(values, maxValues, effects.OverflowRelief)
 	add_health_over_time_effect(horse, itemDefinition, now)
 
-	local friendshipGain = math.max(1, effects.FriendshipGain or 1)
+	local friendshipGain = math.max(1, (
+		(effects.FriendshipGain or 1) * natureMultipliers.FriendshipGain
+	))
 	if type(horse.Bond) == "table" then
 		horse.Bond.Friendship = math.clamp(
 			(horse.Bond.Friendship or 0) + friendshipGain,

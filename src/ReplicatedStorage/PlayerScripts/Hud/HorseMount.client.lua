@@ -16,6 +16,7 @@ local HudModules = ClientModules:WaitForChild("Hud")
 
 local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
+local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 local Net = require(Libraries:WaitForChild("Net"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
@@ -1025,7 +1026,7 @@ end
 
 local function get_prediction_movement(horseId)
 	local horse = get_owned_horse_data(horseId)
-	local movement = type(horse) == "table" and horse.Movement or nil
+	local movement = type(horse) == "table" and NatureCatalog.GetEffectiveMovement(horse) or nil
 
 	return {
 		WalkSpeed = type(movement) == "table" and movement.WalkSpeed or 14,

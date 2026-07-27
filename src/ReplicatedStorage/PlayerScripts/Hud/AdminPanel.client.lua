@@ -20,6 +20,8 @@ local SCREEN_GUI_NAME = "AdminPanelGui"
 local ITEM_TAB_NAME = "Items"
 local HORSE_TAB_NAME = "Horses"
 local CARE_TAB_NAME = "Care"
+local HORSE_ROULETTE_MODE = "Horse"
+local NATURE_ROULETTE_MODE = "Nature"
 local STUDIO_ACCESS_OVERRIDE = RunService:IsStudio()
 
 local RARITY_STYLES = {
@@ -121,10 +123,15 @@ local selectedTabName = ITEM_TAB_NAME
 local categoryCatalog = {}
 local selectedCategoryName = nil
 local rouletteState = {
+	Mode = HORSE_ROULETTE_MODE,
 	Price = 500,
+	NaturePrice = 250,
 	Balance = 0,
 	FreeWhenZero = true,
 	Horses = {},
+	Natures = {},
+	OwnedHorses = {},
+	SelectedHorseId = nil,
 	SelectedIndex = 0,
 	IsRolling = false,
 }
@@ -133,6 +140,7 @@ local roulettePreview = {
 	WorldModel = nil,
 	Camera = nil,
 	Model = nil,
+	HorseId = nil,
 	Focus = Vector3.new(0, 3.5, 0),
 	CameraDistance = 14,
 	CameraHeight = 4.5,
@@ -162,6 +170,13 @@ local sectionTitleLabel
 local emptyStateLabel
 local getAllButton
 local rouletteBalanceLabel
+local rouletteTitleLabel
+local rouletteSubtitleLabel
+local rouletteModeHorseButton
+local rouletteModeNatureButton
+local rouletteHorseSelectorFrame
+local rouletteHorseSelectorLayout
+local rouletteViewportCard
 local rouletteViewportFrame
 local rouletteNameLabel
 local rouletteRarityLabel
@@ -170,6 +185,7 @@ local rouletteRarityStroke
 local rouletteStatusLabel
 local rouletteRollButton
 local rouletteRuleLabel
+local rouletteNatureDescriptionLabel
 local rouletteDimmer
 local rouletteRevealLabel
 local rouletteRevealScale
@@ -185,6 +201,9 @@ local fetch_roulette_state
 local select_roulette_horse_by_index
 local update_roulette_button
 local set_active_tab
+local set_roulette_mode
+local render_owned_horse_selector
+local update_tab_button_visual
 
 local function create(className, properties)
 	local instance = Instance.new(className)
@@ -256,10 +275,11 @@ local function clear_preview_world()
 	roulettePreview.WorldModel = nil
 	roulettePreview.Camera = nil
 	roulettePreview.Model = nil
+	roulettePreview.HorseId = nil
 end
 
-local function update_rarity_badge(horseOption)
-	local style = get_rarity_style(horseOption and horseOption.Rarity or nil)
+local function update_rarity_badge(rouletteOption)
+	local style = get_rarity_style(rouletteOption and rouletteOption.Rarity or nil)
 
 	if rouletteRarityBadge then
 		rouletteRarityBadge.BackgroundColor3 = style.Surface
@@ -271,7 +291,7 @@ local function update_rarity_badge(horseOption)
 
 	if rouletteRarityLabel then
 		rouletteRarityLabel.TextColor3 = style.Text
-		rouletteRarityLabel.Text = horseOption and string.upper(horseOption.Rarity or "Common") or "COMMON"
+		rouletteRarityLabel.Text = rouletteOption and string.upper(rouletteOption.Rarity or "Common") or "COMMON"
 	end
 
 	if rouletteCardStroke then
@@ -279,31 +299,87 @@ local function update_rarity_badge(horseOption)
 	end
 end
 
-local function mount_preview_model(horseOption)
+local function get_selected_owned_horse()
+	for _, horse in ipairs(rouletteState.OwnedHorses) do
+		if horse.Id == rouletteState.SelectedHorseId then
+			return horse
+		end
+	end
+
+	return nil
+end
+
+local function get_active_roulette_options()
+	if rouletteState.Mode == NATURE_ROULETTE_MODE then
+		return rouletteState.Natures
+	end
+
+	return rouletteState.Horses
+end
+
+local function get_active_roulette_price()
+	if rouletteState.Mode == NATURE_ROULETTE_MODE then
+		return rouletteState.NaturePrice
+	end
+
+	return rouletteState.Price
+end
+
+local function mount_preview_model(rouletteOption)
 	if not rouletteViewportFrame then
 		return
 	end
 
-	if not horseOption then
+	local previewHorse = rouletteOption
+	if rouletteState.Mode == NATURE_ROULETTE_MODE then
+		previewHorse = get_selected_owned_horse()
+	end
+
+	if not rouletteOption or not previewHorse then
 		clear_preview_world()
 		update_rarity_badge(nil)
 		if rouletteNameLabel then
-			rouletteNameLabel.Text = "No horse selected"
+			rouletteNameLabel.Text = rouletteState.Mode == NATURE_ROULETTE_MODE
+				and "Escolha um cavalo"
+				or "Nenhum cavalo selecionado"
+		end
+		if rouletteNatureDescriptionLabel then
+			rouletteNatureDescriptionLabel.Text = ""
 		end
 		return
 	end
 
 	if rouletteNameLabel then
-		rouletteNameLabel.Text = horseOption.DisplayName or horseOption.CatalogId
+		rouletteNameLabel.Text = rouletteOption.DisplayName
+			or rouletteOption.Name
+			or rouletteOption.CatalogId
+			or rouletteOption.NatureId
 	end
 
-	update_rarity_badge(horseOption)
+	if rouletteNatureDescriptionLabel then
+		rouletteNatureDescriptionLabel.Text = rouletteState.Mode == NATURE_ROULETTE_MODE
+			and ("%s\n%s"):format(
+				rouletteOption.Description or "",
+				rouletteOption.EffectText or ""
+			)
+			or ""
+	end
+
+	update_rarity_badge(rouletteOption)
+	local previewHorseId = previewHorse.Id or previewHorse.CatalogId
+	if rouletteState.Mode == NATURE_ROULETTE_MODE
+		and roulettePreview.Model
+		and roulettePreview.HorseId == previewHorseId
+	then
+		return
+	end
+
 	HorseViewportRenderer.QueueCatalog(
 		rouletteViewportFrame,
-		horseOption.CatalogId,
+		previewHorse.CatalogId,
 		HorseViewportRenderer.Presets.Admin,
 		{
-			ModelKey = horseOption.ModelKey,
+			ModelKey = previewHorse.ModelKey or previewHorse.PlaceholderModelKey,
 			Priority = rouletteState.IsRolling and 2 or 3,
 			Callback = function(success, scene)
 				if not success or not scene or not scene.Model then return end
@@ -318,6 +394,7 @@ local function mount_preview_model(horseOption)
 				roulettePreview.WorldModel = scene.WorldModel
 				roulettePreview.Camera = scene.Camera
 				roulettePreview.Model = model
+				roulettePreview.HorseId = previewHorseId
 				roulettePreview.Focus = Vector3.new(0, math.max(2.5, positionedSize.Y * 0.56), 0)
 				roulettePreview.CameraDistance = math.max(12, positionedSize.X * 1.45 + positionedSize.Z + 3.5)
 				roulettePreview.CameraHeight = math.max(3.8, positionedSize.Y * 0.33)
@@ -327,12 +404,16 @@ local function mount_preview_model(horseOption)
 end
 
 local function get_selected_roulette_horse()
-	return rouletteState.Horses[rouletteState.SelectedIndex]
+	return get_active_roulette_options()[rouletteState.SelectedIndex]
 end
 
-local function find_roulette_index(catalogId)
-	for index, horseOption in ipairs(rouletteState.Horses) do
-		if horseOption.CatalogId == catalogId then
+local function get_roulette_option_id(rouletteOption)
+	return rouletteOption and (rouletteOption.CatalogId or rouletteOption.NatureId or rouletteOption.Id)
+end
+
+local function find_roulette_index(optionId)
+	for index, rouletteOption in ipairs(get_active_roulette_options()) do
+		if get_roulette_option_id(rouletteOption) == optionId then
 			return index
 		end
 	end
@@ -353,14 +434,18 @@ update_roulette_button = function()
 		return
 	end
 
+	local activePrice = get_active_roulette_price()
+	local activeOptions = get_active_roulette_options()
 	local canFreeRoll = rouletteState.FreeWhenZero and rouletteState.Balance == 0
-	local hasPaidBalance = rouletteState.Balance >= rouletteState.Price
-	local hasMidrangeBalance = rouletteState.Balance > 0 and rouletteState.Balance < rouletteState.Price
-	local hasHorsePool = #rouletteState.Horses > 0
+	local hasPaidBalance = rouletteState.Balance >= activePrice
+	local hasMidrangeBalance = rouletteState.Balance > 0 and rouletteState.Balance < activePrice
+	local hasPool = #activeOptions > 0
+	local hasSelectedHorse = rouletteState.Mode ~= NATURE_ROULETTE_MODE or get_selected_owned_horse() ~= nil
 
 	local enabled = hasAccess
 		and (not rouletteState.IsRolling)
-		and hasHorsePool
+		and hasPool
+		and hasSelectedHorse
 		and (canFreeRoll or hasPaidBalance)
 
 	if rouletteState.IsRolling then
@@ -368,9 +453,13 @@ update_roulette_button = function()
 	elseif canFreeRoll then
 		rouletteRollButton.Text = "Roll for Free"
 	elseif hasMidrangeBalance then
-		rouletteRollButton.Text = "Insufficient balance"
+		rouletteRollButton.Text = "Saldo insuficiente"
+	elseif rouletteState.Mode == NATURE_ROULETTE_MODE and not hasSelectedHorse then
+		rouletteRollButton.Text = "Escolha um cavalo"
 	else
-		rouletteRollButton.Text = ("Roll - %d Horseshoes"):format(rouletteState.Price)
+		rouletteRollButton.Text = rouletteState.Mode == NATURE_ROULETTE_MODE
+			and ("Girar Nature - %d"):format(activePrice)
+			or ("Girar Cavalo - %d"):format(activePrice)
 	end
 
 	rouletteRollButton.Active = enabled
@@ -389,24 +478,25 @@ local function render_selected_roulette_horse()
 end
 
 select_roulette_horse_by_index = function(index)
-	if #rouletteState.Horses == 0 then
+	local activeOptions = get_active_roulette_options()
+	if #activeOptions == 0 then
 		rouletteState.SelectedIndex = 0
 		render_selected_roulette_horse()
 		return
 	end
 
-	rouletteState.SelectedIndex = math.clamp(index, 1, #rouletteState.Horses)
+	rouletteState.SelectedIndex = math.clamp(index, 1, #activeOptions)
 	render_selected_roulette_horse()
 end
 
-local function apply_roulette_reveal(horseOption, response)
-	local style = get_rarity_style(horseOption and horseOption.Rarity or nil)
-	local headline = "New horse"
+local function apply_roulette_reveal(rouletteOption, response)
+	local style = get_rarity_style(rouletteOption and rouletteOption.Rarity or nil)
+	local headline = rouletteState.Mode == NATURE_ROULETTE_MODE and "Nova nature" or "Novo cavalo"
 
 	if response.LostBecauseNoSlot then
-		headline = "Stable full, horse lost"
+		headline = "Estábulo cheio, cavalo perdido"
 	elseif response.AlreadyOwnedCatalog then
-		headline = "Duplicate"
+		headline = "Duplicado"
 	end
 
 	if rouletteRevealLabel then
@@ -460,24 +550,39 @@ local function apply_roulette_reveal(horseOption, response)
 	end
 
 	if response.LostBecauseNoSlot then
-		set_roulette_status("Your stable was full. The horse was lost.", true)
+		set_roulette_status("Seu estábulo estava cheio. O cavalo foi perdido.", true)
+	elseif rouletteState.Mode == NATURE_ROULETTE_MODE then
+		local selectedHorse = get_selected_owned_horse()
+		set_roulette_status(("%s agora tem a nature %s."):format(
+			selectedHorse and selectedHorse.Name or "O cavalo",
+			rouletteOption.DisplayName
+		), false)
 	elseif response.AlreadyOwnedCatalog then
-		set_roulette_status(("You rolled %s again."):format(horseOption.DisplayName), false)
+		set_roulette_status(("Você tirou %s novamente."):format(rouletteOption.DisplayName), false)
 	else
-		set_roulette_status(("You won %s."):format(horseOption.DisplayName), false)
+		local rolledNature = response.RolledNature
+		set_roulette_status(rolledNature
+			and ("Você ganhou %s com a nature %s."):format(
+				rouletteOption.DisplayName,
+				rolledNature.DisplayName or rolledNature.Id
+			)
+			or ("Você ganhou %s."):format(rouletteOption.DisplayName), false)
 	end
 end
 
 local function play_roulette_spin(response)
-	local finalHorse = response and response.RolledHorse or nil
-	if not finalHorse or #rouletteState.Horses == 0 then
+	local activeOptions = get_active_roulette_options()
+	local finalOption = response and (
+		rouletteState.Mode == NATURE_ROULETTE_MODE and response.RolledNature or response.RolledHorse
+	) or nil
+	if not finalOption or #activeOptions == 0 then
 		rouletteState.IsRolling = false
 		update_roulette_button()
 		set_roulette_status("Could not show the roulette result.", true)
 		return
 	end
 
-	local finalIndex = find_roulette_index(finalHorse.CatalogId) or 1
+	local finalIndex = find_roulette_index(get_roulette_option_id(finalOption)) or 1
 	local currentIndex = rouletteState.SelectedIndex > 0 and rouletteState.SelectedIndex or 1
 
 	rouletteState.IsRolling = true
@@ -499,9 +604,9 @@ local function play_roulette_spin(response)
 		else
 			local attempts = 0
 			repeat
-				currentIndex = (currentIndex % #rouletteState.Horses) + 1
+				currentIndex = (currentIndex % #activeOptions) + 1
 				attempts += 1
-			until currentIndex ~= finalIndex or stepIndex >= (#SPIN_DELAYS - 4) or attempts > #rouletteState.Horses
+			until currentIndex ~= finalIndex or stepIndex >= (#SPIN_DELAYS - 4) or attempts > #activeOptions
 		end
 
 		select_roulette_horse_by_index(currentIndex)
@@ -511,8 +616,17 @@ local function play_roulette_spin(response)
 	task.wait(1.2)
 
 	rouletteState.Balance = tonumber(response.RemainingHorseshoes) or rouletteState.Balance
+	if rouletteState.Mode == NATURE_ROULETTE_MODE and response.Horse then
+		for index, horse in ipairs(rouletteState.OwnedHorses) do
+			if horse.Id == response.Horse.Id then
+				rouletteState.OwnedHorses[index] = response.Horse
+				break
+			end
+		end
+		render_owned_horse_selector()
+	end
 	refresh_roulette_balance_label()
-	apply_roulette_reveal(get_selected_roulette_horse() or finalHorse, response)
+	apply_roulette_reveal(get_selected_roulette_horse() or finalOption, response)
 
 	if rouletteDimmer then
 		rouletteDimmer.Visible = false
@@ -522,39 +636,161 @@ local function play_roulette_spin(response)
 	update_roulette_button()
 end
 
+render_owned_horse_selector = function()
+	if not rouletteHorseSelectorFrame then
+		return
+	end
+
+	clear_children(rouletteHorseSelectorFrame, function(child)
+		return child:IsA("TextButton")
+	end)
+
+	for _, horse in ipairs(rouletteState.OwnedHorses) do
+		local selected = horse.Id == rouletteState.SelectedHorseId
+		local nature = horse.Nature
+		local button = create("TextButton", {
+			Name = horse.Id,
+			BackgroundColor3 = selected and Color3.fromRGB(76, 121, 163) or Color3.fromRGB(35, 46, 61),
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, -16, 0, 58),
+			Font = Enum.Font.Gotham,
+			Text = "",
+			Parent = rouletteHorseSelectorFrame,
+		})
+
+		create("UICorner", {
+			CornerRadius = UDim.new(0, 10),
+			Parent = button,
+		})
+
+		create("TextLabel", {
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamBold,
+			Text = horse.Name or horse.DisplayName or horse.Id,
+			TextColor3 = Color3.fromRGB(241, 246, 255),
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Position = UDim2.fromOffset(10, 8),
+			Size = UDim2.new(1, -20, 0, 18),
+			Parent = button,
+		})
+
+		create("TextLabel", {
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham,
+			Text = nature and ("Nature atual: %s"):format(nature.DisplayName or nature.Id) or "Sem nature",
+			TextColor3 = Color3.fromRGB(184, 200, 220),
+			TextSize = 12,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Position = UDim2.fromOffset(10, 31),
+			Size = UDim2.new(1, -20, 0, 16),
+			Parent = button,
+		})
+
+		button.Activated:Connect(function()
+			if rouletteState.IsRolling then
+				return
+			end
+
+			rouletteState.SelectedHorseId = horse.Id
+			local natureId = horse.Nature and (horse.Nature.NatureId or horse.Nature.Id)
+			rouletteState.SelectedIndex = find_roulette_index(natureId) or 1
+			render_owned_horse_selector()
+			render_selected_roulette_horse()
+			update_roulette_button()
+		end)
+	end
+end
+
+set_roulette_mode = function(mode)
+	if rouletteState.IsRolling then
+		return
+	end
+
+	rouletteState.Mode = mode == NATURE_ROULETTE_MODE and NATURE_ROULETTE_MODE or HORSE_ROULETTE_MODE
+	local onNature = rouletteState.Mode == NATURE_ROULETTE_MODE
+
+	if rouletteModeHorseButton then
+		update_tab_button_visual(rouletteModeHorseButton, not onNature)
+	end
+	if rouletteModeNatureButton then
+		update_tab_button_visual(rouletteModeNatureButton, onNature)
+	end
+	if rouletteHorseSelectorFrame then
+		rouletteHorseSelectorFrame.Visible = onNature
+	end
+	if rouletteNatureDescriptionLabel then
+		rouletteNatureDescriptionLabel.Visible = onNature
+	end
+	if rouletteViewportCard then
+		rouletteViewportCard.Position = onNature and UDim2.new(0, 596, 0, 118) or UDim2.new(0.5, 0, 0, 118)
+		rouletteViewportCard.Size = onNature and UDim2.fromOffset(500, 230) or UDim2.fromOffset(560, 230)
+	end
+	if rouletteTitleLabel then
+		rouletteTitleLabel.Text = onNature and "Roleta de Nature" or "Roleta de Cavalo"
+	end
+	if rouletteSubtitleLabel then
+		rouletteSubtitleLabel.Text = onNature
+			and "Escolha um cavalo à esquerda e gire uma nova nature."
+			or "Gire para receber um cavalo novo, já com sua própria nature."
+	end
+
+	if onNature then
+		if not get_selected_owned_horse() then
+			rouletteState.SelectedHorseId = rouletteState.OwnedHorses[1] and rouletteState.OwnedHorses[1].Id or nil
+		end
+		local selectedHorse = get_selected_owned_horse()
+		local natureId = selectedHorse and selectedHorse.Nature
+			and (selectedHorse.Nature.NatureId or selectedHorse.Nature.Id)
+		rouletteState.SelectedIndex = find_roulette_index(natureId) or 1
+	else
+		rouletteState.SelectedIndex = math.clamp(rouletteState.SelectedIndex, 1, math.max(1, #rouletteState.Horses))
+	end
+
+	render_owned_horse_selector()
+	render_selected_roulette_horse()
+	update_roulette_button()
+
+	if rouletteRuleLabel then
+		rouletteRuleLabel.Text = onNature
+			and ("Trocar a nature custa %d Horseshoes e substitui a anterior."):format(rouletteState.NaturePrice)
+			or ("Cada cavalo custa %d Horseshoes e já vem com uma nature."):format(rouletteState.Price)
+	end
+end
+
 local function render_roulette_state(response)
-	local currentCatalogId = get_selected_roulette_horse() and get_selected_roulette_horse().CatalogId or nil
+	local currentOptionId = get_roulette_option_id(get_selected_roulette_horse())
 
 	rouletteState.Price = tonumber(response.Price) or rouletteState.Price
+	rouletteState.NaturePrice = tonumber(response.NaturePrice) or rouletteState.NaturePrice
 	rouletteState.Balance = tonumber(response.Balance) or rouletteState.Balance
 	rouletteState.FreeWhenZero = response.FreeWhenZero == true
 	rouletteState.Horses = type(response.Horses) == "table" and response.Horses or {}
+	rouletteState.Natures = type(response.Natures) == "table" and response.Natures or {}
+	rouletteState.OwnedHorses = type(response.OwnedHorses) == "table" and response.OwnedHorses or {}
 	rouletteHorseByCatalogId = {}
 
 	for _, horseOption in ipairs(rouletteState.Horses) do
 		rouletteHorseByCatalogId[horseOption.CatalogId] = horseOption
 	end
 
-	if rouletteRuleLabel then
-		rouletteRuleLabel.Text = ("Admins with 0 Horseshoes roll for free. Normal cost: %d."):format(rouletteState.Price)
-	end
-
 	refresh_roulette_balance_label()
 
-	if #rouletteState.Horses == 0 then
+	local activeOptions = get_active_roulette_options()
+	if #activeOptions == 0 then
 		rouletteState.SelectedIndex = 0
 		render_selected_roulette_horse()
 		update_roulette_button()
 		return
 	end
 
-	local targetIndex = currentCatalogId and find_roulette_index(currentCatalogId) or nil
+	local targetIndex = currentOptionId and find_roulette_index(currentOptionId) or nil
 	if not targetIndex then
 		targetIndex = 1
 	end
 
 	select_roulette_horse_by_index(targetIndex)
-	update_roulette_button()
+	set_roulette_mode(rouletteState.Mode)
 end
 
 fetch_roulette_state = function()
@@ -798,7 +1034,7 @@ fetch_catalog = function()
 	set_item_status("Categories loaded.", false)
 end
 
-local function update_tab_button_visual(button, selected)
+update_tab_button_visual = function(button, selected)
 	if not button then
 		return
 	end
@@ -949,13 +1185,20 @@ local function build_panel()
 				return
 			end
 
-			local canFreeRoll = rouletteState.FreeWhenZero and rouletteState.Balance == 0
-			if rouletteState.Balance > 0 and rouletteState.Balance < rouletteState.Price then
-				set_roulette_status("You need 500 Horseshoes, or 0 for a free roll.", true)
+			local activePrice = get_active_roulette_price()
+			local selectedHorse = get_selected_owned_horse()
+			if rouletteState.Mode == NATURE_ROULETTE_MODE and not selectedHorse then
+				set_roulette_status("Escolha um cavalo antes de girar a nature.", true)
 				return
 			end
 
-			if not canFreeRoll and rouletteState.Balance < rouletteState.Price then
+			local canFreeRoll = rouletteState.FreeWhenZero and rouletteState.Balance == 0
+			if rouletteState.Balance > 0 and rouletteState.Balance < activePrice then
+				set_roulette_status(("Você precisa de %d Horseshoes."):format(activePrice), true)
+				return
+			end
+
+			if not canFreeRoll and rouletteState.Balance < activePrice then
 				set_roulette_status("Not enough Horseshoes for the roulette.", true)
 				return
 			end
@@ -966,7 +1209,11 @@ local function build_panel()
 				return
 			end
 
-			local success, response = invoke_remote(rouletteRollRemote)
+			local request = rouletteState.Mode == NATURE_ROULETTE_MODE and {
+				Mode = NATURE_ROULETTE_MODE,
+				HorseId = selectedHorse.Id,
+			} or nil
+			local success, response = invoke_remote(rouletteRollRemote, request)
 			if not success then
 				set_roulette_status("Could not reach the server.", true)
 				return
@@ -977,7 +1224,7 @@ local function build_panel()
 					rouletteState.Balance = tonumber(response.RemainingHorseshoes) or rouletteState.Balance
 					refresh_roulette_balance_label()
 					update_roulette_button()
-					set_roulette_status("You need 500 Horseshoes, or 0 for a free roll.", true)
+					set_roulette_status(("Você precisa de %d Horseshoes."):format(activePrice), true)
 				else
 					set_roulette_status("Could not complete the roulette roll.", true)
 				end
@@ -985,6 +1232,12 @@ local function build_panel()
 			end
 
 			task.spawn(play_roulette_spin, response)
+		end,
+		onSelectHorseRouletteMode = function()
+			set_roulette_mode(HORSE_ROULETTE_MODE)
+		end,
+		onSelectNatureRouletteMode = function()
+			set_roulette_mode(NATURE_ROULETTE_MODE)
 		end,
 		onRestoreEquippedHorse = function()
 			if not hasAccess then
@@ -1042,6 +1295,13 @@ local function build_panel()
 	emptyStateLabel = refs.EmptyStateLabel
 	getAllButton = refs.GetAllButton
 	rouletteBalanceLabel = refs.RouletteBalanceLabel
+	rouletteTitleLabel = refs.RouletteTitleLabel
+	rouletteSubtitleLabel = refs.RouletteSubtitleLabel
+	rouletteModeHorseButton = refs.RouletteModeHorseButton
+	rouletteModeNatureButton = refs.RouletteModeNatureButton
+	rouletteHorseSelectorFrame = refs.RouletteHorseSelectorFrame
+	rouletteHorseSelectorLayout = refs.RouletteHorseSelectorLayout
+	rouletteViewportCard = refs.RouletteViewportCard
 	rouletteViewportFrame = refs.RouletteViewportFrame
 	rouletteNameLabel = refs.RouletteNameLabel
 	rouletteRarityLabel = refs.RouletteRarityLabel
@@ -1050,6 +1310,7 @@ local function build_panel()
 	rouletteStatusLabel = refs.RouletteStatusLabel
 	rouletteRollButton = refs.RouletteRollButton
 	rouletteRuleLabel = refs.RouletteRuleLabel
+	rouletteNatureDescriptionLabel = refs.RouletteNatureDescriptionLabel
 	rouletteDimmer = refs.RouletteDimmer
 	rouletteRevealLabel = refs.RouletteRevealLabel
 	rouletteRevealScale = refs.RouletteRevealScale

@@ -55,6 +55,7 @@ local rewardGui = nil
 local rewardOverlay = nil
 local rewardViewport = nil
 local rewardNameLabel = nil
+local rewardNatureLabel = nil
 
 local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName)
 local horseRemotes = gameplayRemotes:WaitForChild(NetworkConfig.Horse.FolderName)
@@ -196,7 +197,7 @@ local function build_reward_gui()
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		BackgroundTransparency = 1,
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(420, 380),
+		Size = UDim2.fromOffset(500, 430),
 		Parent = rewardOverlay,
 	})
 
@@ -235,6 +236,26 @@ local function build_reward_gui()
 	create("UITextSizeConstraint", {
 		MaxTextSize = 36,
 		Parent = rewardNameLabel,
+	})
+
+	rewardNatureLabel = create("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundColor3 = Color3.fromRGB(25, 31, 42),
+		BackgroundTransparency = 0.15,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0.5, 0, 0, 345),
+		Size = UDim2.fromOffset(470, 72),
+		Font = Enum.Font.GothamBold,
+		Text = "",
+		TextColor3 = Color3.fromRGB(238, 221, 164),
+		TextSize = 17,
+		TextWrapped = true,
+		Parent = content,
+	})
+
+	create("UICorner", {
+		CornerRadius = UDim.new(0, 16),
+		Parent = rewardNatureLabel,
 	})
 end
 
@@ -480,10 +501,20 @@ local function cleanup_reveal_state()
 	end
 end
 
-local function show_reward_result(horseOption)
+local function show_reward_result(horseOption, nature)
 	build_reward_gui()
 	populate_horse_viewport(rewardViewport, horseOption, RESULT_CAMERA_CONFIG, "reward")
 	rewardNameLabel.Text = horseOption.DisplayName or horseOption.CatalogId
+	if rewardNatureLabel then
+		rewardNatureLabel.Visible = nature ~= nil
+		if nature then
+			rewardNatureLabel.Text = ("Nature: %s • %s\n%s"):format(
+				nature.DisplayName or nature.Id or "Unknown",
+				nature.Rarity or "Common",
+				nature.EffectText or nature.Description or ""
+			)
+		end
+	end
 	show_reward_gui()
 end
 
@@ -539,7 +570,7 @@ local function finish_reveal(pendingReveal, finalHorseOption)
 		currentUi.Root.Visible = false
 	end
 
-	show_reward_result(finalHorseOption)
+	show_reward_result(finalHorseOption, pendingReveal.Nature)
 	task.wait(RESULT_DISPLAY_SECONDS)
 	hide_reward_gui()
 	acknowledge_reveal(pendingReveal.HorseId)
