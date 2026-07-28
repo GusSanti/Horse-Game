@@ -23,6 +23,7 @@ local MANAGED_INVENTORY_PATHS = {
 	["Inventory.Consumables.Grooming"] = true,
 	["Inventory.Consumables.Misc"] = true,
 	["Inventory.Consumables.Medical"] = true,
+	["Inventory.Tack"] = true,
 }
 
 local TOOL_COLOR_BY_CATEGORY = {
@@ -31,6 +32,7 @@ local TOOL_COLOR_BY_CATEGORY = {
 	Grooming = Color3.fromRGB(225, 157, 188),
 	Misc = Color3.fromRGB(201, 201, 201),
 	Medicine = Color3.fromRGB(121, 205, 140),
+	Tack = Color3.fromRGB(150, 117, 86),
 }
 
 local function normalize_key(value): string?
@@ -348,6 +350,7 @@ local function track_player(player: Player)
 		"Inventory.Consumables.Grooming",
 		"Inventory.Consumables.Misc",
 		"Inventory.Consumables.Medical",
+		"Inventory.Tack",
 	}
 
 	for _, inventoryPath in ipairs(inventoryPaths) do

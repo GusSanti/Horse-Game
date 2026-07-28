@@ -467,6 +467,9 @@ function queue_refresh(): ()
 		if not equippedTool or not definition or not itemId then
 			return
 		end
+		if definition.target == "StableDirt" then
+			return
+		end
 
 		local promptConfig = definition.prompt or {}
 		local promptToken = activePromptToken

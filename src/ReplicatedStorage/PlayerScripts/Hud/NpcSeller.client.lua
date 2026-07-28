@@ -23,6 +23,7 @@ local cardConnections = {}
 local zoneState = {
 	Cowboy = false,
 	Doctor = false,
+	TackShop = false,
 }
 
 local SHOP_TABS = {
@@ -32,6 +33,9 @@ local SHOP_TABS = {
 	},
 	Doctor = {
 		{ Category = "Medicine", Label = "Medicine" },
+	},
+	TackShop = {
+		{ Category = "Tack", Label = "Tack" },
 	},
 }
 
@@ -97,12 +101,21 @@ local function populate_icon(card, item)
 	end
 	local worldModel = Instance.new("WorldModel")
 	worldModel.Parent = viewport
-	model.Parent = worldModel
+	local displayObject = model
+	if not model:IsA("Model") and not model:IsA("BasePart") then
+		local wrapper = Instance.new("Model")
+		wrapper.Name = item.ItemId .. "Preview"
+		wrapper.Parent = worldModel
+		model.Parent = wrapper
+		displayObject = wrapper
+	else
+		model.Parent = worldModel
+	end
 	local boundsCFrame, boundsSize
-	if model:IsA("Model") then
-		boundsCFrame, boundsSize = model:GetBoundingBox()
-	elseif model:IsA("BasePart") then
-		boundsCFrame, boundsSize = model.CFrame, model.Size
+	if displayObject:IsA("Model") then
+		boundsCFrame, boundsSize = displayObject:GetBoundingBox()
+	elseif displayObject:IsA("BasePart") then
+		boundsCFrame, boundsSize = displayObject.CFrame, displayObject.Size
 	else
 		return
 	end

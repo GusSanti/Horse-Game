@@ -8,6 +8,7 @@ local Utility = Modules:WaitForChild("Utility")
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
+local StableCleaningConfig = require(GameData:WaitForChild("StableCleaningConfig"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 
 local DEFAULT_STATUS_MAX = 100
@@ -180,9 +181,10 @@ local function get_decay_per_hour(horse, statusName: string): number
 	local needs = horse.Needs or {}
 	local decayPerHour = needs.DecayPerHour or {}
 	local value = decayPerHour[statusName]
+	local stableMultiplier = StableCleaningConfig.GetDecayMultiplier(horse, statusName)
 
 	if type(value) == "number" then
-		return math.max(0, value * NatureCatalog.GetCareMultipliers(horse).NeedDecay)
+		return math.max(0, value * NatureCatalog.GetCareMultipliers(horse).NeedDecay * stableMultiplier)
 	end
 
 	local definition = get_definition_for_horse(horse)
@@ -190,6 +192,7 @@ local function get_decay_per_hour(horse, statusName: string): number
 		0,
 		get_definition_status_value(definition, "DecayPerHour", statusName, 0)
 			* NatureCatalog.GetCareMultipliers(horse).NeedDecay
+			* stableMultiplier
 	)
 end
 

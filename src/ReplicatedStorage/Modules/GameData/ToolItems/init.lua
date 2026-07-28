@@ -213,6 +213,7 @@ function ToolItems.ApplyToolMetadata(tool, itemDefinition)
 	tool:SetAttribute("PlaceholderPriceLabel", itemDefinition.PriceLabel or "")
 	tool:SetAttribute("PlaceholderDescription", itemDefinition.Description or "")
 	tool:SetAttribute("ShopId", itemDefinition.ShopId or "")
+	tool:SetAttribute("EquipmentType", itemDefinition.EquipmentType or "")
 	return tool
 end
 

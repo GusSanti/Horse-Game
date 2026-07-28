@@ -8,6 +8,7 @@ local ServerModules = script.Parent.Parent
 local CareItemCatalog = require(GameData:WaitForChild("CareItemCatalog"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
+local StableCleaningConfig = require(GameData:WaitForChild("StableCleaningConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
@@ -576,23 +577,27 @@ function HorseCareService.RefreshHorse(horse, now)
 	end
 
 	local updatedValues = {}
+	local effectiveDecayPerHour = {}
 	local modifiersByNeed = {}
 	local shouldClearModifierByNeed = {}
 
 	for _, needKey in ipairs(TRACKED_NEEDS) do
 		local modifier, shouldClearModifier = get_active_modifier(needs, needKey, lastUpdatedAt, now)
 		local currentValue = values[needKey] or 0
+		local stableMultiplier = StableCleaningConfig.GetDecayMultiplier(horse, needKey)
+		local effectiveDecay = (decayPerHour[needKey] or 0) * stableMultiplier
 
 		modifiersByNeed[needKey] = modifier
 		shouldClearModifierByNeed[needKey] = shouldClearModifier
+		effectiveDecayPerHour[needKey] = effectiveDecay
 		updatedValues[needKey] = clamp_need_value(
 			needKey,
-			apply_decay(currentValue, decayPerHour[needKey] or 0, lastUpdatedAt, now, modifier),
+			apply_decay(currentValue, effectiveDecay, lastUpdatedAt, now, modifier),
 			maxValues
 		)
 	end
 
-	apply_zero_need_penalties(updatedValues, decayPerHour, lastUpdatedAt, now, modifiersByNeed, maxValues)
+	apply_zero_need_penalties(updatedValues, effectiveDecayPerHour, lastUpdatedAt, now, modifiersByNeed, maxValues)
 
 	for _, needKey in ipairs(TRACKED_NEEDS) do
 		local currentValue = values[needKey] or 0

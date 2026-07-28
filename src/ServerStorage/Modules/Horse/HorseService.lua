@@ -22,6 +22,7 @@ local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
 local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
 local HorseBondService = require(Utility:WaitForChild("HorseBondService"))
+local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
 local HorseStatusService = require(Utility:WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
@@ -109,6 +110,12 @@ local function create_horse_record(definition, instanceId: number, ownerUserId: 
 			LastMedicatedAt = 0,
 			LastGroomedAt = 0,
 			LastCleanedAt = 0,
+		},
+		StableCare = {
+			Dirt = {},
+			NextDirtId = 1,
+			NextDirtAt = 0,
+			LastStableCleanedAt = 0,
 		},
 		Equipment = {
 			SaddleItemId = "",
@@ -621,7 +628,7 @@ local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 end
 
 local function build_horse_summary(horse, equippedHorseId, now: number?)
-	local movement, naturePerformance = NatureCatalog.GetEffectiveMovement(horse)
+	local movement, naturePerformance, saddleDefinition = HorseEquipmentUtility.GetEffectiveMovement(horse)
 	local nature = NatureCatalog.GetHorseNatureDefinition(horse)
 	local natureRecord = type(horse.Nature) == "table" and horse.Nature or {}
 	local stats = horse.Stats or {}
@@ -658,6 +665,12 @@ local function build_horse_summary(horse, equippedHorseId, now: number?)
 		RaceBlockedStatus = readiness.BlockedStatus,
 		RaceBlockedStatusDisplay = readiness.BlockedStatusDisplay,
 		RaceBlockedPercent = readiness.BlockedPercent,
+		SaddleItemId = saddleDefinition and saddleDefinition.ItemId or "",
+		SaddleDisplayName = saddleDefinition and saddleDefinition.DisplayName or "",
+		SaddleSprintBonus = saddleDefinition
+			and saddleDefinition.SaddleBonuses
+			and saddleDefinition.SaddleBonuses.SprintSpeedAdd
+			or 0,
 	}
 end
 
@@ -1096,7 +1109,7 @@ function HorseService.RefreshHorseStatuses(player: Player, horseId: string?): (b
 end
 
 function HorseService.GetEffectiveMovement(horse)
-	return NatureCatalog.GetEffectiveMovement(horse)
+	return HorseEquipmentUtility.GetEffectiveMovement(horse)
 end
 
 function HorseService.SetHorseNature(player: Player, horseId: string, natureId: string, source: string?)

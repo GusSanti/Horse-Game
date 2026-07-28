@@ -212,6 +212,8 @@ function ToolItemCatalog.ApplyToolMetadata(tool, itemDefinition)
 		tool:SetAttribute("UseType", itemDefinition.UseType)
 	end
 
+	tool:SetAttribute("EquipmentType", itemDefinition.EquipmentType or "")
+
 	return tool
 end
 
