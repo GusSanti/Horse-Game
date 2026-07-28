@@ -4,7 +4,11 @@ return {
 	Shared.CreateFood({
 		ItemId = "hay_bale",
 		DisplayName = "Hay Bale",
+		ToolName = "HaybaleTool",
 		Description = "Basic hay that fills the stomach well, but keeps excitement low.",
+		ShopId = "Cowboy",
+		ShopCategory = "Misc",
+		EquipOnPurchase = true,
 		Price = 1,
 		PriceLabel = "1 coin",
 		SortOrder = 10,

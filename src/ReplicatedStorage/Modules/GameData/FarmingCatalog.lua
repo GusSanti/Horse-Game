@@ -9,7 +9,7 @@ local FarmingCatalog = {}
 local rarityDefinitions = {
 	Diamond = {
 		Name = "Diamond",
-		Chance = 1,
+		Chance = 0.02,
 	},
 	Gold = {
 		Name = "Gold",

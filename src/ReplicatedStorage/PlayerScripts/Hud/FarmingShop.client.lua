@@ -276,6 +276,24 @@ local function get_item_count(bucket, itemId): number
 	return bucket[itemId] or 0
 end
 
+local function get_visible_item_definitions(kind: string)
+	local itemDefinitions = itemDefinitionsByKind[kind]
+	if kind ~= "Fruit" then
+		return itemDefinitions
+	end
+
+	local inventoryBucket = DataUtility.client.get(get_inventory_path(kind)) or {}
+	local visibleItemDefinitions = {}
+
+	for _, itemDefinition in ipairs(itemDefinitions or {}) do
+		if get_item_count(inventoryBucket, itemDefinition.ItemId) > 0 then
+			visibleItemDefinitions[#visibleItemDefinitions + 1] = itemDefinition
+		end
+	end
+
+	return visibleItemDefinitions
+end
+
 local function set_button_enabled(button: GuiButton?, isEnabled: boolean)
 	if not button then
 		return
@@ -636,7 +654,7 @@ local function apply_manual_shop_control(panel: ShopPanel)
 end
 
 local function start_panel_build(panel: ShopPanel)
-	local itemDefinitions = itemDefinitionsByKind[panel.Kind]
+	local itemDefinitions = get_visible_item_definitions(panel.Kind)
 	if not itemDefinitions or panel.BuildStarted or panel.BuildCompleted then
 		return
 	end
@@ -880,6 +898,10 @@ local function bind_ui(ui: ShopUi)
 	end)
 
 	currentUiConnections[#currentUiConnections + 1] = DataUtility.client.bind("Inventory.Fruits", function()
+		if currentUi then
+			reset_panel(currentUi.FruitPanel)
+			start_panel_build(currentUi.FruitPanel)
+		end
 		refresh_kind("Fruit")
 	end)
 

@@ -5,6 +5,7 @@ return {
 		ShopId = "Cowboy",
 		ItemId = "fresh_bucket",
 		DisplayName = "Fresh Bucket",
+		IconImage = "rbxassetid://120519406655185",
 		Description = "Basic water with reliable thirst recovery and no extra frills.",
 		Price = 1,
 		PriceLabel = "1 coin",

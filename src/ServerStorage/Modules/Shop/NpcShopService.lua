@@ -62,7 +62,8 @@ local function purchase(player, shopId, itemId)
 	DataUtility.server.set(player, inventoryPath, bucket)
 	DataUtility.server.set(player, "Currencies.Horseshoes", horseshoes - price)
 
-	local autoEquipped = select(1, InventoryLoadoutService.TryAutoEquipNewItem(player, item.ItemId, count))
+	local autoEquipPreviousCount = if item.EquipOnPurchase == true then 0 else count
+	local autoEquipped = select(1, InventoryLoadoutService.TryAutoEquipNewItem(player, item.ItemId, autoEquipPreviousCount))
 	if not autoEquipped then
 		ConsumableToolService.SyncPlayerTools(player)
 	end

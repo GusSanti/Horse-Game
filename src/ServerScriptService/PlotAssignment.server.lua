@@ -15,6 +15,7 @@ local HORSE_FOLDER_NAME = "HorseFolder"
 local SLOT_PROMPT_PART_NAME = "Proximity"
 local SLOT_PROMPT_ACTION_TEXT = "Buy"
 local SLOT_PROMPT_HOLD_DURATION = 0
+local TELEPORT_TO_STABLE_EVENT_NAME = "TeleportToStable"
 
 type PlotData = {
 	instance: Instance,
@@ -30,6 +31,7 @@ local StableDictionary = require(Modules:WaitForChild("Dictionary"):WaitForChild
 local DataUtility = require(Modules:WaitForChild("Utility"):WaitForChild("DataUtility"))
 local HorseService = require(HorseModules:WaitForChild("HorseService"))
 local Trove = require(Libraries:WaitForChild("Trove"))
+local Net = require(Libraries:WaitForChild("Net"))
 
 local stablesFolder: Instance = workspace:WaitForChild(STABLES_FOLDER_NAME)
 local assignedPlotByPlayer: {[Player]: PlotData} = {}
@@ -307,6 +309,15 @@ local function teleport_character_to_plot(player: Player, character: Model): ()
 	sync_plot_horses(player)
 end
 
+local function teleport_player_to_plot(player: Player): ()
+	local character = player.Character
+	if not character then
+		return
+	end
+
+	teleport_character_to_plot(player, character)
+end
+
 ------------------//MAIN FUNCTIONS
 local function on_character_added(player: Player, character: Model): ()
 	task.defer(teleport_character_to_plot, player, character)
@@ -362,6 +373,8 @@ end
 for _, player: Player in Players:GetPlayers() do
 	on_player_added(player)
 end
+
+Net.Event[TELEPORT_TO_STABLE_EVENT_NAME]:Connect(teleport_player_to_plot)
 
 Players.PlayerAdded:Connect(on_player_added)
 Players.PlayerRemoving:Connect(on_player_removing)

@@ -31,7 +31,7 @@ local SHOP_ACTION_FUNCTION_NAME = "FarmingShopAction"
 local SEED_INVENTORY_PATH = "Inventory.Seeds"
 local FRUIT_INVENTORY_PATH = "Inventory.Fruits"
 local SEED_TOOL_VERSION_ATTRIBUTE = "FarmingSeedToolVersion"
-local SEED_TOOL_VERSION = 1
+local SEED_TOOL_VERSION = 2
 local SEED_TOOL_PACKET_COLOR = Color3.fromRGB(227, 197, 148)
 local SEED_TOOL_EDGE_COLOR = Color3.fromRGB(117, 83, 52)
 local SEED_TOOL_STRIPE_COLOR = Color3.fromRGB(248, 231, 190)
@@ -395,10 +395,85 @@ local function weld_seed_tool_part(part: BasePart, handle: BasePart)
 		return
 	end
 
+	for _, child in ipairs(part:GetChildren()) do
+		if child:IsA("WeldConstraint")
+			and (
+				(child.Part0 == handle and child.Part1 == part)
+				or (child.Part0 == part and child.Part1 == handle)
+			)
+		then
+			return
+		end
+	end
+
 	local weld = Instance.new("WeldConstraint")
 	weld.Part0 = handle
 	weld.Part1 = part
 	weld.Parent = part
+end
+
+local function configure_seed_asset_part(part: BasePart, isHandle: boolean)
+	part.Anchored = false
+	part.CanCollide = false
+	part.CanTouch = false
+	part.CanQuery = false
+	part.Massless = not isHandle
+	part.CastShadow = false
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+end
+
+local function collect_base_parts(root: Instance): { BasePart }
+	local baseParts = {}
+
+	if root:IsA("BasePart") then
+		baseParts[#baseParts + 1] = root
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			baseParts[#baseParts + 1] = descendant
+		end
+	end
+
+	return baseParts
+end
+
+local function find_seed_asset_handle(tool: Tool): BasePart?
+	local directHandle = tool:FindFirstChild("Handle")
+	if directHandle and directHandle:IsA("BasePart") then
+		return directHandle
+	end
+
+	for _, descendant in ipairs(tool:GetDescendants()) do
+		if descendant:IsA("BasePart") and descendant.Name == "Handle" then
+			return descendant
+		end
+	end
+
+	return FarmingUtility.GetFirstBasePart(tool)
+end
+
+local function prepare_seed_asset_tool(tool: Tool)
+	local handle = find_seed_asset_handle(tool)
+	if not handle then
+		return false
+	end
+
+	handle.Name = "Handle"
+	handle.Parent = tool
+
+	for _, part in ipairs(collect_base_parts(tool)) do
+		configure_seed_asset_part(part, part == handle)
+		weld_seed_tool_part(part, handle)
+	end
+
+	tool.RequiresHandle = true
+	if tool.Grip == CFrame.new() then
+		tool.Grip = CFrame.new(0, -0.12, -0.18) * CFrame.Angles(math.rad(-12), math.rad(8), 0)
+	end
+
+	return true
 end
 
 local function create_seed_tool_part(
@@ -504,6 +579,11 @@ end
 
 local function get_item_tool_template(itemDefinition): Instance
 	if itemDefinition.Kind == "Seed" then
+		local template = FarmingUtility.GetItemAsset(itemDefinition)
+		if template then
+			return template
+		end
+
 		return create_seed_tool(itemDefinition)
 	end
 
@@ -531,6 +611,10 @@ local function sanitize_tool(tool: Tool, itemDefinition)
 	tool:SetAttribute(FarmingUtility.FARMING_CROP_ATTRIBUTE, itemDefinition.CropId)
 	tool:SetAttribute(FarmingUtility.FARMING_KIND_ATTRIBUTE, itemDefinition.Kind)
 	tool:SetAttribute(FarmingUtility.FARMING_RARITY_ATTRIBUTE, itemDefinition.Rarity or "")
+
+	if itemDefinition.Kind == "Seed" then
+		prepare_seed_asset_tool(tool)
+	end
 
 	local directHandle = tool:FindFirstChild("Handle")
 	local handle = FarmingUtility.GetToolHandle(tool)

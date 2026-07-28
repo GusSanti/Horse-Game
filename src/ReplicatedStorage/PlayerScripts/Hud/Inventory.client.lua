@@ -227,6 +227,38 @@ local function set_rarity_icon(root, rarity)
     end
 end
 
+local function normalize_image_id(value)
+    if type(value) == "number" then
+        return ("rbxassetid://%d"):format(value)
+    end
+
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+    if trimmedValue == "" then
+        return nil
+    end
+
+    if string.match(trimmedValue, "^%d+$") then
+        return ("rbxassetid://%s"):format(trimmedValue)
+    end
+
+    return trimmedValue
+end
+
+local function get_definition_icon_image(definition)
+    if type(definition) ~= "table" then
+        return nil
+    end
+
+    return normalize_image_id(definition.IconImage)
+        or normalize_image_id(definition.IconImageId)
+        or normalize_image_id(definition.Image)
+        or normalize_image_id(definition.ImageId)
+end
+
 local function find_viewport_frame(root)
     if not root then return nil end
     if root:IsA("ViewportFrame") then return root end
@@ -456,6 +488,40 @@ local function clear_viewport(viewportFrame)
         child:Destroy()
     end
     viewportFrame.CurrentCamera = nil
+end
+
+local function apply_icon_or_viewport(imageRoot, viewportFrame, iconImage)
+    if imageRoot and (imageRoot:IsA("ImageLabel") or imageRoot:IsA("ImageButton")) then
+        if imageRoot:GetAttribute("InventoryOriginalImage") == nil then
+            imageRoot:SetAttribute("InventoryOriginalImage", imageRoot.Image or "")
+            imageRoot:SetAttribute("InventoryOriginalImageTransparency", imageRoot.ImageTransparency)
+        end
+
+        if iconImage then
+            imageRoot.Image = iconImage
+            imageRoot.ImageTransparency = 0
+            imageRoot.ScaleType = Enum.ScaleType.Fit
+
+            if viewportFrame then
+                clear_viewport(viewportFrame)
+                viewportFrame.Visible = false
+            end
+
+            return true
+        end
+
+        imageRoot.Image = imageRoot:GetAttribute("InventoryOriginalImage") or ""
+        local originalTransparency = imageRoot:GetAttribute("InventoryOriginalImageTransparency")
+        if type(originalTransparency) == "number" then
+            imageRoot.ImageTransparency = originalTransparency
+        end
+    end
+
+    if viewportFrame then
+        viewportFrame.Visible = true
+    end
+
+    return false
 end
 
 local function get_assets_items_root()
@@ -738,6 +804,7 @@ local function create_item_entry(itemDefinition, farmingDefinition, count)
             or (farmingDefinition and farmingDefinition.SortOrder)
             or math.huge,
         RenderSource = get_farming_render_source(farmingDefinition) or get_catalog_render_source(itemDefinition),
+        IconImage = get_definition_icon_image(itemDefinition or farmingDefinition),
         LoadoutKind = "item",
         LoadoutValue = itemId,
         CanHotbarEquip = displayCount > 0 or isDefaultItem,
@@ -759,6 +826,7 @@ local function create_generic_entry(definition)
         Count = 1,
         SortOrder = definition.SortOrder or math.huge,
         RenderSource = get_generic_render_source(definition.ToolName),
+        IconImage = get_definition_icon_image(definition),
         LoadoutKind = "generic",
         LoadoutValue = definition.ToolName,
         CanHotbarEquip = true,
@@ -919,10 +987,28 @@ local function get_saved_loadout_values()
 		DataUtility.client.get(InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH) or {}
 end
 
+local function is_entry_selected_for_hotbar(entry): boolean
+	if not entry then
+		return false
+	end
+
+	local itemIds, genericToolNames = get_saved_loadout_values()
+	if entry.LoadoutKind == "item" then
+		return InventoryLoadout.IsItemEquipped(itemIds, entry.LoadoutValue)
+	end
+
+	if entry.LoadoutKind == "generic" then
+		return InventoryLoadout.IsGenericToolEquipped(genericToolNames, entry.LoadoutValue)
+	end
+
+	return false
+end
+
 local function get_visible_hotbar_entries()
 	rebuild_live_groups()
 
 	local itemIds, genericToolNames = get_saved_loadout_values()
+	local loadoutInitialized = DataUtility.client.get(InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
 	local entries = {}
 	local seenKeys = {}
 
@@ -947,19 +1033,21 @@ local function get_visible_hotbar_entries()
 		push("generic", toolName, build_generic_entry_key(toolName))
 	end
 
-	local unorderedEntries = {}
-	for entryKey, group in pairs(currentLiveGroups) do
-		if not seenKeys[entryKey] and group.Kind and group.Value then
-			unorderedEntries[#unorderedEntries + 1] = group
+	if not loadoutInitialized then
+		local unorderedEntries = {}
+		for entryKey, group in pairs(currentLiveGroups) do
+			if not seenKeys[entryKey] and group.Kind and group.Value then
+				unorderedEntries[#unorderedEntries + 1] = group
+			end
 		end
-	end
 
-	table.sort(unorderedEntries, function(left, right)
-		return (left.Order or math.huge) < (right.Order or math.huge)
-	end)
+		table.sort(unorderedEntries, function(left, right)
+			return (left.Order or math.huge) < (right.Order or math.huge)
+		end)
 
-	for _, group in ipairs(unorderedEntries) do
-		push(group.Kind, group.Value, group.EntryKey)
+		for _, group in ipairs(unorderedEntries) do
+			push(group.Kind, group.Value, group.EntryKey)
+		end
 	end
 
 	return entries
@@ -1005,14 +1093,20 @@ local function render_details(entry)
 
     if currentUi.DetailsViewport then
         if entry then
-            render_viewport(currentUi.DetailsViewport, entry, DETAILS_VIEWPORT_CONFIG, "details")
+            if not apply_icon_or_viewport(currentUi.DetailsImageRoot, currentUi.DetailsViewport, entry.IconImage) then
+                render_viewport(currentUi.DetailsViewport, entry, DETAILS_VIEWPORT_CONFIG, "details")
+            end
         else
+            apply_icon_or_viewport(currentUi.DetailsImageRoot, currentUi.DetailsViewport, nil)
             clear_viewport(currentUi.DetailsViewport)
         end
     end
 
+    local loadoutInitialized = DataUtility.client.get(InventoryLoadout.HOTBAR_INITIALIZED_PATH) == true
     local liveGroup = entry and currentLiveGroups[entry.EntryKey] or nil
-    local isInHotbar = liveGroup and #liveGroup.Tools > 0 or false
+    local isInHotbar = if loadoutInitialized
+        then is_entry_selected_for_hotbar(entry)
+        else liveGroup and #liveGroup.Tools > 0 or false
     local canEquip = entry ~= nil and entry.CanHotbarEquip == true
 
     if currentUi.EquipButton then
@@ -1052,6 +1146,7 @@ local function configure_card(card, entry, layoutOrder)
     local rarityLabel = find_text_label(card, RARITY_LABEL_NAMES, true)
     local imageRoot = find_gui_object(card, ITEM_IMAGE_NAMES, true)
     local viewportFrame = find_viewport_frame(imageRoot or card)
+    local useIcon = apply_icon_or_viewport(imageRoot, viewportFrame, entry.IconImage)
 
     if nameLabel then nameLabel.Text = entry.DisplayName end
     if amountLabel then amountLabel.Text = ("x%d"):format(entry.Count) end
@@ -1064,7 +1159,7 @@ local function configure_card(card, entry, layoutOrder)
     end
     set_rarity_icon(card, entry.Rarity)
 
-    return viewportFrame
+    return if useIcon then nil else viewportFrame
 end
 
 local function render_inventory()
@@ -1261,6 +1356,7 @@ local function get_inventory_ui(inventoryRoot)
         CloseButton = closeButton,
         DetailsRoot = detailsRoot,
         DetailsDisplayRoot = detailsDisplayRoot,
+        DetailsImageRoot = detailsImageRoot,
         DetailsViewport = detailsViewport,
         DetailsNameLabel = detailsNameLabel,
         DetailsNameShadowLabel = detailsNameShadowLabel,

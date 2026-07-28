@@ -14,6 +14,7 @@ for _, itemDefinition in ipairs(CareItemCatalog.GetAllItems()) do
 		toolNames = {
 			itemDefinition.ItemId,
 			itemDefinition.DisplayName,
+			itemDefinition.ToolName,
 		},
 		prompt = {
 			actionText = itemDefinition.PromptActionText or "Use",
@@ -25,7 +26,7 @@ for _, itemDefinition in ipairs(CareItemCatalog.GetAllItems()) do
 		consumeOnUse = true,
 		onUse = function(context)
 			local HorseCareService = require(ServerStorage:WaitForChild("Modules"):WaitForChild("Horse"):WaitForChild("HorseCareService"))
-			return HorseCareService.UseCareItem(context.player, context.horseId, itemDefinition.ItemId)
+			return HorseCareService.UseCareItem(context.player, context.horseId, itemDefinition.ItemId, context.tool)
 		end,
 	}
 end

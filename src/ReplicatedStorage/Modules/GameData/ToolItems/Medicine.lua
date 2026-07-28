@@ -5,6 +5,7 @@ return {
 		ShopId = "Doctor",
 		ItemId = "basic_bandage",
 		DisplayName = "Basic Bandage",
+		IconImage = "rbxassetid://134331333818368",
 		Description = "A simple wrap for light injuries and quick stable care.",
 		Price = 2,
 		PriceLabel = "2 coin",

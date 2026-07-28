@@ -213,6 +213,10 @@ function ToolItemCatalog.ApplyToolMetadata(tool, itemDefinition)
 	end
 
 	tool:SetAttribute("EquipmentType", itemDefinition.EquipmentType or "")
+	tool:SetAttribute(
+		"IconImage",
+		itemDefinition.IconImage or itemDefinition.IconImageId or itemDefinition.Image or itemDefinition.ImageId or ""
+	)
 
 	return tool
 end

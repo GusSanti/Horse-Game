@@ -9,6 +9,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local CookingCatalog = require(GameData:WaitForChild("CookingCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local FarmingShopViewportCache = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
@@ -33,11 +34,20 @@ local COOKING_NAMES = { "Cooking" }
 local INSUFFICIENT_COLOR = Color3.fromRGB(229, 85, 85)
 local DEFAULT_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 
-local VIEWPORT_CONFIG = {
-	FieldOfView = 33,
-	RadiusScale = 0.58,
-	CameraOffset = Vector3.new(0.35, 0.18, 1.1),
+local GRID_VIEWPORT_CONFIG = {
+	FieldOfView = 32,
+	RadiusScale = 0.42,
+	DistanceMultiplier = 1.42,
+	FocusYOffsetScale = 0.04,
+	CameraOffsetScale = Vector3.new(0.18, 0.12, 1.1),
+}
+
+local DETAILS_VIEWPORT_CONFIG = {
+	FieldOfView = 29,
+	RadiusScale = 0.46,
+	DistanceMultiplier = 1.28,
 	FocusYOffsetScale = 0.05,
+	CameraOffsetScale = Vector3.new(0.18, 0.15, 1.02),
 }
 
 local rootTrove = Trove.new()
@@ -47,6 +57,7 @@ local ingredientTrove = Trove.new()
 
 local currentUi = nil
 local cardEntries = {}
+local previewCache = {}
 local selectedRecipeId = nil
 local requestInFlight = false
 local dataReady = false
@@ -538,7 +549,43 @@ local function resolve_asset(definition)
 	return nil
 end
 
-local function render_viewport(viewport, definition)
+local function is_farming_item_definition(definition)
+	return definition ~= nil and (definition.Kind == "Seed" or definition.Kind == "Fruit")
+end
+
+local function get_preview_snapshot(itemId, source, displayName, cameraConfig, cameraKey)
+	local cacheKey = ("%s|%s"):format(cameraKey, itemId)
+	local cachedPreview = previewCache[cacheKey]
+	if cachedPreview then
+		return cachedPreview
+	end
+
+	local previewModel = prepare_preview_model(source, displayName)
+	local boxCFrame, boxSize = previewModel:GetBoundingBox()
+	local maxDimension = math.max(boxSize.X, boxSize.Y, boxSize.Z, 1)
+	local focusPosition = boxCFrame.Position + Vector3.new(0, boxSize.Y * cameraConfig.FocusYOffsetScale, 0)
+	local radius = maxDimension * cameraConfig.RadiusScale
+	local distance = math.max(
+		1.75,
+		(radius / math.tan(math.rad(cameraConfig.FieldOfView * 0.5))) * cameraConfig.DistanceMultiplier
+	)
+	local cameraOffsetScale = cameraConfig.CameraOffsetScale
+	local cameraOffset = Vector3.new(
+		distance * cameraOffsetScale.X,
+		distance * cameraOffsetScale.Y,
+		distance * cameraOffsetScale.Z
+	)
+
+	cachedPreview = {
+		ModelTemplate = previewModel,
+		FieldOfView = cameraConfig.FieldOfView,
+		CameraCFrame = CFrame.lookAt(focusPosition + cameraOffset, focusPosition),
+	}
+	previewCache[cacheKey] = cachedPreview
+	return cachedPreview
+end
+
+local function render_viewport(viewport, definition, cameraConfig, cameraKey)
 	if not viewport or not viewport:IsA("ViewportFrame") then
 		return
 	end
@@ -546,39 +593,38 @@ local function render_viewport(viewport, definition)
 	clear_viewport(viewport)
 
 	local displayName = definition and (definition.DisplayName or definition.ItemId) or "Food"
-	local model = prepare_preview_model(resolve_asset(definition), displayName)
+	local itemId = definition and definition.ItemId or displayName
+	cameraConfig = cameraConfig or GRID_VIEWPORT_CONFIG
+	cameraKey = cameraKey or "grid"
 
-	local ok = pcall(function()
-		local boxCFrame, boxSize = model:GetBoundingBox()
-		local worldModel = Instance.new("WorldModel")
-		worldModel.Parent = viewport
-		model.Parent = worldModel
+	if is_farming_item_definition(definition)
+		and FarmingShopViewportCache.ApplyToViewport(viewport, definition, "CookingFarmingWorldModel", "CookingFarmingCamera")
+	then
+		return
+	end
 
-		local camera = Instance.new("Camera")
-		camera.FieldOfView = VIEWPORT_CONFIG.FieldOfView
-		camera.Parent = viewport
-
-		local focus = boxCFrame.Position + Vector3.new(0, boxSize.Y * VIEWPORT_CONFIG.FocusYOffsetScale, 0)
-		local largest = math.max(boxSize.X, boxSize.Y, boxSize.Z, 1)
-		local radius = largest * VIEWPORT_CONFIG.RadiusScale
-		local distance = math.max(2, radius / math.tan(math.rad(camera.FieldOfView * 0.5)))
-		local offset = Vector3.new(
-			distance * VIEWPORT_CONFIG.CameraOffset.X,
-			distance * VIEWPORT_CONFIG.CameraOffset.Y,
-			distance * VIEWPORT_CONFIG.CameraOffset.Z
-		)
-
-		camera.CFrame = CFrame.lookAt(focus + offset, focus)
-		viewport.BackgroundTransparency = 1
-		viewport.Ambient = Color3.fromRGB(220, 220, 220)
-		viewport.LightColor = Color3.fromRGB(255, 255, 255)
-		viewport.CurrentCamera = camera
+	local ok, snapshot = pcall(function()
+		return get_preview_snapshot(itemId, resolve_asset(definition), displayName, cameraConfig, cameraKey)
 	end)
 
-	if not ok then
+	if not ok or not snapshot then
 		clear_viewport(viewport)
-		model:Destroy()
+		return
 	end
+
+	local worldModel = Instance.new("WorldModel")
+	worldModel.Parent = viewport
+	snapshot.ModelTemplate:Clone().Parent = worldModel
+
+	local camera = Instance.new("Camera")
+	camera.FieldOfView = snapshot.FieldOfView
+	camera.CFrame = snapshot.CameraCFrame
+	camera.Parent = viewport
+
+	viewport.BackgroundTransparency = 1
+	viewport.Ambient = Color3.fromRGB(220, 220, 220)
+	viewport.LightColor = Color3.fromRGB(255, 255, 255)
+	viewport.CurrentCamera = camera
 end
 
 local function get_cooking_remote()
@@ -934,7 +980,7 @@ local function render_ingredients_lazy(recipe, token)
 				return
 			end
 
-			render_viewport(pending.Viewport, pending.Definition)
+			render_viewport(pending.Viewport, pending.Definition, GRID_VIEWPORT_CONFIG, "grid")
 			task.wait(LOAD_STEP_SECONDS)
 		end
 	end)
@@ -975,7 +1021,7 @@ local function refresh_selected_panel()
 				return
 			end
 
-			render_viewport(ui.FoodViewport, recipe.FoodDefinition)
+			render_viewport(ui.FoodViewport, recipe.FoodDefinition, DETAILS_VIEWPORT_CONFIG, "details")
 		end)
 
 		render_ingredients_lazy(recipe, token)
@@ -1107,7 +1153,7 @@ local function build_recipe_cards()
 				return
 			end
 
-			render_viewport(viewport, recipe.FoodDefinition)
+			render_viewport(viewport, recipe.FoodDefinition, GRID_VIEWPORT_CONFIG, "grid")
 			task.wait(LOAD_STEP_SECONDS)
 		end
 

@@ -33,6 +33,10 @@ local MAINFRAME_NAME = "MainframeFR"
 local FRAMES_CONTAINER_NAME = "Frames"
 local STABLE_FRAME_NAME = "Stable"
 local STABLE_CONTENT_NAME = "StableFR"
+local STABLE_SCREEN_GUI_NAME = "Stable"
+local STABLE_BG_NAME = "StableBG"
+local GO_STABLE_BUTTON_NAME = "GoStable"
+local TELEPORT_TO_STABLE_EVENT_NAME = "TeleportToStable"
 local LIST_CONTAINER_NAMES = { "ListScrollingFrame" }
 local TEMPLATE_NAMES = { "HorseTemplate" }
 local STATS_NAMES = { "StatsFR" }
@@ -99,6 +103,8 @@ local renderQueued = false
 local renderGeneration = 0
 local stableRenderDirty = false
 local mountRequestInFlight = false
+local teleportToStableRequestInFlight = false
+local boundGoStableButtons: {[Instance]: boolean} = {}
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -308,6 +314,56 @@ local function close_stable_ui(): ()
 	elseif contentRoot and contentRoot:IsA("LayerCollector") then
 		contentRoot.Enabled = false
 	end
+end
+
+local function find_go_stable_button(): GuiButton?
+	local stableGui = playerGui:FindFirstChild(STABLE_SCREEN_GUI_NAME)
+	local stableBg = stableGui and stableGui:FindFirstChild(STABLE_BG_NAME)
+	local goStableButton = stableBg and stableBg:FindFirstChild(GO_STABLE_BUTTON_NAME)
+
+	if goStableButton and goStableButton:IsA("GuiButton") then
+		return goStableButton :: GuiButton
+	end
+
+	goStableButton = playerGui:FindFirstChild(GO_STABLE_BUTTON_NAME, true)
+	if goStableButton and goStableButton:IsA("GuiButton") then
+		return goStableButton :: GuiButton
+	end
+
+	return nil
+end
+
+local function request_teleport_to_stable(): ()
+	if teleportToStableRequestInFlight then
+		return
+	end
+
+	teleportToStableRequestInFlight = true
+	close_stable_ui()
+	Net.Event[TELEPORT_TO_STABLE_EVENT_NAME]:Fire()
+
+	task.delay(0.75, function()
+		teleportToStableRequestInFlight = false
+	end)
+end
+
+local function try_bind_go_stable_button(): ()
+	local goStableButton = find_go_stable_button()
+	if not goStableButton or boundGoStableButtons[goStableButton] then
+		return
+	end
+
+	boundGoStableButtons[goStableButton] = true
+	rootTrove:Connect(goStableButton.Activated, request_teleport_to_stable)
+	rootTrove:Connect(goStableButton.Destroying, function()
+		boundGoStableButtons[goStableButton] = nil
+	end)
+end
+
+local function is_go_stable_ui_related(instance: Instance): boolean
+	return instance.Name == STABLE_SCREEN_GUI_NAME
+		or instance.Name == STABLE_BG_NAME
+		or instance.Name == GO_STABLE_BUTTON_NAME
 end
 
 local function is_ui_visible(instance: Instance?): boolean
@@ -1071,6 +1127,10 @@ rootTrove:Connect(Net.Event.HorseMountState, function(payload)
 end)
 
 rootTrove:Connect(playerGui.DescendantAdded, function(instance: Instance)
+	if is_go_stable_ui_related(instance) then
+		task.defer(try_bind_go_stable_button)
+	end
+
 	if is_stable_ui_related(instance) or instance:IsA("LayerCollector") then
 		try_bind_ui()
 	end
@@ -1107,3 +1167,4 @@ rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 end)
 
 try_bind_ui()
+try_bind_go_stable_button()

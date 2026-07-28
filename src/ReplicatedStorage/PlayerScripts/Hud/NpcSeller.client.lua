@@ -81,10 +81,77 @@ local function find_item_asset(item)
 	end
 end
 
+local function normalize_image_id(value)
+	if type(value) == "number" then
+		return ("rbxassetid://%d"):format(value)
+	end
+
+	if type(value) ~= "string" then
+		return nil
+	end
+
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	if trimmedValue == "" then
+		return nil
+	end
+
+	if string.match(trimmedValue, "^%d+$") then
+		return ("rbxassetid://%s"):format(trimmedValue)
+	end
+
+	return trimmedValue
+end
+
+local function get_item_icon_image(item)
+	if type(item) ~= "table" then
+		return nil
+	end
+
+	return normalize_image_id(item.IconImage)
+		or normalize_image_id(item.IconImageId)
+		or normalize_image_id(item.Image)
+		or normalize_image_id(item.ImageId)
+end
+
+local function clear_viewport(viewport)
+	if not viewport then
+		return
+	end
+
+	for _, child in ipairs(viewport:GetChildren()) do
+		child:Destroy()
+	end
+
+	viewport.CurrentCamera = nil
+end
+
+local function apply_image_icon(card, item, viewport)
+	local iconImage = get_item_icon_image(item)
+	local imageLabel = find_named(card, { "ImageLabel", "ImageItem", "ItemImage", "Icon" }, "ImageLabel")
+		or find_named(card, { "ImageLabel", "ImageItem", "ItemImage", "Icon" }, "ImageButton")
+
+	if not iconImage or not imageLabel then
+		return false
+	end
+
+	imageLabel.Image = iconImage
+	imageLabel.ImageTransparency = 0
+	imageLabel.ScaleType = Enum.ScaleType.Fit
+
+	clear_viewport(viewport)
+	if viewport then
+		viewport.Visible = false
+	end
+
+	return true
+end
+
 local function populate_icon(card, item)
 	local viewport = find_named(card, { "ViewportFrame", "ViewPortFrame", "Viewport" }, "ViewportFrame")
+	if apply_image_icon(card, item, viewport) then return end
 	if not viewport then return end
-	for _, child in ipairs(viewport:GetChildren()) do child:Destroy() end
+	viewport.Visible = true
+	clear_viewport(viewport)
 	local asset = find_item_asset(item)
 	if not asset then return end
 	local model = asset:Clone()
@@ -145,7 +212,7 @@ end
 local function get_items()
 	local items = {}
 	for _, item in ipairs(ToolItemCatalog.GetItemsForShop(activeShopId) or {}) do
-		if item.ToolCategory == activeCategory then table.insert(items, item) end
+		if (item.ShopCategory or item.ToolCategory) == activeCategory then table.insert(items, item) end
 	end
 	return items
 end

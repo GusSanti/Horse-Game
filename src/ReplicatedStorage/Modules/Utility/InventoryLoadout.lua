@@ -16,6 +16,7 @@ InventoryLoadout.DEFAULT_GENERIC_TOOL_DEFINITIONS = {
 		ToolName = "Regadera",
 		DisplayName = "Watering Can",
 		Description = "A default watering tool that can be added to your hotbar whenever you need it.",
+		IconImage = "rbxassetid://83258208986073",
 		SortOrder = 5,
 	},
 }
@@ -183,6 +184,10 @@ function InventoryLoadout.GetDefaultGenericToolDefinitions()
 			ToolName = definition.ToolName,
 			DisplayName = definition.DisplayName,
 			Description = definition.Description,
+			IconImage = definition.IconImage,
+			IconImageId = definition.IconImageId,
+			Image = definition.Image,
+			ImageId = definition.ImageId,
 			SortOrder = definition.SortOrder,
 		}
 	end

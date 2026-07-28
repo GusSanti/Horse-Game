@@ -5,6 +5,7 @@ return {
 		ShopId = "Cowboy",
 		ItemId = "soap",
 		DisplayName = "Soap",
+		IconImage = "rbxassetid://84292972231295",
 		Description = "Basic soap used to wash your horse and restore cleanliness.",
 		Price = 2,
 		PriceLabel = "2 coin",

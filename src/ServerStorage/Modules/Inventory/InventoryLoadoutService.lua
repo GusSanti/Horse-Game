@@ -346,6 +346,31 @@ local function equip_item_tool_in_hand(player, itemDefinition): boolean
 	return true
 end
 
+local function unequip_generic_tool_in_hand(player, toolName): boolean
+	local normalizedToolName = InventoryLoadout.NormalizeGenericToolName(toolName)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not normalizedToolName or not humanoid or humanoid.Health <= 0 or not character then
+		return false
+	end
+
+	local equippedTool = character:FindFirstChildOfClass("Tool")
+	if not equippedTool then
+		return false
+	end
+
+	if ToolItemCatalog.ResolveDefinitionFromTool(equippedTool) ~= nil then
+		return false
+	end
+
+	if InventoryLoadout.NormalizeGenericToolName(equippedTool.Name) ~= normalizedToolName then
+		return false
+	end
+
+	humanoid:UnequipTools()
+	return true
+end
+
 local function get_ninth_accessible_hotbar_entry(player, itemIds, genericToolNames)
 	local entries = get_accessible_hotbar_entries(player, itemIds, genericToolNames)
 	return entries[InventoryLoadout.MAX_HOTBAR_SLOTS]
@@ -567,6 +592,9 @@ local function update_generic_loadout(player, toolName, isEquipped, replacementK
 		isEquipped
 	)
 	DataUtility.server.set(player, InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH, nextToolNames)
+	if not isEquipped then
+		unequip_generic_tool_in_hand(player, toolName)
+	end
 	sync_player_tools(player)
 	return true, "Updated"
 end

@@ -57,6 +57,21 @@ local function normalize_generic_name(value)
 	return trimmedValue
 end
 
+local function is_default_generic_tool_name(toolName)
+	local normalizedToolName = normalize_generic_name(toolName)
+	if not normalizedToolName then
+		return false
+	end
+
+	for _, definition in ipairs(InventoryLoadout.GetDefaultGenericToolDefinitions()) do
+		if normalize_generic_name(definition.ToolName) == normalizedToolName then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function sanitize_item_count_map(rawCounts)
 	local sanitizedCounts = {}
 
@@ -87,7 +102,7 @@ local function sanitize_generic_count_map(rawCounts)
 		local normalizedToolName = normalize_generic_name(toolName)
 		local normalizedCount = math.max(0, math.floor(tonumber(count) or 0))
 
-		if normalizedToolName and normalizedCount > 0 then
+		if normalizedToolName and normalizedCount > 0 and not is_default_generic_tool_name(normalizedToolName) then
 			sanitizedCounts[normalizedToolName] = normalizedCount
 		end
 	end
@@ -228,6 +243,18 @@ local function apply_default_hotbar_item_counts(player, baseItemCounts)
 	end
 
 	return nextItemCounts
+end
+
+local function remove_default_generic_counts(genericCounts)
+	local filteredCounts = {}
+
+	for toolName, count in pairs(genericCounts or {}) do
+		if not is_default_generic_tool_name(toolName) then
+			filteredCounts[toolName] = count
+		end
+	end
+
+	return filteredCounts
 end
 
 local function is_character_transitioning(player)
@@ -678,6 +705,7 @@ local function refresh_saved_tools(player)
 	local liveItemCounts, liveGenericCounts = collect_saved_tool_counts(player)
 	local nextItemCounts = subtract_count_maps(liveItemCounts, starterItemCounts)
 	local nextGenericCounts = subtract_count_maps(liveGenericCounts, starterGenericCounts)
+	nextGenericCounts = remove_default_generic_counts(nextGenericCounts)
 	local currentItemCounts = sanitize_item_count_map(DataUtility.server.get(player, SAVED_ITEM_COUNTS_PATH))
 	local currentGenericCounts = sanitize_generic_count_map(DataUtility.server.get(player, SAVED_GENERIC_COUNTS_PATH))
 
@@ -715,6 +743,7 @@ local function persist_saved_tools(player)
 	local liveItemCounts, liveGenericCounts = collect_saved_tool_counts(player)
 	local nextItemCounts = subtract_count_maps(liveItemCounts, starterItemCounts)
 	local nextGenericCounts = subtract_count_maps(liveGenericCounts, starterGenericCounts)
+	nextGenericCounts = remove_default_generic_counts(nextGenericCounts)
 	local currentItemCounts = sanitize_item_count_map(DataUtility.server.get(player, SAVED_ITEM_COUNTS_PATH))
 	local currentGenericCounts = sanitize_generic_count_map(DataUtility.server.get(player, SAVED_GENERIC_COUNTS_PATH))
 
