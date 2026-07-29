@@ -83,6 +83,7 @@ local ProfileTemplate = {
 		OwnedStalls = StableDictionary.DefaultOwnedStalls,
 		HorseSlots = defaultHorseSlots,
 		HayBalesPlaced = 0,
+		WaterTankFilled = false,
 		ActiveStyleId = "Default",
 		Upgrades = {},
 		PlacedDecor = {},

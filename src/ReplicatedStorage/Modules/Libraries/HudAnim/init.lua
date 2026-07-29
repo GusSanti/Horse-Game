@@ -926,22 +926,6 @@ local function get_exclusion_key(excludedNames)
 	return table.concat(names, "|")
 end
 
-local function is_in_excluded_subtree(instance, hudRoot, excludedNames)
-	if not instance or not excludedNames then
-		return false
-	end
-
-	local current = instance
-	while current and current ~= hudRoot do
-		if excludedNames[current.Name] == true then
-			return true
-		end
-		current = current.Parent
-	end
-
-	return instance == hudRoot and excludedNames[hudRoot.Name] == true
-end
-
 local function get_hud_fade_state(hudRoot)
 	local fadeState = hudFadeStates[hudRoot]
 	if fadeState then
@@ -950,7 +934,6 @@ local function get_hud_fade_state(hudRoot)
 
 	fadeState = {
 		Originals = setmetatable({}, { __mode = "k" }),
-		VisibleOriginals = setmetatable({}, { __mode = "k" }),
 		Token = 0,
 		TargetHidden = nil,
 		ExclusionKey = "",
@@ -989,30 +972,12 @@ end
 local function collect_hud_fade_records(hudRoot, fadeState, shouldHide, excludedNames)
 	local records = {}
 
-	local function track(instance)
-		if is_in_excluded_subtree(instance, hudRoot, excludedNames) then
-			return
-		end
-
-		if instance:IsA("GuiObject") then
-			push_fade_record(records, fadeState, instance, "BackgroundTransparency", if shouldHide then 1 else nil)
-		end
-
-		if instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox") then
-			push_fade_record(records, fadeState, instance, "TextTransparency", if shouldHide then 1 else nil)
-			push_fade_record(records, fadeState, instance, "TextStrokeTransparency", if shouldHide then 1 else nil)
-		elseif instance:IsA("ImageLabel") or instance:IsA("ImageButton") then
-			push_fade_record(records, fadeState, instance, "ImageTransparency", if shouldHide then 1 else nil)
-		elseif instance:IsA("UIStroke") then
-			push_fade_record(records, fadeState, instance, "Transparency", if shouldHide then 1 else nil)
-		elseif instance:IsA("CanvasGroup") then
-			push_fade_record(records, fadeState, instance, "GroupTransparency", if shouldHide then 1 else nil)
-		end
+	if has_exclusions(excludedNames) then
+		return records
 	end
 
-	track(hudRoot)
-	for _, descendant in ipairs(hudRoot:GetDescendants()) do
-		track(descendant)
+	if hudRoot:IsA("CanvasGroup") then
+		push_fade_record(records, fadeState, hudRoot, "GroupTransparency", if shouldHide then 1 else nil)
 	end
 
 	for _, record in ipairs(records) do
@@ -1050,68 +1015,18 @@ local function set_record_value(record, useTarget)
 	end)
 end
 
-local function collect_hud_visibility_records(hudRoot, fadeState, excludedNames)
-	local records = {}
-	local visibleOriginals = fadeState.VisibleOriginals
-
-	if has_exclusions(excludedNames) then
-		for _, child in ipairs(hudRoot:GetChildren()) do
-			if child:IsA("GuiObject") and not is_in_excluded_subtree(child, hudRoot, excludedNames) then
-				if visibleOriginals[child] == nil then
-					visibleOriginals[child] = child.Visible
-				end
-			end
-		end
-	end
-
-	for instance, originalVisible in pairs(visibleOriginals) do
-		if instance
-			and instance.Parent
-			and instance:IsDescendantOf(hudRoot)
-			and not is_in_excluded_subtree(instance, hudRoot, excludedNames)
-		then
-			records[#records + 1] = {
-				Instance = instance,
-				OriginalVisible = originalVisible,
-			}
-		end
-	end
-
-	return records
-end
-
-local function set_visibility_records(records, shouldHide)
-	for _, record in ipairs(records) do
-		local instance = record.Instance
-		if instance and instance.Parent then
-			pcall(function()
-				instance.Visible = if shouldHide then false else record.OriginalVisible
-			end)
-		end
-	end
-end
-
-local function restore_excluded_subtrees(hudRoot, fadeState, excludedNames)
-	if not has_exclusions(excludedNames) then
-		return
-	end
-
-	for _, child in ipairs(hudRoot:GetChildren()) do
-		if child:IsA("GuiObject") and is_in_excluded_subtree(child, hudRoot, excludedNames) then
-			local originalVisible = fadeState.VisibleOriginals[child]
-			child.Visible = if originalVisible ~= nil then originalVisible else true
-		end
-	end
-end
-
 local function fade_hud_root(hudRoot, shouldHide, duration, excludedNames)
 	if not hudRoot or not hudRoot.Parent then
 		return
 	end
 
+	local hasExclusions = has_exclusions(excludedNames)
 	local fadeState = get_hud_fade_state(hudRoot)
 	local exclusionKey = get_exclusion_key(excludedNames)
 	if fadeState.TargetHidden == shouldHide and fadeState.ExclusionKey == exclusionKey then
+		if not shouldHide or hasExclusions then
+			hudRoot.Visible = true
+		end
 		return
 	end
 
@@ -1122,23 +1037,14 @@ local function fade_hud_root(hudRoot, shouldHide, duration, excludedNames)
 
 	cancel_hud_fade(hudRoot)
 	hudRoot.Visible = true
-	restore_excluded_subtrees(hudRoot, fadeState, excludedNames)
-
-	local visibilityRecords = collect_hud_visibility_records(hudRoot, fadeState, excludedNames)
-	if not shouldHide then
-		set_visibility_records(visibilityRecords, false)
-	end
 
 	local fadeDuration = math.max(0, duration or DEFAULTS.hud_fade_t)
 	local records = collect_hud_fade_records(hudRoot, fadeState, shouldHide, excludedNames)
-	local keepHudVisible = shouldHide and has_exclusions(excludedNames)
+	local keepHudVisible = shouldHide and hasExclusions
 
-	if fadeDuration <= 0 then
+	if fadeDuration <= 0 or #records == 0 then
 		for _, record in ipairs(records) do
 			set_record_value(record, true)
-		end
-		if shouldHide then
-			set_visibility_records(visibilityRecords, true)
 		end
 		hudRoot.Visible = keepHudVisible or not shouldHide
 		return
@@ -1174,9 +1080,6 @@ local function fade_hud_root(hudRoot, shouldHide, duration, excludedNames)
 		hudFadeTweens[hudRoot] = nil
 		for _, record in ipairs(records) do
 			set_record_value(record, true)
-		end
-		if shouldHide then
-			set_visibility_records(visibilityRecords, true)
 		end
 		hudRoot.Visible = keepHudVisible or not shouldHide
 	end)
