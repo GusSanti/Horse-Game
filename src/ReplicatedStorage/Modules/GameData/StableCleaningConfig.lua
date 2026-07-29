@@ -25,8 +25,8 @@ local StableCleaningConfig = {
 	StudioSpawnIntervalSeconds = 90,
 	StudioSpawnJitterSeconds = 10,
 	StudioServiceTickSeconds = 1,
-	DirtBillboardMaxDistance = 42,
-	DirtBillboardStudsOffset = Vector3.new(0, 2.25, 0),
+	DirtBillboardMaxDistance = 30,
+	DirtBillboardStudsOffset = Vector3.new(0, 1.55, 0),
 
 	DirtOrder = {
 		"loose_hay",
@@ -139,6 +139,24 @@ function StableCleaningConfig.GetRequiredToolDisplayName(dirtTypeId: string?): s
 	end
 
 	return definition.RequiredToolDisplayName or definition.RequiredToolId or ""
+end
+
+function StableCleaningConfig.GetCompactPenaltySummary(dirtTypeId: string?): string
+	local definition = StableCleaningConfig.GetDirtDefinition(dirtTypeId)
+	if not definition then
+		return ""
+	end
+
+	local parts = {}
+	for _, statusName in ipairs({ "Happiness", "Cleanliness", "Health" }) do
+		local multiplier = definition.DecayMultipliers[statusName]
+		if type(multiplier) == "number" and multiplier > 1 then
+			local percent = math.floor(((multiplier - 1) * 100) + 0.5)
+			parts[#parts + 1] = ("%s drain +%d%%"):format(statusName, percent)
+		end
+	end
+
+	return table.concat(parts, " | ")
 end
 
 return StableCleaningConfig

@@ -46,11 +46,7 @@ local RaceConfig = {
 		[3] = {
 			Horseshoes = 55,
 			Items = {
-<<<<<<< Updated upstream
 				{ ItemId = "bread", Amount = 2 },
-=======
-				{ ItemId = "berry_mash", Amount = 2 },
->>>>>>> Stashed changes
 				{ ItemId = "fresh_bucket", Amount = 1 },
 			},
 		},

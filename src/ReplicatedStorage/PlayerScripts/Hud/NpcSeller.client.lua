@@ -10,6 +10,7 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
+local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 
@@ -70,6 +71,13 @@ local function set_button_text(button, value)
 end
 
 local function find_item_asset(item)
+	if item and item.EquipmentType == "Saddle" then
+		local saddleVisual = HorseEquipmentUtility.GetSaddleVisualAsset(item)
+		if saddleVisual then
+			return saddleVisual
+		end
+	end
+
 	local assets = ReplicatedStorage:FindFirstChild("Assets")
 	local items = assets and assets:FindFirstChild("Items")
 	if not items then return nil end

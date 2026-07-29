@@ -57,7 +57,7 @@ local CATEGORY_BUTTON_NAMES = {
 }
 
 local CATEGORY_TOOL_CATEGORIES = {
-    Utility = { "Water", "Grooming", "Misc", "Medicine" },
+    Utility = { "Water", "Grooming", "Misc", "Medicine", "Tack" },
     Seeds = { "Seeds" },
     Foods = { "Food", "Fruits" },
 }
@@ -70,6 +70,7 @@ local RELEVANT_INVENTORY_PATHS = {
     "Inventory.Consumables.Grooming",
     "Inventory.Consumables.Misc",
     "Inventory.Consumables.Medical",
+    "Inventory.Tack",
 }
 
 local GRID_VIEWPORT_CONFIG = {
@@ -95,6 +96,7 @@ local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
+local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
 
 local UPDATE_LOADOUT_REMOTE_NAME = "UpdateInventoryLoadout"
 local DEFAULT_GENERIC_TOOL_DEFINITIONS = InventoryLoadout.GetDefaultGenericToolDefinitions()
@@ -561,6 +563,11 @@ local function find_first_named_asset(root, itemDefinition)
 end
 
 local function get_catalog_render_source(itemDefinition)
+    if itemDefinition and itemDefinition.EquipmentType == "Saddle" then
+        local saddleVisual = HorseEquipmentUtility.GetSaddleVisualAsset(itemDefinition)
+        if saddleVisual then return saddleVisual end
+    end
+
     local itemsFolder = get_assets_items_root()
     if not itemsFolder or not itemDefinition then return nil end
 

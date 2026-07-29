@@ -1,29 +1,13 @@
-local Players: Players = game:GetService("Players")
-local GuiService: GuiService = game:GetService("GuiService")
-local UserInputService: UserInputService = game:GetService("UserInputService")
-local TweenService: TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
 
-------------------//VARIABLES
-local localPlayer: Player = Players.LocalPlayer
-local playerGui: PlayerGui = localPlayer.PlayerGui
-
-local Utils = require(script.Utils)
 local SFX = require(script.SFX)
-local Pulse = require(script.Pulse)
-local Rotate = require(script.Rotate)
-local Hover = require(script.Hover)
-local Click = require(script.Click)
-local Open = require(script.Open)
-local Close = require(script.Close)
 
 local HudAnim = {}
-local bound = {}
-local state = {}
-local running_open = {} 
-local exit_connections = {}
-local open_connections = {}
-local hud_fade_states = {}
-local hud_fade_tweens = {}
+
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer and localPlayer:WaitForChild("PlayerGui") or nil
 
 local EXIT_BUTTON_NAME = "ExitBT"
 local BUTTON_SUFFIX = "BT"
@@ -34,17 +18,20 @@ local HOTBAR_ROOT_NAME = "BottomFrameFR"
 local MONEY_TAB_NAME = "MoneyTabBG"
 local FRAMES_CONTAINER_NAME = "Frames"
 local INVENTORY_FRAME_NAME = "Inventory"
+local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
+local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
+
 local SHOP_FRAME_NAMES = {
 	SeedShop = true,
 	FruitShop = true,
 	Seller = true,
 	Shop = true,
 }
-local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
-local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
+
 local INVENTORY_HUD_FADE_EXCLUDED_NAMES = {
 	[HOTBAR_ROOT_NAME] = true,
 }
+
 local SHOP_HUD_FADE_EXCLUDED_NAMES = {
 	[MONEY_TAB_NAME] = true,
 }
@@ -64,275 +51,840 @@ local DEFAULTS = {
 	hud_fade_t = 0.15,
 }
 
-------------------//FUNCTIONS
-local function apply_defaults(inst: GuiObject): ()
-	for k, v in DEFAULTS do
-		if inst:GetAttribute(k) == nil then
-			inst:SetAttribute(k, v)
-		end
-	end
-end
+local states = setmetatable({}, { __mode = "k" })
+local hudFadeStates = setmetatable({}, { __mode = "k" })
+local hudFadeTweens = setmetatable({}, { __mode = "k" })
 
-local function has_true_attribute(instance: Instance?, attributeName: string): boolean
+local bind_instance
+local sync_hud_visibility_for_frame
+
+local function has_true_attribute(instance, attributeName)
 	local current = instance
-
 	while current do
 		if current:GetAttribute(attributeName) == true then
 			return true
 		end
-
 		current = current.Parent
 	end
-
 	return false
 end
 
-local function wants_hover(g: GuiObject): boolean
-	if not g.Visible then
-		return false
-	end
-
-	if has_true_attribute(g, IGNORE_HUD_ANIM_ATTRIBUTE) then
-		return false
-	end
-
-	if g:GetAttribute("UIAnim") ~= true and g:GetAttribute("UIAnimPreset") == nil then
-		return false
-	end
-
-	if g.AbsoluteSize.X <= 0 or g.AbsoluteSize.Y <= 0 then
-		return false
-	end
-
-	return true
-end
-
-local function screen_point(): Vector2
-	local mouse = UserInputService:GetMouseLocation()
-	local inset = GuiService:GetGuiInset()
-	return Vector2.new(mouse.X - inset.X, mouse.Y - inset.Y)
-end
-
-local function visible_in_hierarchy(g: GuiObject): boolean
-	local cur: Instance? = g
-	while cur and cur:IsA("GuiObject") do
-		if not cur.Visible then
-			return false
-		end
-		cur = cur.Parent
-	end
-	local sg = g:FindFirstAncestorWhichIsA("ScreenGui")
-	if sg and sg.Enabled == false then
-		return false
-	end
-	return true
-end
-
-local function topmost_gui_at_pointer(): GuiObject?
-	local p = screen_point()
-	local list = playerGui:GetGuiObjectsAtPosition(p.X, p.Y)
-	for _, g in list do
-		if g and visible_in_hierarchy(g) and wants_hover(g) then
-			return g
-		end
-	end
-	return nil
-end
-
-local function should_run_hover_for(inst: GuiObject): boolean
-	local top = topmost_gui_at_pointer()
-	if not top then
-		return false
-	end
-	if top == inst then
-		return true
-	end
-	if top:IsDescendantOf(inst) then
-		return true
-	end
-	return false
-end
-
-local function safe_play(inst: Instance, key: string): ()
-	if not SFX or not SFX.play_for then
-		return
-	end
-
-	SFX.play_for(inst, key)
-end
-
-local function restore_state(inst: GuiObject, st): ()
-	if not inst or not inst.Parent or not st then
-		return
-	end
-
-	pcall(function()
-		inst.Size = st.origSize
-		inst.Position = st.origPos
-		inst.Rotation = st.origRot
-
-		if st.origBg and (inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("Frame")) then
-			inst.BackgroundColor3 = st.origBg
-		end
-
-		if st.origImg and (inst:IsA("ImageLabel") or inst:IsA("ImageButton")) then
-			inst.ImageColor3 = st.origImg
-		end
-	end)
-end
-
-local function get_number_attribute(inst: Instance, attributeName: string, fallback: number): number
-	local value = inst:GetAttribute(attributeName)
+local function get_number_attribute(instance, attributeName, fallback)
+	local value = instance and instance:GetAttribute(attributeName)
 	if typeof(value) == "number" then
 		return value
 	end
 
-	local convertedValue = tonumber(value)
-	if convertedValue ~= nil then
-		return convertedValue
+	local numberValue = tonumber(value)
+	if numberValue ~= nil then
+		return numberValue
 	end
 
 	return fallback
 end
 
-local function cleanup_exit_button(button: GuiButton): ()
-	local connection = exit_connections[button]
-	if not connection then
+local function get_optional_number_attribute(instance, attributeName)
+	local value = instance and instance:GetAttribute(attributeName)
+	if typeof(value) == "number" then
+		return value
+	end
+
+	return tonumber(value)
+end
+
+local function scale_udim2(value, multiplier)
+	return UDim2.new(
+		value.X.Scale * multiplier,
+		value.X.Offset * multiplier,
+		value.Y.Scale * multiplier,
+		value.Y.Offset * multiplier
+	)
+end
+
+local function offset_udim2(value, xOffset, yOffset)
+	return UDim2.new(
+		value.X.Scale,
+		value.X.Offset + xOffset,
+		value.Y.Scale,
+		value.Y.Offset + yOffset
+	)
+end
+
+local function safe_play_sound(instance, soundKey)
+	if SFX and type(SFX.play_for) == "function" then
+		SFX.play_for(instance, soundKey)
+	end
+end
+
+local function make_tween(instance, properties, duration, easingStyle, easingDirection)
+	local tweenInfo = TweenInfo.new(
+		math.max(0, duration or 0),
+		easingStyle or Enum.EasingStyle.Quad,
+		easingDirection or Enum.EasingDirection.Out
+	)
+
+	return TweenService:Create(instance, tweenInfo, properties)
+end
+
+local function disconnect_connections(connections)
+	for _, connection in ipairs(connections or {}) do
+		if connection then
+			connection:Disconnect()
+		end
+	end
+	table.clear(connections)
+end
+
+local function cancel_state_tweens(state)
+	for tween in pairs(state.Tweens) do
+		pcall(function()
+			tween:Cancel()
+		end)
+	end
+	table.clear(state.Tweens)
+	state.ActiveTweenCount = 0
+end
+
+local function play_state_tween(instance, state, properties, duration, easingStyle, easingDirection, completed)
+	if not instance or not instance.Parent then
+		return nil
+	end
+
+	local tween = make_tween(instance, properties, duration, easingStyle, easingDirection)
+	state.Tweens[tween] = true
+	state.ActiveTweenCount += 1
+
+	local connection
+	connection = tween.Completed:Connect(function(playbackState)
+		if connection then
+			connection:Disconnect()
+			connection = nil
+		end
+
+		if state.Tweens[tween] then
+			state.Tweens[tween] = nil
+			state.ActiveTweenCount = math.max(0, state.ActiveTweenCount - 1)
+		end
+
+		if type(completed) == "function" then
+			completed(playbackState)
+		end
+	end)
+
+	tween:Play()
+	return tween
+end
+
+local function apply_defaults(instance)
+	for key, value in pairs(DEFAULTS) do
+		if instance:GetAttribute(key) == nil then
+			instance:SetAttribute(key, value)
+		end
+	end
+end
+
+local function capture_base_state(instance, state, force)
+	if not instance or not instance:IsA("GuiObject") then
 		return
 	end
 
-	connection:Disconnect()
-	exit_connections[button] = nil
-end
-
-local function cleanup_open_button(button: GuiButton): ()
-	local connection = open_connections[button]
-	if not connection then
+	if not force and state.BaseCaptured then
 		return
 	end
 
-	connection:Disconnect()
-	open_connections[button] = nil
+	state.BaseCaptured = true
+	state.BaseSize = instance.Size
+	state.BasePosition = instance.Position
+	state.BaseRotation = instance.Rotation
+	state.BaseBackgroundColor = instance.BackgroundColor3
+
+	if instance:IsA("ImageLabel") or instance:IsA("ImageButton") then
+		state.BaseImageColor = instance.ImageColor3
+	end
+
+	if instance:IsA("CanvasGroup") then
+		state.BaseGroupTransparency = instance.GroupTransparency
+	end
 end
 
-local function find_named_ancestor(instance: Instance?, targetName: string): Instance?
+local function refresh_base_property(instance, state, propertyName)
+	if state.ActiveTweenCount > 0 or state.Hovered or state.Pressed or state.Opening or state.Closing then
+		return
+	end
+
+	if propertyName == "Size" then
+		state.BaseSize = instance.Size
+	elseif propertyName == "Position" then
+		state.BasePosition = instance.Position
+	elseif propertyName == "Rotation" then
+		state.BaseRotation = instance.Rotation
+	elseif propertyName == "BackgroundColor3" then
+		state.BaseBackgroundColor = instance.BackgroundColor3
+	elseif propertyName == "ImageColor3" and (instance:IsA("ImageLabel") or instance:IsA("ImageButton")) then
+		state.BaseImageColor = instance.ImageColor3
+	elseif propertyName == "GroupTransparency" and instance:IsA("CanvasGroup") then
+		state.BaseGroupTransparency = instance.GroupTransparency
+	end
+end
+
+local function track_base_changes(instance, state)
+	if state.BaseConnectionsBound then
+		return
+	end
+
+	state.BaseConnectionsBound = true
+	for _, propertyName in ipairs({ "Size", "Position", "Rotation", "BackgroundColor3" }) do
+		state.Connections[#state.Connections + 1] = instance:GetPropertyChangedSignal(propertyName):Connect(function()
+			refresh_base_property(instance, state, propertyName)
+		end)
+	end
+
+	if instance:IsA("ImageLabel") or instance:IsA("ImageButton") then
+		state.Connections[#state.Connections + 1] = instance:GetPropertyChangedSignal("ImageColor3"):Connect(function()
+			refresh_base_property(instance, state, "ImageColor3")
+		end)
+	end
+
+	if instance:IsA("CanvasGroup") then
+		state.Connections[#state.Connections + 1] = instance:GetPropertyChangedSignal("GroupTransparency"):Connect(function()
+			refresh_base_property(instance, state, "GroupTransparency")
+		end)
+	end
+end
+
+local function get_or_create_state(instance)
+	local state = states[instance]
+	if state then
+		return state
+	end
+
+	state = {
+		BaseCaptured = false,
+		BaseSize = nil,
+		BasePosition = nil,
+		BaseRotation = nil,
+		BaseBackgroundColor = nil,
+		BaseImageColor = nil,
+		BaseGroupTransparency = nil,
+		Hovered = false,
+		Pressed = false,
+		Opening = false,
+		Closing = false,
+		TransitionToken = 0,
+		IgnoreVisibleChanges = 0,
+		LastVisible = instance:IsA("GuiObject") and instance.Visible or nil,
+		ActiveTweenCount = 0,
+		Tweens = {},
+		Connections = {},
+		BoundButton = false,
+		BoundOpen = false,
+		BoundAutoOpenButton = false,
+		BoundExitButton = false,
+	}
+
+	states[instance] = state
+	return state
+end
+
+local function restore_instance(instance, state)
+	if not instance or not instance.Parent or not state then
+		return
+	end
+
+	pcall(function()
+		if state.BaseSize then
+			instance.Size = state.BaseSize
+		end
+		if state.BasePosition then
+			instance.Position = state.BasePosition
+		end
+		if state.BaseRotation then
+			instance.Rotation = state.BaseRotation
+		end
+		if state.BaseBackgroundColor then
+			instance.BackgroundColor3 = state.BaseBackgroundColor
+		end
+		if state.BaseImageColor and (instance:IsA("ImageLabel") or instance:IsA("ImageButton")) then
+			instance.ImageColor3 = state.BaseImageColor
+		end
+		if state.BaseGroupTransparency and instance:IsA("CanvasGroup") then
+			instance.GroupTransparency = state.BaseGroupTransparency
+		end
+	end)
+end
+
+local function is_visible_in_hierarchy(instance)
 	local current = instance
+	while current do
+		if current:IsA("GuiObject") and not current.Visible then
+			return false
+		end
+		if current:IsA("LayerCollector") and not current.Enabled then
+			return false
+		end
+		current = current.Parent
+	end
+	return instance ~= nil and instance.Parent ~= nil
+end
 
+local function should_animate_button(button)
+	if not button or not button:IsA("GuiButton") then
+		return false
+	end
+
+	if has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE) then
+		return false
+	end
+
+	return button:GetAttribute("UIAnim") == true or button:GetAttribute("UIAnimPreset") ~= nil
+end
+
+local function update_button_visual(button, state, duration)
+	if not button or not button.Parent then
+		return
+	end
+
+	capture_base_state(button, state, false)
+	cancel_state_tweens(state)
+
+	local hoverScale = math.max(0, get_number_attribute(button, "hover_scale", DEFAULTS.hover_scale))
+	local clickScale = math.max(0, get_number_attribute(button, "click_scale", DEFAULTS.click_scale))
+	local rotateHoverDegrees = get_number_attribute(button, "rotate_hover_deg", DEFAULTS.rotate_hover_deg)
+
+	local scale = 1
+	if state.Pressed then
+		scale = 1 - clickScale
+	elseif state.Hovered then
+		scale = 1 + hoverScale
+	end
+
+	local properties = {
+		Size = scale_udim2(state.BaseSize or button.Size, scale),
+		Position = state.BasePosition or button.Position,
+		Rotation = (state.BaseRotation or button.Rotation) + (state.Hovered and rotateHoverDegrees or 0),
+	}
+
+	local hoverBackground = button:GetAttribute("hover_bg")
+	if typeof(hoverBackground) == "Color3" then
+		properties.BackgroundColor3 = state.Hovered and hoverBackground or state.BaseBackgroundColor
+	end
+
+	if button:IsA("ImageButton") then
+		local hoverImageColor = button:GetAttribute("hover_img")
+		if typeof(hoverImageColor) == "Color3" then
+			properties.ImageColor3 = state.Hovered and hoverImageColor or state.BaseImageColor
+		elseif state.BaseImageColor then
+			properties.ImageColor3 = state.BaseImageColor
+		end
+	end
+
+	play_state_tween(
+		button,
+		state,
+		properties,
+		duration or get_number_attribute(button, "hover_t", DEFAULTS.hover_t),
+		Enum.EasingStyle.Quad,
+		Enum.EasingDirection.Out
+	)
+end
+
+local function bind_button_animation(button, state)
+	if state.BoundButton or not should_animate_button(button) then
+		return
+	end
+
+	state.BoundButton = true
+	capture_base_state(button, state, false)
+	track_base_changes(button, state)
+
+	state.Connections[#state.Connections + 1] = button.MouseEnter:Connect(function()
+		if not should_animate_button(button) or not is_visible_in_hierarchy(button) then
+			return
+		end
+
+		state.Hovered = true
+		update_button_visual(button, state, get_number_attribute(button, "hover_t", DEFAULTS.hover_t))
+		safe_play_sound(button, "sfx_hover")
+	end)
+
+	state.Connections[#state.Connections + 1] = button.MouseLeave:Connect(function()
+		if not should_animate_button(button) then
+			return
+		end
+
+		state.Hovered = false
+		state.Pressed = false
+		update_button_visual(button, state, get_number_attribute(button, "hover_t", DEFAULTS.hover_t))
+	end)
+
+	state.Connections[#state.Connections + 1] = button.MouseButton1Down:Connect(function()
+		if not should_animate_button(button) or not is_visible_in_hierarchy(button) then
+			return
+		end
+
+		state.Pressed = true
+		update_button_visual(button, state, get_number_attribute(button, "click_t", DEFAULTS.click_t))
+		safe_play_sound(button, "sfx_down")
+	end)
+
+	state.Connections[#state.Connections + 1] = button.MouseButton1Up:Connect(function()
+		if not should_animate_button(button) then
+			return
+		end
+
+		state.Pressed = false
+		update_button_visual(button, state, get_number_attribute(button, "click_t", DEFAULTS.click_t))
+		safe_play_sound(button, "sfx_up")
+		safe_play_sound(button, "sfx_click")
+	end)
+
+	state.Connections[#state.Connections + 1] = button.SelectionGained:Connect(function()
+		if not should_animate_button(button) or not is_visible_in_hierarchy(button) then
+			return
+		end
+
+		state.Hovered = true
+		update_button_visual(button, state, get_number_attribute(button, "hover_t", DEFAULTS.hover_t))
+		safe_play_sound(button, "sfx_select")
+	end)
+
+	state.Connections[#state.Connections + 1] = button.SelectionLost:Connect(function()
+		if not should_animate_button(button) then
+			return
+		end
+
+		state.Hovered = false
+		state.Pressed = false
+		update_button_visual(button, state, get_number_attribute(button, "hover_t", DEFAULTS.hover_t))
+		safe_play_sound(button, "sfx_deselect")
+	end)
+end
+
+local function get_blur_effect(shouldCreate)
+	local blur = Lighting:FindFirstChild("UIBlur") or Lighting:FindFirstChildWhichIsA("BlurEffect")
+	if not blur and shouldCreate then
+		blur = Instance.new("BlurEffect")
+		blur.Name = "UIBlur"
+		blur.Size = 0
+		blur.Parent = Lighting
+	end
+	return blur
+end
+
+local function tween_blur(size, duration)
+	local blur = get_blur_effect(size > 0)
+	if not blur then
+		return
+	end
+
+	make_tween(blur, { Size = math.max(0, size) }, duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out):Play()
+end
+
+local function tween_camera_fov(target, duration)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+
+	make_tween(camera, { FieldOfView = target }, duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out):Play()
+end
+
+local function set_visible_silent(instance, state, isVisible)
+	if not instance or not instance:IsA("GuiObject") then
+		return
+	end
+
+	if instance.Visible == isVisible then
+		state.LastVisible = isVisible
+		return
+	end
+
+	state.IgnoreVisibleChanges += 1
+	instance.Visible = isVisible
+	state.LastVisible = isVisible
+end
+
+local function finish_open(instance, state, token)
+	if states[instance] ~= state or state.TransitionToken ~= token then
+		return
+	end
+
+	state.Opening = false
+	state.Closing = false
+	restore_instance(instance, state)
+end
+
+local function finish_close(instance, state, token)
+	if states[instance] ~= state or state.TransitionToken ~= token then
+		return
+	end
+
+	state.Opening = false
+	state.Closing = false
+	restore_instance(instance, state)
+	set_visible_silent(instance, state, false)
+	instance:SetAttribute("_is_closing", nil)
+end
+
+local function reset_transition(instance, state)
+	if not state then
+		return
+	end
+
+	state.TransitionToken += 1
+	cancel_state_tweens(state)
+	state.Opening = false
+	state.Closing = false
+	restore_instance(instance, state)
+
+	if instance and instance.Parent then
+		instance:SetAttribute("_is_closing", nil)
+	end
+end
+
+local function apply_open_start(instance, state, openKind, offset, popScale)
+	if openKind == "slide_down" then
+		instance.Position = offset_udim2(state.BasePosition or instance.Position, 0, -offset)
+	elseif openKind == "slide_up" then
+		instance.Position = offset_udim2(state.BasePosition or instance.Position, 0, offset)
+	elseif openKind == "slide_left" then
+		instance.Position = offset_udim2(state.BasePosition or instance.Position, offset, 0)
+	elseif openKind == "slide_right" then
+		instance.Position = offset_udim2(state.BasePosition or instance.Position, -offset, 0)
+	elseif openKind ~= "fade" and openKind ~= "none" then
+		instance.Size = scale_udim2(state.BaseSize or instance.Size, popScale)
+	end
+
+	if instance:IsA("CanvasGroup") then
+		instance.GroupTransparency = 1
+	end
+end
+
+local function build_open_target_properties(instance, state)
+	local properties = {
+		Size = state.BaseSize or instance.Size,
+		Position = state.BasePosition or instance.Position,
+		Rotation = state.BaseRotation or instance.Rotation,
+	}
+
+	if instance:IsA("CanvasGroup") then
+		properties.GroupTransparency = state.BaseGroupTransparency or 0
+	end
+
+	return properties
+end
+
+local function build_close_target_properties(instance, state, openKind, offset)
+	local properties = {}
+
+	if openKind == "slide_down" then
+		properties.Position = offset_udim2(state.BasePosition or instance.Position, 0, -offset)
+	elseif openKind == "slide_up" then
+		properties.Position = offset_udim2(state.BasePosition or instance.Position, 0, offset)
+	elseif openKind == "slide_left" then
+		properties.Position = offset_udim2(state.BasePosition or instance.Position, offset, 0)
+	elseif openKind == "slide_right" then
+		properties.Position = offset_udim2(state.BasePosition or instance.Position, -offset, 0)
+	elseif openKind ~= "fade" and openKind ~= "none" then
+		properties.Size = scale_udim2(state.BaseSize or instance.Size, 0.001)
+	end
+
+	if instance:IsA("CanvasGroup") then
+		properties.GroupTransparency = 1
+	end
+
+	return properties
+end
+
+local function play_open(instance, state, force)
+	if not instance or not instance.Parent or has_true_attribute(instance, IGNORE_HUD_ANIM_ATTRIBUTE) then
+		return
+	end
+
+	if instance:GetAttribute("UIOpen") ~= true and not force then
+		return
+	end
+
+	capture_base_state(instance, state, false)
+	track_base_changes(instance, state)
+	state.TransitionToken += 1
+	local token = state.TransitionToken
+	cancel_state_tweens(state)
+
+	state.Opening = true
+	state.Closing = false
+	instance:SetAttribute("_is_closing", nil)
+	set_visible_silent(instance, state, true)
+
+	local duration = math.max(0, get_number_attribute(instance, "open_t", DEFAULTS.open_t))
+	local openKind = instance:GetAttribute("open_anim") or "pop"
+	local offset = get_number_attribute(instance, "open_offset_px", DEFAULTS.open_offset_px)
+	local popScale = math.clamp(get_number_attribute(instance, "open_pop_scale", DEFAULTS.open_pop_scale), 0.001, 1)
+	local blurAmount = get_optional_number_attribute(instance, "blur")
+	local fovAmount = get_optional_number_attribute(instance, "fov")
+
+	if sync_hud_visibility_for_frame then
+		sync_hud_visibility_for_frame(instance, get_number_attribute(instance, "hud_fade_t", DEFAULTS.hud_fade_t), instance)
+	end
+
+	if duration <= 0 or openKind == "none" then
+		finish_open(instance, state, token)
+		return
+	end
+
+	apply_open_start(instance, state, openKind, offset, popScale)
+
+	if blurAmount and blurAmount > 0 then
+		tween_blur(blurAmount, get_number_attribute(instance, "blur_t", duration))
+	end
+
+	if fovAmount then
+		tween_camera_fov(fovAmount, duration)
+	end
+
+	safe_play_sound(instance, "sfx_open")
+	play_state_tween(
+		instance,
+		state,
+		build_open_target_properties(instance, state),
+		duration,
+		openKind == "pop" and Enum.EasingStyle.Back or Enum.EasingStyle.Quad,
+		Enum.EasingDirection.Out,
+		function()
+			finish_open(instance, state, token)
+		end
+	)
+end
+
+local function request_close(instance, state, force)
+	if not instance or not instance.Parent or has_true_attribute(instance, IGNORE_HUD_ANIM_ATTRIBUTE) then
+		return
+	end
+
+	if instance:GetAttribute("UIOpen") ~= true and not force then
+		set_visible_silent(instance, state, false)
+		return
+	end
+
+	if state.Closing then
+		set_visible_silent(instance, state, true)
+		return
+	end
+
+	capture_base_state(instance, state, false)
+	track_base_changes(instance, state)
+	state.TransitionToken += 1
+	local token = state.TransitionToken
+	cancel_state_tweens(state)
+
+	state.Opening = false
+	state.Closing = true
+	instance:SetAttribute("_is_closing", true)
+	set_visible_silent(instance, state, true)
+
+	local duration = math.max(0, get_number_attribute(instance, "open_t", DEFAULTS.open_t) * 0.75)
+	local openKind = instance:GetAttribute("open_anim") or "pop"
+	local offset = get_number_attribute(instance, "open_offset_px", DEFAULTS.open_offset_px) * 1.15
+	local blurAmount = get_optional_number_attribute(instance, "blur")
+
+	if sync_hud_visibility_for_frame then
+		task.defer(function()
+			sync_hud_visibility_for_frame(instance, get_number_attribute(instance, "hud_fade_t", DEFAULTS.hud_fade_t))
+		end)
+	end
+
+	if blurAmount and blurAmount > 0 then
+		tween_blur(0, get_number_attribute(instance, "blur_t", duration))
+	end
+
+	if get_optional_number_attribute(instance, "fov") then
+		tween_camera_fov(70, duration)
+	end
+
+	safe_play_sound(instance, "sfx_close")
+
+	if duration <= 0 or openKind == "none" then
+		finish_close(instance, state, token)
+		return
+	end
+
+	play_state_tween(
+		instance,
+		state,
+		build_close_target_properties(instance, state, openKind, offset),
+		duration,
+		Enum.EasingStyle.Quad,
+		Enum.EasingDirection.In,
+		function()
+			finish_close(instance, state, token)
+		end
+	)
+end
+
+local function bind_open_animation(instance, state)
+	if state.BoundOpen or instance:GetAttribute("UIOpen") ~= true then
+		return
+	end
+
+	state.BoundOpen = true
+	capture_base_state(instance, state, false)
+	track_base_changes(instance, state)
+
+	state.Connections[#state.Connections + 1] = instance:GetPropertyChangedSignal("Visible"):Connect(function()
+		if state.IgnoreVisibleChanges > 0 then
+			state.IgnoreVisibleChanges -= 1
+			state.LastVisible = instance.Visible
+			return
+		end
+
+		if has_true_attribute(instance, IGNORE_HUD_ANIM_ATTRIBUTE) or instance:GetAttribute("UIOpen") ~= true then
+			state.LastVisible = instance.Visible
+			return
+		end
+
+		if instance.Visible then
+			if instance:GetAttribute("skip_open") then
+				instance:SetAttribute("skip_open", nil)
+				reset_transition(instance, state)
+				state.LastVisible = true
+				sync_hud_visibility_for_frame(
+					instance,
+					get_number_attribute(instance, "hud_fade_t", DEFAULTS.hud_fade_t),
+					instance
+				)
+				return
+			end
+
+			state.LastVisible = true
+			play_open(instance, state)
+		else
+			if instance:GetAttribute("skip_close") then
+				instance:SetAttribute("skip_close", nil)
+				reset_transition(instance, state)
+				state.LastVisible = false
+				task.defer(function()
+					sync_hud_visibility_for_frame(instance, get_number_attribute(instance, "hud_fade_t", DEFAULTS.hud_fade_t))
+				end)
+				return
+			end
+
+			state.LastVisible = false
+			request_close(instance, state)
+		end
+	end)
+
+	if instance:GetAttribute("open_on_bind") == true and instance.Visible then
+		task.defer(function()
+			if states[instance] == state and instance.Parent and instance.Visible then
+				play_open(instance, state, true)
+			end
+		end)
+	end
+end
+
+local function find_named_ancestor(instance, targetName)
+	local current = instance
 	while current do
 		if current.Name == targetName then
 			return current
 		end
-
 		current = current.Parent
 	end
-
 	return nil
 end
 
-local function find_main_ui(instance: Instance?): Instance?
+local function find_main_ui(instance)
 	local ancestor = find_named_ancestor(instance, MAIN_UI_NAME)
 	if ancestor then
 		return ancestor
 	end
 
-	local directMainUi = playerGui:FindFirstChild(MAIN_UI_NAME)
-	if directMainUi then
-		return directMainUi
+	if playerGui then
+		return playerGui:FindFirstChild(MAIN_UI_NAME) or playerGui:FindFirstChild(MAIN_UI_NAME, true)
 	end
 
-	return playerGui:FindFirstChild(MAIN_UI_NAME, true)
+	return nil
 end
 
-local function find_mainframe(instance: Instance?): Instance?
+local function find_mainframe(instance)
 	local mainUi = find_main_ui(instance)
 	if not mainUi then
 		return nil
 	end
 
 	for _, mainframeName in ipairs(MAINFRAME_NAMES) do
-		local directMainframe = mainUi:FindFirstChild(mainframeName)
-		if directMainframe then
-			return directMainframe
+		local direct = mainUi:FindFirstChild(mainframeName)
+		if direct then
+			return direct
 		end
 	end
 
 	for _, mainframeName in ipairs(MAINFRAME_NAMES) do
-		local nestedMainframe = mainUi:FindFirstChild(mainframeName, true)
-		if nestedMainframe then
-			return nestedMainframe
+		local nested = mainUi:FindFirstChild(mainframeName, true)
+		if nested then
+			return nested
 		end
 	end
 
 	return nil
 end
 
-local function find_frames_container(instance: Instance?): Instance?
+local function find_frames_container(instance)
 	local mainframe = find_mainframe(instance)
 	if not mainframe then
 		return nil
 	end
 
-	local directFrames = mainframe:FindFirstChild(FRAMES_CONTAINER_NAME)
-	if directFrames then
-		return directFrames
-	end
-
-	return mainframe:FindFirstChild(FRAMES_CONTAINER_NAME, true)
+	return mainframe:FindFirstChild(FRAMES_CONTAINER_NAME) or mainframe:FindFirstChild(FRAMES_CONTAINER_NAME, true)
 end
 
-local function find_hud_root(instance: Instance?): GuiObject?
+local function find_hud_root(instance)
 	local mainframe = find_mainframe(instance)
 	if not mainframe then
 		return nil
 	end
 
-	local directHudRoot = mainframe:FindFirstChild(HUD_ROOT_NAME)
-	if directHudRoot and directHudRoot:IsA("GuiObject") then
-		return directHudRoot
+	local direct = mainframe:FindFirstChild(HUD_ROOT_NAME)
+	if direct and direct:IsA("GuiObject") then
+		return direct
 	end
 
-	local nestedHudRoot = mainframe:FindFirstChild(HUD_ROOT_NAME, true)
-	if nestedHudRoot and nestedHudRoot:IsA("GuiObject") then
-		return nestedHudRoot
+	local nested = mainframe:FindFirstChild(HUD_ROOT_NAME, true)
+	if nested and nested:IsA("GuiObject") then
+		return nested
 	end
 
 	return nil
 end
 
-local function get_top_level_frame_in_container(instance: Instance?, framesContainer: Instance?): GuiObject?
+local function get_top_level_frame_in_container(instance, framesContainer)
 	local current = instance
-
 	while current and framesContainer and current ~= framesContainer do
 		if current.Parent == framesContainer and current:IsA("GuiObject") then
 			return current
 		end
-
 		current = current.Parent
 	end
-
 	return nil
 end
 
-local function is_open_frame(frame: Instance?): boolean
+local function is_open_frame(frame)
+	local state = frame and states[frame]
 	return frame ~= nil
 		and frame:IsA("GuiObject")
 		and frame.Visible
-		and frame:GetAttribute("_is_closing") ~= true
+		and not (state and state.Closing)
 		and not has_true_attribute(frame, IGNORE_HUD_ANIM_ATTRIBUTE)
 end
 
-local function get_open_frame_for_hud(instance: Instance?, forcedOpenFrame: GuiObject?): GuiObject?
+local function get_open_frame_for_hud(instance, forcedOpenFrame)
 	local framesContainer = find_frames_container(instance or forcedOpenFrame)
 	if not framesContainer then
-		if is_open_frame(forcedOpenFrame) then
-			return forcedOpenFrame
-		end
-
-		return nil
+		return if is_open_frame(forcedOpenFrame) then forcedOpenFrame else nil
 	end
 
 	local forcedTopLevelFrame = get_top_level_frame_in_container(forcedOpenFrame, framesContainer)
-	if forcedTopLevelFrame then
+	if forcedTopLevelFrame and is_open_frame(forcedTopLevelFrame) then
 		return forcedTopLevelFrame
 	end
 
@@ -342,14 +894,10 @@ local function get_open_frame_for_hud(instance: Instance?, forcedOpenFrame: GuiO
 		end
 	end
 
-	if is_open_frame(forcedOpenFrame) then
-		return forcedOpenFrame
-	end
-
-	return nil
+	return if is_open_frame(forcedOpenFrame) then forcedOpenFrame else nil
 end
 
-local function get_hud_fade_excluded_names(openFrame: GuiObject?): { [string]: boolean }?
+local function get_hud_fade_excluded_names(openFrame)
 	if openFrame and openFrame.Name == INVENTORY_FRAME_NAME then
 		return INVENTORY_HUD_FADE_EXCLUDED_NAMES
 	end
@@ -361,15 +909,11 @@ local function get_hud_fade_excluded_names(openFrame: GuiObject?): { [string]: b
 	return nil
 end
 
-local function has_hud_fade_exclusions(excludedNames: { [string]: boolean }?): boolean
-	if not excludedNames then
-		return false
-	end
-
-	return next(excludedNames) ~= nil
+local function has_exclusions(excludedNames)
+	return excludedNames ~= nil and next(excludedNames) ~= nil
 end
 
-local function get_hud_fade_exclusion_key(excludedNames: { [string]: boolean }?): string
+local function get_exclusion_key(excludedNames)
 	if not excludedNames then
 		return ""
 	end
@@ -378,16 +922,11 @@ local function get_hud_fade_exclusion_key(excludedNames: { [string]: boolean }?)
 	for name in pairs(excludedNames) do
 		names[#names + 1] = name
 	end
-
 	table.sort(names)
 	return table.concat(names, "|")
 end
 
-local function is_in_excluded_hud_subtree(
-	instance: Instance?,
-	hudRoot: GuiObject,
-	excludedNames: { [string]: boolean }?
-): boolean
+local function is_in_excluded_subtree(instance, hudRoot, excludedNames)
 	if not instance or not excludedNames then
 		return false
 	end
@@ -397,111 +936,127 @@ local function is_in_excluded_hud_subtree(
 		if excludedNames[current.Name] == true then
 			return true
 		end
-
 		current = current.Parent
 	end
 
-	return false
+	return instance == hudRoot and excludedNames[hudRoot.Name] == true
 end
 
-local function track_hud_fade_property(records, fadeState, instance: Instance, propertyName: string): ()
-	local success, currentValue = pcall(function()
-		return instance[propertyName]
-	end)
-
-	if not success then
-		return
+local function get_hud_fade_state(hudRoot)
+	local fadeState = hudFadeStates[hudRoot]
+	if fadeState then
+		return fadeState
 	end
 
-	local originals = fadeState.Originals
-	local originalProperties = originals[instance]
-	if not originalProperties then
-		originalProperties = {}
-		originals[instance] = originalProperties
+	fadeState = {
+		Originals = setmetatable({}, { __mode = "k" }),
+		VisibleOriginals = setmetatable({}, { __mode = "k" }),
+		Token = 0,
+		TargetHidden = nil,
+		ExclusionKey = "",
+	}
+	hudFadeStates[hudRoot] = fadeState
+	return fadeState
+end
+
+local function get_original_property(fadeState, instance, propertyName, fallback)
+	local originals = fadeState.Originals[instance]
+	if not originals then
+		originals = {}
+		fadeState.Originals[instance] = originals
 	end
 
-	if originalProperties[propertyName] == nil then
-		originalProperties[propertyName] = currentValue
+	if originals[propertyName] == nil then
+		local success, value = pcall(function()
+			return instance[propertyName]
+		end)
+		originals[propertyName] = if success then value else fallback
 	end
 
+	return originals[propertyName]
+end
+
+local function push_fade_record(records, fadeState, instance, propertyName, targetValue)
+	local originalValue = get_original_property(fadeState, instance, propertyName, 0)
 	records[#records + 1] = {
 		Instance = instance,
 		PropertyName = propertyName,
-		Original = originalProperties[propertyName],
+		OriginalValue = originalValue,
+		TargetValue = targetValue,
 	}
 end
 
-local function collect_hud_fade_records(
-	hudRoot: GuiObject,
-	fadeState,
-	excludedNames: { [string]: boolean }?,
-	forceDescendantFade: boolean?
-)
+local function collect_hud_fade_records(hudRoot, fadeState, shouldHide, excludedNames)
 	local records = {}
 
-	if hudRoot:IsA("CanvasGroup") and not has_hud_fade_exclusions(excludedNames) and not forceDescendantFade then
-		track_hud_fade_property(records, fadeState, hudRoot, "GroupTransparency")
-		return records
-	end
-
-	local function track_instance(instance: Instance): ()
-		if is_in_excluded_hud_subtree(instance, hudRoot, excludedNames) then
+	local function track(instance)
+		if is_in_excluded_subtree(instance, hudRoot, excludedNames) then
 			return
 		end
 
 		if instance:IsA("GuiObject") then
-			track_hud_fade_property(records, fadeState, instance, "BackgroundTransparency")
+			push_fade_record(records, fadeState, instance, "BackgroundTransparency", if shouldHide then 1 else nil)
 		end
 
 		if instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox") then
-			track_hud_fade_property(records, fadeState, instance, "TextTransparency")
-			track_hud_fade_property(records, fadeState, instance, "TextStrokeTransparency")
+			push_fade_record(records, fadeState, instance, "TextTransparency", if shouldHide then 1 else nil)
+			push_fade_record(records, fadeState, instance, "TextStrokeTransparency", if shouldHide then 1 else nil)
 		elseif instance:IsA("ImageLabel") or instance:IsA("ImageButton") then
-			track_hud_fade_property(records, fadeState, instance, "ImageTransparency")
+			push_fade_record(records, fadeState, instance, "ImageTransparency", if shouldHide then 1 else nil)
 		elseif instance:IsA("UIStroke") then
-			track_hud_fade_property(records, fadeState, instance, "Transparency")
+			push_fade_record(records, fadeState, instance, "Transparency", if shouldHide then 1 else nil)
+		elseif instance:IsA("CanvasGroup") then
+			push_fade_record(records, fadeState, instance, "GroupTransparency", if shouldHide then 1 else nil)
 		end
 	end
 
-	track_instance(hudRoot)
+	track(hudRoot)
 	for _, descendant in ipairs(hudRoot:GetDescendants()) do
-		track_instance(descendant)
+		track(descendant)
+	end
+
+	for _, record in ipairs(records) do
+		if not shouldHide then
+			record.TargetValue = record.OriginalValue
+		end
 	end
 
 	return records
 end
 
-local function restore_hud_canvas_group_transparency(hudRoot: GuiObject, fadeState): ()
-	if not hudRoot:IsA("CanvasGroup") then
+local function cancel_hud_fade(hudRoot)
+	local tweens = hudFadeTweens[hudRoot]
+	if not tweens then
 		return
 	end
 
-	local originalProperties = fadeState.Originals[hudRoot]
-	local originalGroupTransparency = originalProperties and originalProperties.GroupTransparency
-	if originalGroupTransparency == nil then
-		local success, currentValue = pcall(function()
-			return hudRoot.GroupTransparency
+	for _, tween in ipairs(tweens) do
+		pcall(function()
+			tween:Cancel()
 		end)
+	end
+	hudFadeTweens[hudRoot] = nil
+end
 
-		originalGroupTransparency = if success then currentValue else 0
+local function set_record_value(record, useTarget)
+	local instance = record.Instance
+	if not instance or not instance.Parent then
+		return
 	end
 
+	local value = if useTarget then record.TargetValue else record.OriginalValue
 	pcall(function()
-		hudRoot.GroupTransparency = originalGroupTransparency
+		instance[record.PropertyName] = value
 	end)
 end
 
-local function collect_hud_visibility_records(hudRoot: GuiObject, fadeState, excludedNames: { [string]: boolean }?)
+local function collect_hud_visibility_records(hudRoot, fadeState, excludedNames)
 	local records = {}
 	local visibleOriginals = fadeState.VisibleOriginals
-	if not visibleOriginals then
-		visibleOriginals = {}
-		fadeState.VisibleOriginals = visibleOriginals
-	end
 
-	if has_hud_fade_exclusions(excludedNames) then
+	if has_exclusions(excludedNames) then
 		for _, child in ipairs(hudRoot:GetChildren()) do
-			if child:IsA("GuiObject") and not is_in_excluded_hud_subtree(child, hudRoot, excludedNames) then
+			if child:IsA("GuiObject") and not is_in_excluded_subtree(child, hudRoot, excludedNames) then
 				if visibleOriginals[child] == nil then
 					visibleOriginals[child] = child.Visible
 				end
@@ -513,7 +1068,7 @@ local function collect_hud_visibility_records(hudRoot: GuiObject, fadeState, exc
 		if instance
 			and instance.Parent
 			and instance:IsDescendantOf(hudRoot)
-			and not is_in_excluded_hud_subtree(instance, hudRoot, excludedNames)
+			and not is_in_excluded_subtree(instance, hudRoot, excludedNames)
 		then
 			records[#records + 1] = {
 				Instance = instance,
@@ -525,51 +1080,7 @@ local function collect_hud_visibility_records(hudRoot: GuiObject, fadeState, exc
 	return records
 end
 
-local function restore_excluded_hud_subtrees(
-	hudRoot: GuiObject,
-	fadeState,
-	excludedNames: { [string]: boolean }?
-): ()
-	if not has_hud_fade_exclusions(excludedNames) then
-		return
-	end
-
-	local visibleOriginals = fadeState.VisibleOriginals or {}
-	for _, child in ipairs(hudRoot:GetChildren()) do
-		if child:IsA("GuiObject") and is_in_excluded_hud_subtree(child, hudRoot, excludedNames) then
-			local originalVisible = visibleOriginals[child]
-			child.Visible = if originalVisible ~= nil then originalVisible else true
-		end
-	end
-end
-
-local function cancel_hud_fade(hudRoot: GuiObject): ()
-	local tweens = hud_fade_tweens[hudRoot]
-	if not tweens then
-		return
-	end
-
-	for _, tween in ipairs(tweens) do
-		pcall(function()
-			tween:Cancel()
-		end)
-	end
-
-	hud_fade_tweens[hudRoot] = nil
-end
-
-local function set_hud_record_value(record, value): ()
-	local instance = record.Instance
-	if not instance or not instance.Parent then
-		return
-	end
-
-	pcall(function()
-		instance[record.PropertyName] = value
-	end)
-end
-
-local function set_hud_visibility_records(records, shouldHide: boolean): ()
+local function set_visibility_records(records, shouldHide)
 	for _, record in ipairs(records) do
 		local instance = record.Instance
 		if instance and instance.Parent then
@@ -580,85 +1091,71 @@ local function set_hud_visibility_records(records, shouldHide: boolean): ()
 	end
 end
 
-local function fade_hud_root(
-	hudRoot: GuiObject?,
-	shouldHide: boolean,
-	duration: number?,
-	excludedNames: { [string]: boolean }?
-): ()
+local function restore_excluded_subtrees(hudRoot, fadeState, excludedNames)
+	if not has_exclusions(excludedNames) then
+		return
+	end
+
+	for _, child in ipairs(hudRoot:GetChildren()) do
+		if child:IsA("GuiObject") and is_in_excluded_subtree(child, hudRoot, excludedNames) then
+			local originalVisible = fadeState.VisibleOriginals[child]
+			child.Visible = if originalVisible ~= nil then originalVisible else true
+		end
+	end
+end
+
+local function fade_hud_root(hudRoot, shouldHide, duration, excludedNames)
 	if not hudRoot or not hudRoot.Parent then
 		return
 	end
 
-	local fadeState = hud_fade_states[hudRoot]
-	if not fadeState then
-		fadeState = {
-			Originals = {},
-			VisibleOriginals = {},
-			Token = 0,
-			TargetHidden = nil,
-			ExclusionKey = "",
-			DescendantFadeActive = false,
-		}
-		hud_fade_states[hudRoot] = fadeState
-	end
-
-	local previousExclusionKey = fadeState.ExclusionKey or ""
-	local exclusionKey = get_hud_fade_exclusion_key(excludedNames)
+	local fadeState = get_hud_fade_state(hudRoot)
+	local exclusionKey = get_exclusion_key(excludedNames)
 	if fadeState.TargetHidden == shouldHide and fadeState.ExclusionKey == exclusionKey then
 		return
 	end
 
 	fadeState.Token += 1
+	local token = fadeState.Token
 	fadeState.TargetHidden = shouldHide
 	fadeState.ExclusionKey = exclusionKey
-	local token = fadeState.Token
-	local fadeDuration = math.max(0, duration or DEFAULTS.hud_fade_t)
-	local hasExclusions = has_hud_fade_exclusions(excludedNames)
-	local keepHudRootVisible = shouldHide and hasExclusions
-	local useDescendantFade = hasExclusions or previousExclusionKey ~= "" or fadeState.DescendantFadeActive == true
-	local visibilityRecords = collect_hud_visibility_records(hudRoot, fadeState, excludedNames)
-	if shouldHide and useDescendantFade then
-		fadeState.DescendantFadeActive = true
-	end
 
 	cancel_hud_fade(hudRoot)
 	hudRoot.Visible = true
-	if useDescendantFade then
-		restore_hud_canvas_group_transparency(hudRoot, fadeState)
-	end
-	restore_excluded_hud_subtrees(hudRoot, fadeState, excludedNames)
+	restore_excluded_subtrees(hudRoot, fadeState, excludedNames)
 
+	local visibilityRecords = collect_hud_visibility_records(hudRoot, fadeState, excludedNames)
 	if not shouldHide then
-		set_hud_visibility_records(visibilityRecords, false)
+		set_visibility_records(visibilityRecords, false)
 	end
 
-	local records = collect_hud_fade_records(hudRoot, fadeState, excludedNames, useDescendantFade)
+	local fadeDuration = math.max(0, duration or DEFAULTS.hud_fade_t)
+	local records = collect_hud_fade_records(hudRoot, fadeState, shouldHide, excludedNames)
+	local keepHudVisible = shouldHide and has_exclusions(excludedNames)
 
 	if fadeDuration <= 0 then
 		for _, record in ipairs(records) do
-			set_hud_record_value(record, if shouldHide then 1 else record.Original)
+			set_record_value(record, true)
 		end
-
 		if shouldHide then
-			set_hud_visibility_records(visibilityRecords, true)
+			set_visibility_records(visibilityRecords, true)
 		end
-
-		fadeState.DescendantFadeActive = shouldHide and useDescendantFade
-		hudRoot.Visible = keepHudRootVisible or not shouldHide
+		hudRoot.Visible = keepHudVisible or not shouldHide
 		return
 	end
 
-	local tweenInfo = TweenInfo.new(fadeDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	local tweens = {}
-
 	for _, record in ipairs(records) do
 		local instance = record.Instance
 		if instance and instance.Parent then
 			local success, tween = pcall(function()
-				return TweenService:Create(instance, tweenInfo, {
-					[record.PropertyName] = if shouldHide then 1 else record.Original,
-				})
+				return make_tween(
+					instance,
+					{ [record.PropertyName] = record.TargetValue },
+					fadeDuration,
+					Enum.EasingStyle.Quad,
+					Enum.EasingDirection.Out
+				)
 			end)
 
 			if success and tween then
@@ -667,30 +1164,25 @@ local function fade_hud_root(
 			end
 		end
 	end
-
-	hud_fade_tweens[hudRoot] = tweens
+	hudFadeTweens[hudRoot] = tweens
 
 	task.delay(fadeDuration, function()
-		if fadeState.Token ~= token or not hudRoot or not hudRoot.Parent then
+		if fadeState.Token ~= token or not hudRoot.Parent then
 			return
 		end
 
-		hud_fade_tweens[hudRoot] = nil
-
+		hudFadeTweens[hudRoot] = nil
 		for _, record in ipairs(records) do
-			set_hud_record_value(record, if shouldHide then 1 else record.Original)
+			set_record_value(record, true)
 		end
-
 		if shouldHide then
-			set_hud_visibility_records(visibilityRecords, true)
+			set_visibility_records(visibilityRecords, true)
 		end
-
-		fadeState.DescendantFadeActive = shouldHide and useDescendantFade
-		hudRoot.Visible = keepHudRootVisible or not shouldHide
+		hudRoot.Visible = keepHudVisible or not shouldHide
 	end)
 end
 
-local function sync_hud_visibility_for_frame(instance: Instance?, duration: number?, forcedOpenFrame: GuiObject?): ()
+sync_hud_visibility_for_frame = function(instance, duration, forcedOpenFrame)
 	local hudRoot = find_hud_root(instance or forcedOpenFrame)
 	if not hudRoot then
 		return
@@ -700,9 +1192,8 @@ local function sync_hud_visibility_for_frame(instance: Instance?, duration: numb
 	fade_hud_root(hudRoot, openFrame ~= nil, duration, get_hud_fade_excluded_names(openFrame))
 end
 
-local function is_hud_button(button: GuiButton): boolean
-	local hudRoot = find_named_ancestor(button, HUD_ROOT_NAME)
-	if hudRoot then
+local function is_hud_button(button)
+	if find_named_ancestor(button, HUD_ROOT_NAME) then
 		return true
 	end
 
@@ -711,33 +1202,24 @@ local function is_hud_button(button: GuiButton): boolean
 		return false
 	end
 
-	local directHudRoot = mainUi:FindFirstChild(HUD_ROOT_NAME)
-	if directHudRoot and button:IsDescendantOf(directHudRoot) then
-		return true
-	end
-
-	local nestedHudRoot = mainUi:FindFirstChild(HUD_ROOT_NAME, true)
-	return nestedHudRoot ~= nil and button:IsDescendantOf(nestedHudRoot)
+	local hudRoot = mainUi:FindFirstChild(HUD_ROOT_NAME) or mainUi:FindFirstChild(HUD_ROOT_NAME, true)
+	return hudRoot ~= nil and button:IsDescendantOf(hudRoot)
 end
 
-local function get_target_frame_name(button: GuiButton): string?
+local function get_target_frame_name(button)
 	local buttonName = button.Name
 	if buttonName == EXIT_BUTTON_NAME then
 		return nil
 	end
 
-	if string.len(buttonName) <= string.len(BUTTON_SUFFIX) then
+	if #buttonName <= #BUTTON_SUFFIX or string.sub(buttonName, -#BUTTON_SUFFIX) ~= BUTTON_SUFFIX then
 		return nil
 	end
 
-	if string.sub(buttonName, -string.len(BUTTON_SUFFIX)) ~= BUTTON_SUFFIX then
-		return nil
-	end
-
-	return string.sub(buttonName, 1, #buttonName - string.len(BUTTON_SUFFIX))
+	return string.sub(buttonName, 1, #buttonName - #BUTTON_SUFFIX)
 end
 
-local function find_open_target(button: GuiButton): GuiObject?
+local function find_open_target(button)
 	local frameName = get_target_frame_name(button)
 	if not frameName then
 		return nil
@@ -749,32 +1231,49 @@ local function find_open_target(button: GuiButton): GuiObject?
 	end
 
 	local target = framesContainer:FindFirstChild(frameName)
-	if target and target:IsA("GuiObject") then
-		return target
-	end
-
-	return nil
+	return if target and target:IsA("GuiObject") then target else nil
 end
 
-local function show_target_frame(target: GuiObject): ()
-	local framesContainer = target.Parent
+local function hide_sibling_frames_without_animation(target)
+	local framesContainer = target and target.Parent
 	if not framesContainer then
-		target.Visible = true
-		sync_hud_visibility_for_frame(target, get_number_attribute(target, "open_t", DEFAULTS.hud_fade_t), target)
 		return
 	end
 
 	for _, child in ipairs(framesContainer:GetChildren()) do
-		if child ~= target and child:IsA("GuiObject") then
-			child.Visible = false
+		if child ~= target and child:IsA("GuiObject") and child.Visible then
+			local childState = states[child]
+			if childState then
+				reset_transition(child, childState)
+				set_visible_silent(child, childState, false)
+			else
+				child.Visible = false
+			end
 		end
 	end
-
-	target.Visible = true
-	sync_hud_visibility_for_frame(target, get_number_attribute(target, "open_t", DEFAULTS.hud_fade_t), target)
 end
 
-local function find_exit_target(button: GuiButton): GuiObject?
+local function show_target_frame(target)
+	if not target or not target:IsA("GuiObject") then
+		return
+	end
+
+	hide_sibling_frames_without_animation(target)
+	bind_instance(target)
+
+	local targetState = states[target]
+	if targetState and targetState.Closing then
+		play_open(target, targetState, true)
+	elseif target.Visible then
+		-- Already open; only refresh HUD visibility below.
+	else
+		target.Visible = true
+	end
+
+	sync_hud_visibility_for_frame(target, get_number_attribute(target, "hud_fade_t", DEFAULTS.hud_fade_t), target)
+end
+
+local function find_exit_target(button)
 	local mainframe = find_mainframe(button)
 	if not mainframe then
 		return nil
@@ -797,52 +1296,36 @@ local function find_exit_target(button: GuiButton): GuiObject?
 	return nil
 end
 
-local function bind_open_button(button: GuiButton): ()
-	if open_connections[button] then
+local function bind_auto_open_button(button, state)
+	if state.BoundAutoOpenButton or not is_hud_button(button) or not get_target_frame_name(button) then
 		return
 	end
 
-	if has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE) then
-		return
-	end
-
-	if not is_hud_button(button) or not get_target_frame_name(button) then
-		return
-	end
-
-	open_connections[button] = button.Activated:Connect(function()
-		if has_true_attribute(button, IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE) then
+	state.BoundAutoOpenButton = true
+	state.Connections[#state.Connections + 1] = button.Activated:Connect(function()
+		if has_true_attribute(button, IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE)
+			or has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE)
+		then
 			return
 		end
 
 		local target = find_open_target(button)
-		if not target then
-			return
+		if target then
+			show_target_frame(target)
 		end
-
-		show_target_frame(target)
-	end)
-
-	button.AncestryChanged:Connect(function(_, parent)
-		if parent then
-			return
-		end
-
-		cleanup_open_button(button)
 	end)
 end
 
-local function bind_exit_button(button: GuiButton): ()
-	if exit_connections[button] then
+local function bind_exit_button(button, state)
+	if state.BoundExitButton or button.Name ~= EXIT_BUTTON_NAME then
 		return
 	end
 
-	if has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE) then
-		return
-	end
-
-	exit_connections[button] = button.Activated:Connect(function()
-		if has_true_attribute(button, IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE) then
+	state.BoundExitButton = true
+	state.Connections[#state.Connections + 1] = button.Activated:Connect(function()
+		if has_true_attribute(button, IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE)
+			or has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE)
+		then
 			return
 		end
 
@@ -851,334 +1334,195 @@ local function bind_exit_button(button: GuiButton): ()
 			return
 		end
 
-		target.Visible = false
-		task.defer(function()
-			sync_hud_visibility_for_frame(target, get_number_attribute(target, "open_t", DEFAULTS.hud_fade_t))
-		end)
-	end)
-
-	button.AncestryChanged:Connect(function(_, parent)
-		if parent then
-			return
+		bind_instance(target)
+		local targetState = states[target]
+		if targetState and target:GetAttribute("UIOpen") == true then
+			request_close(target, targetState, true)
+		else
+			target.Visible = false
 		end
 
-		cleanup_exit_button(button)
+		task.defer(function()
+			sync_hud_visibility_for_frame(target, DEFAULTS.hud_fade_t)
+		end)
 	end)
 end
 
-------------------//MAIN FUNCTIONS
-function HudAnim.set_defaults(opts: {}): ()
-	for k, v in opts do
-		DEFAULTS[k] = v
+bind_instance = function(instance)
+	if not instance or not instance:IsA("GuiObject") then
+		return
 	end
-	SFX.set_defaults(opts)
+
+	if has_true_attribute(instance, IGNORE_HUD_ANIM_ATTRIBUTE) then
+		HudAnim.unbind(instance)
+		return
+	end
+
+	local isButton = instance:IsA("GuiButton")
+	local hasButtonAnimation = isButton and should_animate_button(instance)
+	local hasOpenAnimation = instance:GetAttribute("UIOpen") == true
+	local hasAutoButton = isButton and (instance.Name == EXIT_BUTTON_NAME or (is_hud_button(instance) and get_target_frame_name(instance)))
+
+	if not hasButtonAnimation and not hasOpenAnimation and not hasAutoButton then
+		return
+	end
+
+	local state = get_or_create_state(instance)
+
+	if isButton then
+		if instance.Name == EXIT_BUTTON_NAME then
+			bind_exit_button(instance, state)
+		else
+			bind_auto_open_button(instance, state)
+		end
+		bind_button_animation(instance, state)
+	end
+
+	bind_open_animation(instance, state)
+
+	if not state.AncestryConnectionBound then
+		state.AncestryConnectionBound = true
+		state.Connections[#state.Connections + 1] = instance.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				HudAnim.unbind(instance)
+			end
+		end)
+	end
 end
 
-function HudAnim.apply_defaults_to_buttons(root: Instance, extra: {}?): ()
-	for _, d in root:GetDescendants() do
-		if d:IsA("GuiButton") and not has_true_attribute(d, IGNORE_HUD_ANIM_ATTRIBUTE) then
-			d:SetAttribute("UIAnim", true)
-			apply_defaults(d)
-			if extra then
-				for k, v in extra do
-					d:SetAttribute(k, v)
+function HudAnim.set_defaults(options)
+	if type(options) ~= "table" then
+		return
+	end
+
+	for key, value in pairs(options) do
+		DEFAULTS[key] = value
+	end
+
+	if SFX and type(SFX.set_defaults) == "function" then
+		SFX.set_defaults(options)
+	end
+end
+
+function HudAnim.apply_defaults_to_buttons(root, extra)
+	if not root then
+		return
+	end
+
+	local function apply_to_button(button)
+		if button:IsA("GuiButton") and not has_true_attribute(button, IGNORE_HUD_ANIM_ATTRIBUTE) then
+			button:SetAttribute("UIAnim", true)
+			apply_defaults(button)
+
+			if type(extra) == "table" then
+				for key, value in pairs(extra) do
+					button:SetAttribute(key, value)
 				end
 			end
 		end
 	end
+
+	apply_to_button(root)
+	for _, descendant in ipairs(root:GetDescendants()) do
+		apply_to_button(descendant)
+	end
 end
 
-function HudAnim.sync_hud_visibility_for_frame(instance: Instance?, duration: number?, forcedOpenFrame: GuiObject?): ()
+function HudAnim.sync_hud_visibility_for_frame(instance, duration, forcedOpenFrame)
 	sync_hud_visibility_for_frame(instance, duration, forcedOpenFrame)
 end
 
-function HudAnim.bind(inst: GuiObject): ()
-	if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-		if bound[inst] then
-			HudAnim.unbind(inst)
-		elseif inst:IsA("GuiButton") then
-			cleanup_open_button(inst)
-			if inst.Name == EXIT_BUTTON_NAME then
-				cleanup_exit_button(inst)
-			end
-		end
-
-		return
-	end
-
-	if inst:IsA("GuiButton") then
-		if inst.Name == EXIT_BUTTON_NAME then
-			bind_exit_button(inst)
-		else
-			bind_open_button(inst)
-		end
-	end
-
-	if bound[inst] then
-		return
-	end
-	if not (inst:GetAttribute("UIAnim") or inst:GetAttribute("UIAnimPreset") or inst:GetAttribute("UIOpen")) then
-		return
-	end
-	bound[inst] = true
-
-	state[inst] = {
-		origSize = inst.Size,
-		origPos = inst.Position,
-		origRot = inst.Rotation,
-		origBg = (inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("Frame")) and inst.BackgroundColor3 or nil,
-		origImg = (inst:IsA("ImageLabel") or inst:IsA("ImageButton")) and inst.ImageColor3 or nil,
-		hovering = false,
-	}
-
-	apply_defaults(inst)
-	Rotate.on_bind(inst, state[inst], Utils)
-
-	Close.bind(inst, state[inst], Utils, SFX)
-
-	if inst:IsA("GuiObject") then
-		inst.Active = true
-	end
-
-	inst.MouseEnter:Connect(function()
-		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-			return
-		end
-
-		local st = state[inst]
-		if not st then
-			return
-		end
-		if should_run_hover_for(inst) and wants_hover(inst) and not st.hovering then
-			st.hovering = true
-			Hover.on_hover(inst, st, Utils, SFX, Pulse)
-		end
-	end)
-
-	inst.MouseLeave:Connect(function()
-		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-			return
-		end
-
-		local st = state[inst]
-		if not st then
-			return
-		end
-		if st.hovering and wants_hover(inst) then
-			st.hovering = false
-			Hover.on_rest(inst, st, Utils, Pulse)
-		end
-	end)
-
-	inst.MouseMoved:Connect(function()
-		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-			return
-		end
-
-		local st = state[inst]
-		if not st then
-			return
-		end
-
-		if should_run_hover_for(inst) and wants_hover(inst) then
-			if not st.hovering then
-				st.hovering = true
-				Hover.on_hover(inst, st, Utils, SFX, Pulse)
-			end
-		else
-			if st.hovering then
-				st.hovering = false
-				Hover.on_rest(inst, st, Utils, Pulse)
-			end
-		end
-	end)
-
-	if inst:IsA("GuiButton") then
-		inst.MouseButton1Down:Connect(function()
-			if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-				return
-			end
-
-			local st = state[inst]
-			if not st then
-				return
-			end
-
-			Click.on_down(inst, st, Utils, SFX)
-		end)
-		inst.MouseButton1Up:Connect(function()
-			if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-				return
-			end
-
-			local st = state[inst]
-			if not st then
-				return
-			end
-
-			Click.on_up(inst, st, Utils, SFX)
-		end)
-	end
-
-	inst.SelectionGained:Connect(function()
-		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-			return
-		end
-
-		if not wants_hover(inst) then
-			return
-		end
-
-		local st = state[inst]
-		if not st then
-			return
-		end
-
-		safe_play(inst, "sfx_select")
-
-		if not st.hovering then
-			st.hovering = true
-			Hover.on_hover(inst, st, Utils, SFX, Pulse)
-		end
-	end)
-
-	inst.SelectionLost:Connect(function()
-		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-			return
-		end
-
-		if not wants_hover(inst) then
-			return
-		end
-
-		local st = state[inst]
-		if not st then
-			return
-		end
-
-		safe_play(inst, "sfx_deselect")
-
-		if st.hovering then
-			st.hovering = false
-			Hover.on_rest(inst, st, Utils, Pulse)
-		end
-	end)
-
-	if inst:GetAttribute("UIOpen") and inst:GetAttribute("open_on_bind") then
-		inst.Visible = false
-		inst:SetAttribute("skip_open", true)
-
-		if running_open[inst] then
-			task.cancel(running_open[inst])
-		end
-
-		running_open[inst] = task.spawn(function()
-			local openTime = get_number_attribute(inst, "open_t", DEFAULTS.open_t)
-			sync_hud_visibility_for_frame(inst, openTime, inst)
-			Open.run(inst, state[inst], Utils, SFX)
-			task.wait(openTime)
-			running_open[inst] = nil
-		end)
-	end
-
-	inst:GetPropertyChangedSignal("Visible"):Connect(function()
-		if not inst:GetAttribute("UIOpen") then
-			return
-		end
-
-		if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-			return
-		end
-
-		if inst:GetAttribute("_is_closing") then
-			task.defer(function()
-				sync_hud_visibility_for_frame(inst, get_number_attribute(inst, "open_t", DEFAULTS.hud_fade_t))
-			end)
-			return
-		end
-
-		if inst.Visible then
-			if inst:GetAttribute("skip_open") then
-				inst:SetAttribute("skip_open", nil)
-				return
-			end
-
-			local openTime = get_number_attribute(inst, "open_t", DEFAULTS.open_t)
-			sync_hud_visibility_for_frame(inst, openTime, inst)
-
-			if running_open[inst] then
-				task.cancel(running_open[inst])
-				running_open[inst] = nil
-			end
-
-			running_open[inst] = task.spawn(function()
-				Open.run(inst, state[inst], Utils, SFX)
-				task.wait(openTime)
-				running_open[inst] = nil
-			end)
-		else
-			task.defer(function()
-				sync_hud_visibility_for_frame(inst, get_number_attribute(inst, "open_t", DEFAULTS.hud_fade_t))
-			end)
-
-			if running_open[inst] then
-				task.cancel(running_open[inst])
-				running_open[inst] = nil
-			end
-		end
-	end)
-
-	inst.AncestryChanged:Connect(function(_, p)
-		if not p then
-			HudAnim.unbind(inst)
-		end
-	end)
+function HudAnim.bind(instance)
+	bind_instance(instance)
 end
 
-function HudAnim.unbind(inst: GuiObject): ()
-	if inst:IsA("GuiButton") then
-		cleanup_open_button(inst)
-		if inst.Name == EXIT_BUTTON_NAME then
-			cleanup_exit_button(inst)
-		end
-	end
-
-	local st = state[inst]
-	if not st then
+function HudAnim.unbind(instance)
+	if not instance or not instance:IsA("GuiObject") then
 		return
 	end
 
-	Pulse.stop(inst, st)
-	restore_state(inst, st)
-
-	task.delay(DEFAULTS.hover_t + DEFAULTS.click_t, function()
-		restore_state(inst, st)
-	end)
-
-	if running_open[inst] then
-		task.cancel(running_open[inst])
-		running_open[inst] = nil
+	local state = states[instance]
+	if not state then
+		return
 	end
 
-	state[inst] = nil
-	bound[inst] = nil
+	states[instance] = nil
+	state.TransitionToken += 1
+	cancel_state_tweens(state)
+	disconnect_connections(state.Connections)
+	restore_instance(instance, state)
+	instance:SetAttribute("_is_closing", nil)
 end
 
-function HudAnim.bind_all(root: Instance): ()
-	for _, d in root:GetDescendants() do
-		if d:IsA("GuiObject") then
-			HudAnim.bind(d)
+function HudAnim.bind_all(root)
+	if not root then
+		return
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("GuiObject") then
+			bind_instance(descendant)
 		end
 	end
 end
 
-function HudAnim.unbind_all(root: Instance): ()
-	for _, d in root:GetDescendants() do
-		if d:IsA("GuiObject") then
-			HudAnim.unbind(d)
+function HudAnim.unbind_all(root)
+	if not root then
+		return
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("GuiObject") then
+			HudAnim.unbind(descendant)
 		end
 	end
 end
 
-------------------//INIT
+function HudAnim.refresh_baseline(instance)
+	if not instance or not instance:IsA("GuiObject") then
+		return
+	end
+
+	local state = get_or_create_state(instance)
+	capture_base_state(instance, state, true)
+end
+
+function HudAnim.play_open(instance)
+	if not instance or not instance:IsA("GuiObject") then
+		return
+	end
+
+	bind_instance(instance)
+	local state = states[instance] or get_or_create_state(instance)
+	play_open(instance, state, true)
+end
+
+function HudAnim.play_close(instance)
+	if not instance or not instance:IsA("GuiObject") then
+		return
+	end
+
+	bind_instance(instance)
+	local state = states[instance] or get_or_create_state(instance)
+	request_close(instance, state, true)
+end
+
+function HudAnim.set_visible(instance, isVisible, animate)
+	if not instance or not instance:IsA("GuiObject") then
+		return
+	end
+
+	bind_instance(instance)
+	local state = states[instance] or get_or_create_state(instance)
+
+	if animate == false then
+		reset_transition(instance, state)
+		set_visible_silent(instance, state, isVisible == true)
+	elseif isVisible then
+		play_open(instance, state, true)
+	else
+		request_close(instance, state, true)
+	end
+end
+
 return HudAnim

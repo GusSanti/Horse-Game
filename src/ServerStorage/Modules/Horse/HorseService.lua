@@ -16,6 +16,7 @@ local VISUAL_HORSE_ATTRIBUTE = "IsStableVisualHorse"
 local HORSE_ID_ATTRIBUTE = "HorseId"
 local HORSE_CATALOG_ID_ATTRIBUTE = "HorseCatalogId"
 local HORSE_VISUAL_MODEL_NAME_ATTRIBUTE = "HorseVisualModelName"
+local MOUNTED_USER_ID_ATTRIBUTE = "MountedUserId"
 local STATUS_UPDATE_INTERVAL_SECONDS = 60
 local STABLE_GROUND_RAY_DISTANCE = 100
 local STABLE_GROUND_MIN_HORIZONTAL_AREA = 16
@@ -32,6 +33,7 @@ local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))
+local HorseSaddleVisualService = require(script.Parent:WaitForChild("HorseSaddleVisualService"))
 
 local HorseService = {}
 local statusDecayLoopStarted = false
@@ -549,9 +551,15 @@ local function get_visible_instance_lowest_y(instance: Instance): number?
 	return lowestY
 end
 
-local function clear_visual_horse_from_slot(slotFolder: Instance): ()
+local function is_visual_horse_mounted(visualHorse: Instance): boolean
+	return (tonumber(visualHorse:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE)) or 0) > 0
+end
+
+local function clear_visual_horse_from_slot(slotFolder: Instance, force: boolean?): ()
 	for _, child: Instance in slotFolder:GetChildren() do
-		if child:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true then
+		if child:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true
+			and (force == true or not is_visual_horse_mounted(child))
+		then
 			child:Destroy()
 		end
 	end
@@ -706,6 +714,7 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 
 	if visualHorse:IsA("Model") or visualHorse:IsA("BasePart") then
 		position_visual_horse(visualHorse, horsePosition)
+		HorseSaddleVisualService.Sync(visualHorse, horse)
 
 		return visualHorse, "Created"
 	end
@@ -716,18 +725,27 @@ end
 
 local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 	local horsePosition = get_horse_position(slotFolder)
+	local visualHorses = get_visual_horses_in_slot(slotFolder)
+
+	-- Status decay writes the Horses profile every minute. That write also
+	-- refreshes stable visuals, so mounted horses must be left entirely alone.
+	for _, visualHorse in ipairs(visualHorses) do
+		if is_visual_horse_mounted(visualHorse) then
+			return
+		end
+	end
 
 	if not horse then
 		clear_visual_horse_from_slot(slotFolder)
 		return
 	end
 
-	local visualHorses = get_visual_horses_in_slot(slotFolder)
 	if #visualHorses == 1 and is_visual_horse_current(visualHorses[1], horse) then
 		apply_visual_horse_metadata(visualHorses[1], horse)
 		if horsePosition then
 			position_visual_horse(visualHorses[1], horsePosition)
 		end
+		HorseSaddleVisualService.Sync(visualHorses[1], horse)
 		return
 	end
 
@@ -1170,7 +1188,7 @@ function HorseService.ClearPlotHorses(plot: Instance): (boolean, string)
 	end
 
 	for _, slotFolder: Instance in horseFolder:GetChildren() do
-		clear_visual_horse_from_slot(slotFolder)
+		clear_visual_horse_from_slot(slotFolder, true)
 	end
 
 	return true, "Cleared"

@@ -13,6 +13,7 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
+local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 
 local localPlayer = Players.LocalPlayer
@@ -1110,6 +1111,13 @@ local function get_assets_items_root(): Instance?
 end
 
 local function get_catalog_render_source(itemDefinition): Instance?
+	if itemDefinition and itemDefinition.EquipmentType == "Saddle" then
+		local saddleVisual = HorseEquipmentUtility.GetSaddleVisualAsset(itemDefinition)
+		if saddleVisual then
+			return saddleVisual
+		end
+	end
+
 	local itemsFolder = get_assets_items_root()
 	if not itemsFolder then
 		return nil

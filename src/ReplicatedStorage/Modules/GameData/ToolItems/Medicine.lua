@@ -41,6 +41,7 @@ return {
 		ShopId = "Doctor",
 		ItemId = "bitter_syrup",
 		DisplayName = "Bitter Syrup",
+		IconImage = "rbxassetid://104089490881314",
 		Description = "A strong emergency medicine that works well, even if the horse hates the taste.",
 		Price = 5,
 		PriceLabel = "5 coin",

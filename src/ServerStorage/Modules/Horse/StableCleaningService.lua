@@ -282,31 +282,6 @@ local function get_visual_adornee(visual: Instance): BasePart?
 	return visual:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function make_billboard_label(
-	parent: Instance,
-	name: string,
-	text: string,
-	position: UDim2,
-	size: UDim2,
-	color: Color3,
-	textSize: number
-): TextLabel
-	local label = Instance.new("TextLabel")
-	label.Name = name
-	label.BackgroundTransparency = 1
-	label.Position = position
-	label.Size = size
-	label.Font = Enum.Font.GothamBold
-	label.Text = text
-	label.TextColor3 = color
-	label.TextSize = textSize
-	label.TextStrokeColor3 = Color3.fromRGB(20, 13, 10)
-	label.TextStrokeTransparency = 0.5
-	label.TextWrapped = true
-	label.Parent = parent
-	return label
-end
-
 local function add_dirt_billboard(visual: Instance, definition)
 	local adornee = get_visual_adornee(visual)
 	if not adornee then
@@ -315,62 +290,50 @@ local function add_dirt_billboard(visual: Instance, definition)
 
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "DirtInfoBillboard"
+	billboard:SetAttribute("CompactDirtBillboard", true)
 	billboard.Adornee = adornee
 	billboard.AlwaysOnTop = true
 	billboard.MaxDistance = StableCleaningConfig.DirtBillboardMaxDistance
-	billboard.Size = UDim2.fromOffset(320, 88)
+	billboard.Size = UDim2.fromOffset(230, 54)
 	billboard.StudsOffsetWorldSpace = StableCleaningConfig.DirtBillboardStudsOffset
 	billboard.Parent = visual
 
-	local frame = Instance.new("Frame")
-	frame.Name = "Panel"
-	frame.BackgroundColor3 = Color3.fromRGB(35, 24, 18)
-	frame.BackgroundTransparency = 0.12
-	frame.BorderSizePixel = 0
-	frame.Size = UDim2.fromScale(1, 1)
-	frame.Parent = billboard
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent = frame
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(240, 176, 64)
-	stroke.Thickness = 2
-	stroke.Transparency = 0.1
-	stroke.Parent = frame
-
-	make_billboard_label(
-		frame,
-		"DirtName",
-		("DIRT: %s"):format(definition.DisplayName),
-		UDim2.new(0, 6, 0, 3),
-		UDim2.new(1, -12, 0, 22),
-		Color3.fromRGB(255, 215, 115),
-		16
+	local label = Instance.new("TextLabel")
+	label.Name = "Info"
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBold
+	label.RichText = true
+	label.Text = (
+		'<font color="#FFD773">%s</font>\n'
+		.. '<font color="#FF8A7A">%s</font>\n'
+		.. '<font color="#84FFA9">%s @ Noob</font>'
+	):format(
+		definition.DisplayName,
+		StableCleaningConfig.GetCompactPenaltySummary(definition.Id),
+		StableCleaningConfig.GetRequiredToolDisplayName(definition.Id)
 	)
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextSize = 12
+	label.TextStrokeColor3 = Color3.fromRGB(20, 13, 10)
+	label.TextStrokeTransparency = 0.35
+	label.TextWrapped = true
+	label.Parent = billboard
+end
 
-	make_billboard_label(
-		frame,
-		"Penalty",
-		("PENALTY: %s"):format(StableCleaningConfig.GetPenaltySummary(definition.Id)),
-		UDim2.new(0, 6, 0, 25),
-		UDim2.new(1, -12, 0, 34),
-		Color3.fromRGB(255, 125, 112),
-		13
-	)
-
-	make_billboard_label(
-		frame,
-		"RequiredTool",
-		("NEEDED: %s  -  BUY FROM NOOB"):format(
-			StableCleaningConfig.GetRequiredToolDisplayName(definition.Id)
-		),
-		UDim2.new(0, 6, 0, 61),
-		UDim2.new(1, -12, 0, 22),
-		Color3.fromRGB(132, 255, 169),
-		14
-	)
+local function sync_dirt_billboard(visual: Instance, definition, shouldShow: boolean)
+	local billboard = visual:FindFirstChild("DirtInfoBillboard")
+	if not shouldShow and billboard then
+		billboard:Destroy()
+	elseif shouldShow and (
+		not billboard
+		or billboard:GetAttribute("CompactDirtBillboard") ~= true
+	) then
+		if billboard then
+			billboard:Destroy()
+		end
+		add_dirt_billboard(visual, definition)
+	end
 end
 
 local function create_dirt_visual(horseId: string, dirtRecord): Instance
@@ -396,8 +359,6 @@ local function create_dirt_visual(horseId: string, dirtRecord): Instance
 			descendant.CanQuery = false
 		end
 	end
-
-	add_dirt_billboard(visual, definition)
 
 	return visual
 end
@@ -440,8 +401,12 @@ local function sync_slot_visuals(slotFolder: Instance, horse)
 	end
 
 	local expectedById = {}
+	local billboardDirtIdByType = {}
 	for _, dirtRecord in ipairs(horse.StableCare and horse.StableCare.Dirt or {}) do
 		expectedById[dirtRecord.Id] = dirtRecord
+		if not billboardDirtIdByType[dirtRecord.TypeId] then
+			billboardDirtIdByType[dirtRecord.TypeId] = dirtRecord.Id
+		end
 	end
 
 	for _, child in ipairs(dirtFolder:GetChildren()) do
@@ -462,6 +427,12 @@ local function sync_slot_visuals(slotFolder: Instance, horse)
 			visual.Parent = dirtFolder
 		end
 
+		local definition = StableCleaningConfig.GetDirtDefinition(dirtRecord.TypeId)
+		sync_dirt_billboard(
+			visual,
+			definition,
+			billboardDirtIdByType[dirtRecord.TypeId] == dirtId
+		)
 		position_dirt_visual(visual, horsePosition, dirtRecord)
 	end
 end

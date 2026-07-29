@@ -25,6 +25,7 @@ return {
 		ShopId = "Cowboy",
 		ItemId = "horse_brush",
 		DisplayName = "Horse Brush",
+		IconImage = "rbxassetid://92561730155272",
 		Description = "A soft brush used to calm your horse and make it feel cared for.",
 		Price = 3,
 		PriceLabel = "3 coin",

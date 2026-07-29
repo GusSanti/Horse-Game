@@ -20,6 +20,19 @@ local MOVEMENT_BONUS_FIELDS = {
 	RaceAffinity = "RaceAffinityAdd",
 }
 
+function HorseEquipmentUtility.GetSaddleVisualAsset(itemDefinitionOrId): Model?
+	local itemId = type(itemDefinitionOrId) == "table" and itemDefinitionOrId.ItemId or itemDefinitionOrId
+	if type(itemId) ~= "string" or itemId == "" then
+		return nil
+	end
+
+	local assets = ReplicatedStorage:FindFirstChild("Assets")
+	local horseEquipment = assets and assets:FindFirstChild("HorseEquipment")
+	local saddles = horseEquipment and horseEquipment:FindFirstChild("Saddles")
+	local asset = saddles and saddles:FindFirstChild(itemId)
+	return asset and asset:IsA("Model") and asset or nil
+end
+
 function HorseEquipmentUtility.GetEquippedSaddleDefinition(horse)
 	local equipment = type(horse) == "table" and horse.Equipment or nil
 	local saddleItemId = type(equipment) == "table" and equipment.SaddleItemId or nil

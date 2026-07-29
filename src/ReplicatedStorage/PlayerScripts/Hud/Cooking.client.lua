@@ -17,8 +17,6 @@ local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
-local FoodHoverTooltip = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FoodHoverTooltip"))
-
 local COOKING_ACTION_REMOTE_NAME = "CookingAction"
 local UI_RETRY_SECONDS = 0.5
 local UI_WARNING_INTERVAL = 20
@@ -33,6 +31,18 @@ local COOKING_NAMES = { "Cooking" }
 
 local INSUFFICIENT_COLOR = Color3.fromRGB(229, 85, 85)
 local DEFAULT_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
+local RARITY_ICON_IMAGE_BY_KEY = {
+	diamond = "rbxassetid://71853979751019",
+	gold = "rbxassetid://125720194935690",
+}
+local RARITY_ICON_COLOR_BY_KEY = {
+	diamond = Color3.fromRGB(73, 191, 255),
+	gold = Color3.fromRGB(255, 211, 64),
+}
+local FOOD_STAT_NAME_NAMES = { "StatTX", "StatsTX" }
+local FOOD_STAT_AMOUNT_NAMES = { "StatAmountTX" }
+local FOOD_STAT_BAR_NAMES = { "BarBG" }
+local FOOD_STAT_INSIDE_BAR_NAMES = { "InsideBarBG" }
 
 local GRID_VIEWPORT_CONFIG = {
 	FieldOfView = 32,
@@ -54,6 +64,7 @@ local rootTrove = Trove.new()
 local uiTrove = Trove.new()
 local cardTrove = Trove.new()
 local ingredientTrove = Trove.new()
+local foodStatsTrove = Trove.new()
 
 local currentUi = nil
 local cardEntries = {}
@@ -72,6 +83,7 @@ local cardsBuilt = false
 local cardsLoading = false
 local refreshPending = false
 local renderedPanelRecipeId = nil
+local renderedFoodTemplateRecipeId = nil
 local uiWasVisible = false
 
 local try_bind_ui
@@ -177,6 +189,15 @@ end
 local function find_text(root, names)
 	local instance = find_descendant(root, names, nil)
 	if instance and (instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox")) then
+		return instance
+	end
+
+	return nil
+end
+
+local function find_gui_object(root, names)
+	local instance = find_descendant(root, names, "GuiObject")
+	if instance and instance:IsA("GuiObject") then
 		return instance
 	end
 
@@ -627,6 +648,325 @@ local function render_viewport(viewport, definition, cameraConfig, cameraKey)
 	viewport.CurrentCamera = camera
 end
 
+local function round_number(value)
+	if type(value) ~= "number" then
+		return 0
+	end
+
+	return math.floor(value + 0.5)
+end
+
+local function format_seconds(seconds)
+	local value = math.max(0, math.floor(tonumber(seconds) or 0))
+	return ("%ds"):format(value)
+end
+
+local function format_signed_percent(value)
+	local rounded = round_number(value)
+	if rounded >= 0 then
+		return ("+%d%%"):format(rounded)
+	end
+
+	return ("%d%%"):format(rounded)
+end
+
+local function format_unsigned_percent(value)
+	return ("%d%%"):format(math.max(0, round_number(value)))
+end
+
+local function get_tagged_rarity(definition)
+	for _, tag in ipairs(type(definition and definition.Tags) == "table" and definition.Tags or {}) do
+		local tagKey = normalize_key(tag)
+		if tagKey == "diamond" then
+			return "Diamond"
+		elseif tagKey == "gold" then
+			return "Gold"
+		end
+	end
+
+	return nil
+end
+
+local function get_food_rarity(recipe)
+	local foodDefinition = recipe and recipe.FoodDefinition
+	local explicitRarity = normalize_key(foodDefinition and foodDefinition.Rarity)
+	if explicitRarity == "diamond" then
+		return "Diamond"
+	elseif explicitRarity == "gold" then
+		return "Gold"
+	end
+
+	local taggedRarity = get_tagged_rarity(foodDefinition)
+	if taggedRarity then
+		return taggedRarity
+	end
+
+	local detectedRarity = nil
+	for _, ingredient in ipairs(recipe and recipe.Ingredients or {}) do
+		local definition = ingredient.Definition
+		local rarityKey = normalize_key(definition and definition.Rarity)
+		local itemId = normalize_key(ingredient.ItemId or definition and definition.ItemId)
+
+		if rarityKey == "diamond" or (itemId and string.find(itemId, "_diamond", 1, true)) then
+			return "Diamond"
+		elseif rarityKey == "gold" or (itemId and string.find(itemId, "_gold", 1, true)) then
+			detectedRarity = "Gold"
+		end
+	end
+
+	local recipeId = normalize_key(recipe and recipe.RecipeId)
+	local foodItemId = normalize_key(recipe and recipe.FoodItemId)
+	if (recipeId and string.find(recipeId, "diamond", 1, true))
+		or (foodItemId and string.find(foodItemId, "diamond", 1, true))
+	then
+		return "Diamond"
+	end
+
+	if (recipeId and string.find(recipeId, "gold", 1, true))
+		or (foodItemId and string.find(foodItemId, "gold", 1, true))
+	then
+		return "Gold"
+	end
+
+	return detectedRarity
+end
+
+local function set_rarity_icon(icon, rarity)
+	if not icon or not icon:IsA("GuiObject") then
+		return
+	end
+
+	local rarityKey = normalize_key(rarity)
+	local image = rarityKey and RARITY_ICON_IMAGE_BY_KEY[rarityKey] or nil
+	icon.Visible = image ~= nil
+
+	if icon:IsA("ImageLabel") or icon:IsA("ImageButton") then
+		icon.Image = image or ""
+		icon.ImageColor3 = (rarityKey and RARITY_ICON_COLOR_BY_KEY[rarityKey]) or Color3.fromRGB(255, 255, 255)
+	end
+end
+
+local function build_ingredient_summary(recipe)
+	local pieces = {}
+
+	for _, ingredient in ipairs(recipe and recipe.Ingredients or {}) do
+		pieces[#pieces + 1] = ("%s x%d"):format(
+			ingredient.DisplayName or ingredient.ToolName or ingredient.ItemId,
+			math.max(1, math.floor(tonumber(ingredient.Amount) or 1))
+		)
+	end
+
+	return table.concat(pieces, ", ")
+end
+
+local function build_food_details_text(recipe)
+	if not recipe then
+		return ""
+	end
+
+	local foodDefinition = recipe.FoodDefinition or {}
+	local lines = {}
+	local description = recipe.Description or foodDefinition.Description
+	local effects = foodDefinition.Effects or {}
+	local rarity = get_food_rarity(recipe)
+	local ingredients = build_ingredient_summary(recipe)
+
+	if type(description) == "string" and description ~= "" then
+		lines[#lines + 1] = description
+	end
+
+	lines[#lines + 1] = ("Cook time: %s | Result: x%d"):format(
+		format_seconds(recipe.CookDurationSeconds),
+		math.max(1, math.floor(tonumber(recipe.ResultAmount) or 1))
+	)
+
+	if rarity then
+		lines[#lines + 1] = ("Rarity: %s"):format(rarity)
+	end
+
+	local passiveDetails = {}
+	local decayBuff = effects.DecayBuff
+	if type(decayBuff) == "table" then
+		local multiplier = tonumber(decayBuff.Multiplier)
+		local duration = tonumber(decayBuff.DurationMinutes)
+		if multiplier and multiplier < 1 then
+			local reduction = math.max(0, (1 - multiplier) * 100)
+			local suffix = duration and duration > 0 and (" for %d min"):format(math.floor(duration + 0.5)) or ""
+			passiveDetails[#passiveDetails + 1] = ("Hunger decay -%s%s"):format(format_unsigned_percent(reduction), suffix)
+		end
+	end
+
+	local healthRegen = effects.HealthRegen
+	if type(healthRegen) == "table" and tonumber(healthRegen.TotalGain) then
+		local totalGain = tonumber(healthRegen.TotalGain) or 0
+		local duration = tonumber(healthRegen.DurationMinutes)
+		if totalGain > 0 then
+			local suffix = duration and duration > 0 and (" over %d min"):format(math.floor(duration + 0.5)) or ""
+			passiveDetails[#passiveDetails + 1] = ("Health regen +%s%s"):format(format_unsigned_percent(totalGain), suffix)
+		end
+	end
+
+	if #passiveDetails > 0 then
+		lines[#lines + 1] = "Passives: " .. table.concat(passiveDetails, ", ")
+	end
+
+	if ingredients ~= "" then
+		lines[#lines + 1] = "Ingredients: " .. ingredients
+	end
+
+	return table.concat(lines, "\n")
+end
+
+local function add_food_stat(descriptors, key, label, percentValue, alphaOverride, amountTextOverride)
+	local numericPercent = tonumber(percentValue)
+	if not numericPercent or math.abs(numericPercent) < 0.001 then
+		return
+	end
+
+	descriptors[#descriptors + 1] = {
+		Key = key,
+		Label = label,
+		AmountText = amountTextOverride or format_signed_percent(numericPercent),
+		Alpha = math.clamp(alphaOverride or (math.abs(numericPercent) / 100), 0, 1),
+	}
+end
+
+local function build_food_stat_descriptors(recipe)
+	local definition = recipe and recipe.FoodDefinition
+	local effects = definition and definition.Effects or {}
+	local descriptors = {}
+	local needKey = definition and definition.NeedKey or "Hunger"
+
+	add_food_stat(descriptors, needKey, needKey, effects.NeedGain)
+	add_food_stat(descriptors, "Happiness", "Happiness", effects.HappinessGain)
+	add_food_stat(descriptors, "Health", "Health", effects.HealthGain)
+	add_food_stat(descriptors, "Friendship", "Friendship", effects.FriendshipGain)
+
+	local secondaryNeedOrder = { "Thirst", "Cleanliness", "Hunger", "Happiness", "Health" }
+	local alreadyShown = {
+		[needKey] = effects.NeedGain ~= nil,
+		Happiness = effects.HappinessGain ~= nil,
+		Health = effects.HealthGain ~= nil,
+	}
+
+	if type(effects.SecondaryNeedAdjustments) == "table" then
+		for _, secondaryNeed in ipairs(secondaryNeedOrder) do
+			if not alreadyShown[secondaryNeed] then
+				add_food_stat(
+					descriptors,
+					secondaryNeed,
+					secondaryNeed,
+					effects.SecondaryNeedAdjustments[secondaryNeed]
+				)
+			end
+		end
+	end
+
+	local healthRegen = effects.HealthRegen
+	if type(healthRegen) == "table" then
+		add_food_stat(descriptors, "HealthRegen", "Health Regen", healthRegen.TotalGain)
+	end
+
+	local decayBuff = effects.DecayBuff
+	if type(decayBuff) == "table" then
+		local multiplier = tonumber(decayBuff.Multiplier)
+		if multiplier and multiplier < 1 then
+			local reduction = math.max(0, (1 - multiplier) * 100)
+			add_food_stat(
+				descriptors,
+				"HungerDecay",
+				"Hunger Decay",
+				reduction,
+				reduction / 100,
+				"-" .. format_unsigned_percent(reduction)
+			)
+		end
+	end
+
+	return descriptors
+end
+
+local function rebuild_food_stats(ui, recipe)
+	foodStatsTrove:Clean()
+
+	if not ui or not ui.FoodStatsContainer or not ui.FoodStatTemplate then
+		return
+	end
+
+	local descriptors = build_food_stat_descriptors(recipe)
+	ui.FoodStatTemplate.Visible = false
+	ui.FoodStatsContainer.Visible = #descriptors > 0
+
+	for index, descriptor in ipairs(descriptors) do
+		local row = ui.FoodStatTemplate:Clone()
+		row.Name = descriptor.Key
+		row.Visible = true
+		row.LayoutOrder = index
+		row.Parent = ui.FoodStatsContainer
+		foodStatsTrove:Add(row)
+
+		local nameLabel = find_text(row, FOOD_STAT_NAME_NAMES)
+		local amountLabel = find_text(row, FOOD_STAT_AMOUNT_NAMES)
+		local barBackground = find_gui_object(row, FOOD_STAT_BAR_NAMES)
+		local barFill = find_gui_object(barBackground, FOOD_STAT_INSIDE_BAR_NAMES)
+			or find_gui_object(row, FOOD_STAT_INSIDE_BAR_NAMES)
+
+		set_text(nameLabel, descriptor.Label)
+		set_text(amountLabel, descriptor.AmountText)
+
+		if barFill then
+			local currentSize = barFill.Size
+			barFill.Size = UDim2.new(
+				math.clamp(descriptor.Alpha, 0, 1),
+				0,
+				currentSize.Y.Scale,
+				currentSize.Y.Offset
+			)
+		end
+	end
+end
+
+local function refresh_food_template_panel(recipe, token, shouldRenderViewport)
+	local ui = currentUi
+	if not ui or not ui.FoodTemplate then
+		return
+	end
+
+	if not recipe then
+		ui.FoodTemplate.Visible = false
+		set_text(ui.FoodTemplateNameLabel, "")
+		set_text(ui.FoodTemplateDetailsLabel, "")
+		set_rarity_icon(ui.FoodTemplateRarityIcon, nil)
+		clear_viewport(ui.FoodTemplateViewport)
+		foodStatsTrove:Clean()
+		renderedFoodTemplateRecipeId = nil
+		return
+	end
+
+	local rarity = get_food_rarity(recipe)
+	ui.FoodTemplate.Visible = true
+	set_text(ui.FoodTemplateNameLabel, recipe.DisplayName)
+	set_text(ui.FoodTemplateDetailsLabel, build_food_details_text(recipe))
+	set_rarity_icon(ui.FoodTemplateRarityIcon, rarity)
+
+	if renderedFoodTemplateRecipeId ~= recipe.RecipeId then
+		renderedFoodTemplateRecipeId = recipe.RecipeId
+		rebuild_food_stats(ui, recipe)
+	end
+
+	if shouldRenderViewport then
+		clear_viewport(ui.FoodTemplateViewport)
+		task.spawn(function()
+			task.wait(LOAD_STEP_SECONDS)
+			if token ~= panelToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
+				return
+			end
+
+			render_viewport(ui.FoodTemplateViewport, recipe.FoodDefinition, DETAILS_VIEWPORT_CONFIG, "foodTemplate")
+		end)
+	end
+end
+
 local function get_cooking_remote()
 	local net = ReplicatedStorage:FindFirstChild("Net")
 	local functions = net and net:FindFirstChild("Functions")
@@ -996,7 +1336,9 @@ local function refresh_selected_panel()
 	local recipe = get_selected_recipe()
 	if not recipe then
 		set_text(currentUi.FoodNameLabel, "")
+		set_rarity_icon(currentUi.FoodRarityIcon, nil)
 		clear_viewport(currentUi.FoodViewport)
+		refresh_food_template_panel(nil)
 		ingredientTrove:Clean()
 		currentUi.IngredientEntries = {}
 		renderedPanelRecipeId = nil
@@ -1005,8 +1347,10 @@ local function refresh_selected_panel()
 	end
 
 	set_text(currentUi.FoodNameLabel, recipe.DisplayName)
+	set_rarity_icon(currentUi.FoodRarityIcon, get_food_rarity(recipe))
 
 	if renderedPanelRecipeId == recipe.RecipeId then
+		refresh_food_template_panel(recipe, panelToken, false)
 		refresh_ingredient_counts(recipe)
 	else
 		renderedPanelRecipeId = recipe.RecipeId
@@ -1014,6 +1358,7 @@ local function refresh_selected_panel()
 		local token = panelToken
 		local ui = currentUi
 
+		refresh_food_template_panel(recipe, token, true)
 		clear_viewport(ui.FoodViewport)
 		task.spawn(function()
 			task.wait(LOAD_STEP_SECONDS)
@@ -1121,10 +1466,14 @@ local function build_recipe_cards()
 			local stockLabel = find_text(card, { "StockCountTX", "StockCount" })
 			local viewport = find_path(card, { "ImageLabel", "ViewportFrame" })
 				or find_descendant(card, { "ViewportFrame", "ViewPortFrame", "Viewport" }, "ViewportFrame")
+			local rarityIcon = find_descendant(card, { "rarity", "Rarity" }, "ImageLabel")
+				or find_descendant(card, { "rarity", "Rarity" }, "ImageButton")
+				or find_gui_object(card, { "rarity", "Rarity" })
 
 			set_text(nameLabel, recipe.DisplayName)
 			set_text(buttonText, "Select")
 			set_text(stockLabel, format_count(get_definition_count(recipe.FoodDefinition)))
+			set_rarity_icon(rarityIcon, get_food_rarity(recipe))
 
 			local entry = {
 				Recipe = recipe,
@@ -1135,7 +1484,6 @@ local function build_recipe_cards()
 			}
 
 			cardEntries[#cardEntries + 1] = entry
-			FoodHoverTooltip.Bind(card, recipe.FoodDefinition, cardTrove)
 
 			if button then
 				cardTrove:Connect(button.Activated, function()
@@ -1279,6 +1627,7 @@ local function destroy_ui_binding()
 	cancel_deferred_loads()
 	cardTrove:Clean()
 	ingredientTrove:Clean()
+	foodStatsTrove:Clean()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
 	currentUi = nil
@@ -1287,6 +1636,7 @@ local function destroy_ui_binding()
 	cardsLoading = false
 	refreshPending = false
 	renderedPanelRecipeId = nil
+	renderedFoodTemplateRecipeId = nil
 	uiWasVisible = false
 	table.clear(cardEntries)
 end
@@ -1300,6 +1650,7 @@ local function get_cooking_ui(root)
 	local cardTemplate = listScrollingFrame and listScrollingFrame:FindFirstChild("TemplateCraft")
 	local cookButton = mainLeft and mainLeft:FindFirstChild("CookBT")
 	local barBackground = mainLeft and mainLeft:FindFirstChild("BarBG")
+	local foodTemplate = root:FindFirstChild("FoodTemplate") or find_descendant(root, { "FoodTemplate" }, "GuiObject")
 
 	if not mainLeft or not ingredientContainer or not ingredientTemplate or not listScrollingFrame or not cardTemplate then
 		return nil
@@ -1325,6 +1676,38 @@ local function get_cooking_ui(root)
 		foodViewport = nil
 	end
 
+	local foodRarityIcon = foodRoot and (
+		find_descendant(foodRoot, { "rarity", "Rarity" }, "ImageLabel")
+			or find_descendant(foodRoot, { "rarity", "Rarity" }, "ImageButton")
+			or find_gui_object(foodRoot, { "rarity", "Rarity" })
+	) or nil
+
+	if foodTemplate and not foodTemplate:IsA("GuiObject") then
+		foodTemplate = nil
+	end
+
+	local foodTemplateViewport = foodTemplate and (
+		find_path(foodTemplate, { "ItemDisplayBG", "HorseImage", "ViewportFrame" })
+			or find_descendant(foodTemplate, { "ViewportFrame", "ViewPortFrame", "Viewport" }, "ViewportFrame")
+	) or nil
+	if foodTemplateViewport and not foodTemplateViewport:IsA("ViewportFrame") then
+		foodTemplateViewport = nil
+	end
+
+	local foodStatsContainer = foodTemplate and find_gui_object(foodTemplate, { "StatsFR" }) or nil
+	local foodStatTemplate = foodStatsContainer and (
+		foodStatsContainer:FindFirstChild("StatFR") or find_descendant(foodStatsContainer, { "StatFR" }, "GuiObject")
+	) or nil
+	if foodStatTemplate and not foodStatTemplate:IsA("GuiObject") then
+		foodStatTemplate = nil
+	end
+
+	local foodTemplateRarityIcon = foodTemplate and (
+		find_descendant(foodTemplate, { "rarity", "Rarity" }, "ImageLabel")
+			or find_descendant(foodTemplate, { "rarity", "Rarity" }, "ImageButton")
+			or find_gui_object(foodTemplate, { "rarity", "Rarity" })
+	) or nil
+
 	local ui = {
 		Root = root,
 		MainLeft = mainLeft,
@@ -1339,6 +1722,14 @@ local function get_cooking_ui(root)
 		CookingLabel = mainLeft and find_text(mainLeft, { "Cooking" }) or nil,
 		FoodNameLabel = mainLeft and find_text(mainLeft, { "FoodNameTX" }) or nil,
 		FoodViewport = foodViewport,
+		FoodRarityIcon = foodRarityIcon,
+		FoodTemplate = foodTemplate,
+		FoodTemplateNameLabel = foodTemplate and find_text(foodTemplate, { "FoodNameTX" }) or nil,
+		FoodTemplateDetailsLabel = foodTemplate and find_text(foodTemplate, { "DetailsTX" }) or nil,
+		FoodTemplateViewport = foodTemplateViewport,
+		FoodTemplateRarityIcon = foodTemplateRarityIcon,
+		FoodStatsContainer = foodStatsContainer,
+		FoodStatTemplate = foodStatTemplate,
 		IngredientLabel = find_text(ingredientTemplate, { "StockCountTX", "StockCount" }),
 	}
 
@@ -1373,15 +1764,17 @@ local function bind_ui(ui)
 	disable_hud_anim_tree(ui.IngredientContainer)
 	disable_hud_anim_tree(ui.CardTemplate)
 	disable_hud_anim_tree(ui.IngredientTemplate)
+	disable_hud_anim_tree(ui.FoodTemplate)
 	bind_open_hud_anim(ui.Root)
 	ui.CardTemplate.Visible = false
 	ui.IngredientTemplate.Visible = false
 
-	if ui.FoodRoot then
-		FoodHoverTooltip.Bind(ui.FoodRoot, function()
-			local recipe = get_selected_recipe()
-			return recipe and recipe.FoodDefinition or nil
-		end, uiTrove)
+	if ui.FoodTemplate then
+		ui.FoodTemplate.Visible = false
+	end
+
+	if ui.FoodStatTemplate then
+		ui.FoodStatTemplate.Visible = false
 	end
 
 	ui.ListScrollingFrame.Active = true
@@ -1521,6 +1914,12 @@ rootTrove:Connect(playerGui.DescendantAdded, function(instance)
 		or matches_name(instance, COOKING_NAMES)
 		or instance.Name == "TemplateCraft"
 		or instance.Name == "Ingredient"
+		or instance.Name == "FoodTemplate"
+		or instance.Name == "StatsFR"
+		or instance.Name == "StatFR"
+		or instance.Name == "DetailsTX"
+		or instance.Name == "FoodNameTX"
+		or instance.Name == "ViewportFrame"
 	then
 		task.defer(try_bind_ui)
 	end
