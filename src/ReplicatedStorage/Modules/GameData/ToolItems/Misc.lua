@@ -40,7 +40,7 @@ return {
 		Tags = { "Grooming", "Brush" },
 	}),
 	Shared.CreateMisc({
-		ShopId = "Cowboy",
+		ShopId = "Noob",
 		ItemId = "stable_broom",
 		DisplayName = "Stable Broom",
 		Description = "A reusable broom for sweeping loose hay from occupied stalls.",
@@ -52,7 +52,7 @@ return {
 		Tags = { "Cleaning", "Stable", "Reusable" },
 	}),
 	Shared.CreateMisc({
-		ShopId = "Cowboy",
+		ShopId = "Noob",
 		ItemId = "muck_fork",
 		DisplayName = "Muck Fork",
 		Description = "A reusable stable fork made for removing manure safely.",
@@ -64,7 +64,7 @@ return {
 		Tags = { "Cleaning", "Stable", "Reusable" },
 	}),
 	Shared.CreateMisc({
-		ShopId = "Cowboy",
+		ShopId = "Noob",
 		ItemId = "cleaning_bucket",
 		DisplayName = "Cleaning Bucket",
 		Description = "A reusable water bucket for rinsing muddy stall floors.",

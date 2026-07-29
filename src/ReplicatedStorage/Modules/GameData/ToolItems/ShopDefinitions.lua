@@ -7,6 +7,10 @@ return {
 		ShopId = "TackShop",
 		DisplayName = "Tack Shop",
 	},
+	Noob = {
+		ShopId = "Noob",
+		DisplayName = "Noob",
+	},
 	Cowboy = {
 		ShopId = "Cowboy",
 		DisplayName = "Cowboy",

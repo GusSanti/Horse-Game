@@ -2,7 +2,7 @@
 
 ## Gameplay
 
-Saddles are reusable `Tack` items sold by `TackShop`.
+Saddles are reusable `Tack` items sold by `Noob`. Old tack remains in `TackShop`.
 
 | Saddle | Price | Bonuses |
 | --- | ---: | --- |
@@ -30,5 +30,5 @@ prediction, authoritative mounted movement, and race summaries.
    Command Bar while not playing.
 3. Check the editable models in `Workspace.SaddleAssetPreview`.
 4. Runtime tools are installed in `ReplicatedStorage.Assets.Items.Tack`.
-5. Ensure the tack seller model is named `Workspace.Npcs.TackShop`; the server adds
+5. Ensure the new seller model is named `Workspace.Npcs.Noob`; the server adds
    its shop prompt automatically.

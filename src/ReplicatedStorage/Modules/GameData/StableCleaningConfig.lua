@@ -9,22 +9,24 @@ local StableCleaningConfig = {
 	DirtTypeAttribute = "StableDirtTypeId",
 	RequiredToolAttribute = "RequiredCleaningToolId",
 
-	MaxDirtPerHorse = 5,
+	MaxDirtPerHorse = 3,
 	MaxDecayMultiplier = 2.5,
 	MaxCleanDistance = 12,
 	CleanlinessRestorePerDirt = 2,
 	AllCleanHappinessBonus = 5,
 
-	InitialSpawnDelaySeconds = 60,
-	SpawnIntervalSeconds = 6 * 60,
-	SpawnJitterSeconds = 75,
+	InitialSpawnDelaySeconds = 3 * 60,
+	SpawnIntervalSeconds = 15 * 60,
+	SpawnJitterSeconds = 2 * 60,
 	ServiceTickSeconds = 5,
 
 	-- Short values keep Studio tests practical without changing live balancing.
-	StudioInitialSpawnDelaySeconds = 2,
-	StudioSpawnIntervalSeconds = 18,
-	StudioSpawnJitterSeconds = 3,
+	StudioInitialSpawnDelaySeconds = 10,
+	StudioSpawnIntervalSeconds = 90,
+	StudioSpawnJitterSeconds = 10,
 	StudioServiceTickSeconds = 1,
+	DirtBillboardMaxDistance = 42,
+	DirtBillboardStudsOffset = Vector3.new(0, 2.25, 0),
 
 	DirtOrder = {
 		"loose_hay",
@@ -38,6 +40,7 @@ local StableCleaningConfig = {
 			DisplayName = "Loose Hay",
 			TemplateName = "LooseHay",
 			RequiredToolId = "stable_broom",
+			RequiredToolDisplayName = "Stable Broom",
 			ActionText = "Sweep",
 			HoldDuration = 0.8,
 			Weight = 4,
@@ -51,6 +54,7 @@ local StableCleaningConfig = {
 			DisplayName = "Mud Patch",
 			TemplateName = "MudPatch",
 			RequiredToolId = "cleaning_bucket",
+			RequiredToolDisplayName = "Cleaning Bucket",
 			ActionText = "Rinse",
 			HoldDuration = 1.1,
 			Weight = 3,
@@ -64,6 +68,7 @@ local StableCleaningConfig = {
 			DisplayName = "Manure",
 			TemplateName = "Manure",
 			RequiredToolId = "muck_fork",
+			RequiredToolDisplayName = "Muck Fork",
 			ActionText = "Remove",
 			HoldDuration = 1.3,
 			Weight = 2,
@@ -119,14 +124,21 @@ function StableCleaningConfig.GetPenaltySummary(dirtTypeId: string?): string
 	for _, statusName in ipairs({ "Happiness", "Cleanliness", "Health" }) do
 		local multiplier = definition.DecayMultipliers[statusName]
 		if type(multiplier) == "number" and multiplier > 1 then
-			local multiplierText = ("%.2f"):format(multiplier)
-			multiplierText = string.gsub(multiplierText, "0+$", "")
-			multiplierText = string.gsub(multiplierText, "%.$", "")
-			parts[#parts + 1] = ("%s x%s"):format(statusName, multiplierText)
+			local percent = math.floor(((multiplier - 1) * 100) + 0.5)
+			parts[#parts + 1] = ("%s drains %d%% faster"):format(statusName, percent)
 		end
 	end
 
 	return table.concat(parts, "  |  ")
+end
+
+function StableCleaningConfig.GetRequiredToolDisplayName(dirtTypeId: string?): string
+	local definition = StableCleaningConfig.GetDirtDefinition(dirtTypeId)
+	if not definition then
+		return ""
+	end
+
+	return definition.RequiredToolDisplayName or definition.RequiredToolId or ""
 end
 
 return StableCleaningConfig

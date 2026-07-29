@@ -1,6 +1,7 @@
 ------------------//SERVICES
 local Players: Players = game:GetService("Players")
 local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace: Workspace = game:GetService("Workspace")
 
 ------------------//CONSTANTS
 local Modules = ReplicatedStorage:WaitForChild("Modules")
@@ -16,6 +17,9 @@ local HORSE_ID_ATTRIBUTE = "HorseId"
 local HORSE_CATALOG_ID_ATTRIBUTE = "HorseCatalogId"
 local HORSE_VISUAL_MODEL_NAME_ATTRIBUTE = "HorseVisualModelName"
 local STATUS_UPDATE_INTERVAL_SECONDS = 60
+local STABLE_GROUND_RAY_DISTANCE = 100
+local STABLE_GROUND_MIN_HORIZONTAL_AREA = 16
+local STABLE_GROUND_MAX_RAYCAST_HITS = 32
 
 ------------------//VARIABLES
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
@@ -519,6 +523,32 @@ local function get_instance_lowest_y(instance: Instance): number?
 	return lowestY
 end
 
+local function get_visible_instance_lowest_y(instance: Instance): number?
+	if instance:IsA("BasePart") then
+		if instance.Transparency < 1 then
+			return get_base_part_lowest_y(instance)
+		end
+
+		return nil
+	end
+
+	local lowestY = math.huge
+	local foundVisibleBasePart = false
+
+	for _, descendant: Instance in instance:GetDescendants() do
+		if descendant:IsA("BasePart") and descendant.Transparency < 1 then
+			foundVisibleBasePart = true
+			lowestY = math.min(lowestY, get_base_part_lowest_y(descendant))
+		end
+	end
+
+	if not foundVisibleBasePart then
+		return nil
+	end
+
+	return lowestY
+end
+
 local function clear_visual_horse_from_slot(slotFolder: Instance): ()
 	for _, child: Instance in slotFolder:GetChildren() do
 		if child:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true then
@@ -576,11 +606,92 @@ local function is_visual_horse_current(visualHorse: Instance, horse): boolean
 	return visualHorse:GetAttribute(HORSE_VISUAL_MODEL_NAME_ATTRIBUTE) == get_horse_visual_model_name(horse)
 end
 
+local function get_horse_position(slotFolder: Instance): BasePart?
+	local horsePosition = slotFolder:FindFirstChild(HORSE_POSITION_NAME)
+	if not horsePosition or not horsePosition:IsA("BasePart") then
+		return nil
+	end
+
+	-- HorsePosition is only a placement marker. Keeping it non-collidable avoids
+	-- the stable horse being supported by the marker instead of the stable floor.
+	horsePosition.Transparency = 1
+	horsePosition.CanCollide = false
+	horsePosition.CanTouch = false
+	horsePosition.CanQuery = false
+
+	return horsePosition
+end
+
+local function is_stable_ground_surface(raycastResult: RaycastResult): boolean
+	if raycastResult.Normal.Y < 0.75 then
+		return false
+	end
+
+	local hitInstance = raycastResult.Instance
+	if hitInstance:IsA("Terrain") then
+		return true
+	end
+
+	if not hitInstance:IsA("BasePart") then
+		return false
+	end
+
+	return (hitInstance.Size.X * hitInstance.Size.Z) >= STABLE_GROUND_MIN_HORIZONTAL_AREA
+end
+
+local function get_stable_ground_y(horsePosition: BasePart, visualHorse: Instance): number
+	local slotFolder = horsePosition.Parent
+	local ignoredInstances: {Instance} = if slotFolder then { slotFolder } else { horsePosition, visualHorse }
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = ignoredInstances
+	raycastParams.RespectCanCollide = true
+
+	local rayOrigin = horsePosition.Position + Vector3.new(0, (horsePosition.Size.Y * 0.5) + 0.05, 0)
+	local rayDirection = Vector3.new(0, -STABLE_GROUND_RAY_DISTANCE, 0)
+
+	for _ = 1, STABLE_GROUND_MAX_RAYCAST_HITS do
+		local rayResult = Workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+		if not rayResult then
+			break
+		end
+
+		if is_stable_ground_surface(rayResult) then
+			return rayResult.Position.Y
+		end
+
+		-- Small loose objects are not floor. Ignore them and continue searching
+		-- downwards until a broad horizontal surface is found.
+		ignoredInstances[#ignoredInstances + 1] = rayResult.Instance
+		raycastParams.FilterDescendantsInstances = ignoredInstances
+	end
+
+	return get_base_part_lowest_y(horsePosition)
+end
+
+local function position_visual_horse(visualHorse: Instance, horsePosition: BasePart): ()
+	visualHorse:PivotTo(horsePosition.CFrame)
+
+	-- Invisible roots and hitboxes can extend below the hooves. Aligning from
+	-- visible geometry makes the visible feet touch the stable floor.
+	local horseLowestY = get_visible_instance_lowest_y(visualHorse) or get_instance_lowest_y(visualHorse)
+	if not horseLowestY then
+		return
+	end
+
+	local currentPivot = visualHorse:GetPivot()
+	local groundY = get_stable_ground_y(horsePosition, visualHorse)
+	local heightOffset = groundY - horseLowestY
+
+	visualHorse:PivotTo(currentPivot + Vector3.new(0, heightOffset, 0))
+end
+
 local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instance?, string)
 	clear_visual_horse_from_slot(slotFolder)
 
-	local horsePosition = slotFolder:FindFirstChild(HORSE_POSITION_NAME)
-	if not horsePosition or not horsePosition:IsA("BasePart") then
+	local horsePosition = get_horse_position(slotFolder)
+	if not horsePosition then
 		return nil, "HorsePositionMissing"
 	end
 
@@ -594,16 +705,7 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 	visualHorse.Parent = slotFolder
 
 	if visualHorse:IsA("Model") or visualHorse:IsA("BasePart") then
-		visualHorse:PivotTo(horsePosition.CFrame)
-
-		local horseLowestY = get_instance_lowest_y(visualHorse)
-		local positionLowestY = get_instance_lowest_y(horsePosition)
-
-		if horseLowestY and positionLowestY then
-			local currentPivot = visualHorse:GetPivot()
-			local heightOffset = positionLowestY - horseLowestY
-			visualHorse:PivotTo(currentPivot + Vector3.new(0, heightOffset, 0))
-		end
+		position_visual_horse(visualHorse, horsePosition)
 
 		return visualHorse, "Created"
 	end
@@ -613,6 +715,8 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 end
 
 local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
+	local horsePosition = get_horse_position(slotFolder)
+
 	if not horse then
 		clear_visual_horse_from_slot(slotFolder)
 		return
@@ -621,6 +725,9 @@ local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 	local visualHorses = get_visual_horses_in_slot(slotFolder)
 	if #visualHorses == 1 and is_visual_horse_current(visualHorses[1], horse) then
 		apply_visual_horse_metadata(visualHorses[1], horse)
+		if horsePosition then
+			position_visual_horse(visualHorses[1], horsePosition)
+		end
 		return
 	end
 

@@ -19,9 +19,12 @@ Bonuses and limits:
 - Cleaning the final spot gives 5 Happiness.
 - Every spot counts toward `Stats.TotalCleanActions`, so the existing stable-cleaning
   daily quest works without a separate quest.
-- Tools are reusable and sold by the `Cowboy` shop.
+- Tools are reusable and sold by the `Noob` shop.
 
 ## Studio setup
+
+Ensure the new seller model is named `Workspace.Npcs.Noob`; its shop prompt is
+added automatically.
 
 1. Sync the Rojo project so the new modules exist in Studio.
 2. Open `scripts/GenerateStableCleaningAssets.commandbar.lua`.

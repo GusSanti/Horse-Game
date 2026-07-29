@@ -23,6 +23,7 @@ local NPC_SHOPS = {
 	Cowboy = { ShopId = "Cowboy", ActionText = "Shop", ObjectText = "Cowboy" },
 	Doctor = { ShopId = "Doctor", ActionText = "Shop", ObjectText = "Doctor" },
 	TackShop = { ShopId = "TackShop", ActionText = "Shop", ObjectText = "Tack Shop" },
+	Noob = { ShopId = "Noob", ActionText = "Buy stable gear", ObjectText = "Stable Equipment" },
 }
 
 local function get_inventory_path(item)

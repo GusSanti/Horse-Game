@@ -99,6 +99,11 @@ local function normalize_stable_care(horse, now: number, settings): boolean
 		end
 	end
 
+	while #normalizedDirt > StableCleaningConfig.MaxDirtPerHorse do
+		table.remove(normalizedDirt)
+		changed = true
+	end
+
 	if #normalizedDirt ~= #stableCare.Dirt then
 		stableCare.Dirt = normalizedDirt
 	end
@@ -265,6 +270,109 @@ local function make_fallback_dirt(definition): Model
 	return model
 end
 
+local function get_visual_adornee(visual: Instance): BasePart?
+	if visual:IsA("BasePart") then
+		return visual
+	end
+
+	if visual:IsA("Model") and visual.PrimaryPart then
+		return visual.PrimaryPart
+	end
+
+	return visual:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function make_billboard_label(
+	parent: Instance,
+	name: string,
+	text: string,
+	position: UDim2,
+	size: UDim2,
+	color: Color3,
+	textSize: number
+): TextLabel
+	local label = Instance.new("TextLabel")
+	label.Name = name
+	label.BackgroundTransparency = 1
+	label.Position = position
+	label.Size = size
+	label.Font = Enum.Font.GothamBold
+	label.Text = text
+	label.TextColor3 = color
+	label.TextSize = textSize
+	label.TextStrokeColor3 = Color3.fromRGB(20, 13, 10)
+	label.TextStrokeTransparency = 0.5
+	label.TextWrapped = true
+	label.Parent = parent
+	return label
+end
+
+local function add_dirt_billboard(visual: Instance, definition)
+	local adornee = get_visual_adornee(visual)
+	if not adornee then
+		return
+	end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "DirtInfoBillboard"
+	billboard.Adornee = adornee
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = StableCleaningConfig.DirtBillboardMaxDistance
+	billboard.Size = UDim2.fromOffset(320, 88)
+	billboard.StudsOffsetWorldSpace = StableCleaningConfig.DirtBillboardStudsOffset
+	billboard.Parent = visual
+
+	local frame = Instance.new("Frame")
+	frame.Name = "Panel"
+	frame.BackgroundColor3 = Color3.fromRGB(35, 24, 18)
+	frame.BackgroundTransparency = 0.12
+	frame.BorderSizePixel = 0
+	frame.Size = UDim2.fromScale(1, 1)
+	frame.Parent = billboard
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 10)
+	corner.Parent = frame
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(240, 176, 64)
+	stroke.Thickness = 2
+	stroke.Transparency = 0.1
+	stroke.Parent = frame
+
+	make_billboard_label(
+		frame,
+		"DirtName",
+		("DIRT: %s"):format(definition.DisplayName),
+		UDim2.new(0, 6, 0, 3),
+		UDim2.new(1, -12, 0, 22),
+		Color3.fromRGB(255, 215, 115),
+		16
+	)
+
+	make_billboard_label(
+		frame,
+		"Penalty",
+		("PENALTY: %s"):format(StableCleaningConfig.GetPenaltySummary(definition.Id)),
+		UDim2.new(0, 6, 0, 25),
+		UDim2.new(1, -12, 0, 34),
+		Color3.fromRGB(255, 125, 112),
+		13
+	)
+
+	make_billboard_label(
+		frame,
+		"RequiredTool",
+		("NEEDED: %s  -  BUY FROM NOOB"):format(
+			StableCleaningConfig.GetRequiredToolDisplayName(definition.Id)
+		),
+		UDim2.new(0, 6, 0, 61),
+		UDim2.new(1, -12, 0, 22),
+		Color3.fromRGB(132, 255, 169),
+		14
+	)
+end
+
 local function create_dirt_visual(horseId: string, dirtRecord): Instance
 	local definition = StableCleaningConfig.GetDirtDefinition(dirtRecord.TypeId)
 	local template = definition and get_dirt_template(definition.TemplateName)
@@ -277,6 +385,8 @@ local function create_dirt_visual(horseId: string, dirtRecord): Instance
 	visual:SetAttribute(StableCleaningConfig.DirtTypeAttribute, dirtRecord.TypeId)
 	visual:SetAttribute(StableCleaningConfig.RequiredToolAttribute, definition.RequiredToolId)
 	visual:SetAttribute(HORSE_ID_ATTRIBUTE, horseId)
+	visual:SetAttribute("StableDirtPenaltyText", StableCleaningConfig.GetPenaltySummary(definition.Id))
+	visual:SetAttribute("StableDirtToolDisplayName", StableCleaningConfig.GetRequiredToolDisplayName(definition.Id))
 
 	for _, descendant in ipairs(visual:GetDescendants()) do
 		if descendant:IsA("BasePart") then
@@ -286,6 +396,8 @@ local function create_dirt_visual(horseId: string, dirtRecord): Instance
 			descendant.CanQuery = false
 		end
 	end
+
+	add_dirt_billboard(visual, definition)
 
 	return visual
 end

@@ -11,6 +11,7 @@ return {
 		Tags = { "Bridle", "Starter" },
 	}),
 	Shared.CreateTack({
+		ShopId = "Noob",
 		ItemId = "starter_saddle",
 		DisplayName = "Starter Saddle",
 		Description = "A basic reusable saddle that gives a small speed bonus.",
@@ -24,6 +25,7 @@ return {
 		Tags = { "Saddle", "Starter" },
 	}),
 	Shared.CreateTack({
+		ShopId = "Noob",
 		ItemId = "western_saddle",
 		DisplayName = "Western Saddle",
 		Description = "A sturdy reusable saddle with a balanced mounted speed bonus.",
@@ -39,6 +41,7 @@ return {
 		Tags = { "Saddle", "Western" },
 	}),
 	Shared.CreateTack({
+		ShopId = "Noob",
 		ItemId = "english_saddle",
 		DisplayName = "English Saddle",
 		Description = "A light reusable saddle tuned for fast riding and racing.",

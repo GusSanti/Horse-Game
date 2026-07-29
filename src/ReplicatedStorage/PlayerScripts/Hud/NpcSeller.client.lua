@@ -24,6 +24,7 @@ local zoneState = {
 	Cowboy = false,
 	Doctor = false,
 	TackShop = false,
+	Noob = false,
 }
 
 local SHOP_TABS = {
@@ -36,6 +37,10 @@ local SHOP_TABS = {
 	},
 	TackShop = {
 		{ Category = "Tack", Label = "Tack" },
+	},
+	Noob = {
+		{ Category = "Misc", Label = "Cleaning" },
+		{ Category = "Tack", Label = "Saddles" },
 	},
 }
 
