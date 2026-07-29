@@ -76,9 +76,9 @@ return {
 	}),
 	Shared.CreateWater({
 		ShopId = "Cowboy",
-		ItemId = "apple_splash",
-		DisplayName = "Apple Splash",
-		Description = "A sweet water mix that makes the horse happier than plain water.",
+		ItemId = "berry_splash",
+		DisplayName = "Berry Splash",
+		Description = "A sweet berry water mix that makes the horse happier than plain water.",
 		Price = 4,
 		PriceLabel = "4 coin",
 		SortOrder = 40,

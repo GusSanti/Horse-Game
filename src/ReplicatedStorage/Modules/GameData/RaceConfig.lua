@@ -32,21 +32,21 @@ local RaceConfig = {
 		[1] = {
 			Horseshoes = 125,
 			Items = {
-				{ ItemId = "oat_crunch", Amount = 2 },
+				{ ItemId = "golden_salad", Amount = 1 },
 				{ ItemId = "recovery_tonic", Amount = 1 },
 			},
 		},
 		[2] = {
 			Horseshoes = 85,
 			Items = {
-				{ ItemId = "carrot_bunch", Amount = 2 },
+				{ ItemId = "root_salad", Amount = 2 },
 				{ ItemId = "cool_stream", Amount = 1 },
 			},
 		},
 		[3] = {
 			Horseshoes = 55,
 			Items = {
-				{ ItemId = "apple_treat", Amount = 2 },
+				{ ItemId = "bread", Amount = 2 },
 				{ ItemId = "fresh_bucket", Amount = 1 },
 			},
 		},

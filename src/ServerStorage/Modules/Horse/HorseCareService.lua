@@ -718,7 +718,9 @@ function HorseCareService.UseCareItem(player, horseId, itemId, tool)
 		)
 	end
 
+	apply_secondary_need_adjustments(values, maxValues, effects.SecondaryNeedAdjustments)
 	apply_decay_modifier(horse, itemDefinition, now)
+	add_health_over_time_effect(horse, itemDefinition, now)
 
 	local lastUsedStateKey = CARE_TYPE_TO_LAST_USED_KEY[itemDefinition.CareType]
 	if lastUsedStateKey then

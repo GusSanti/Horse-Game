@@ -233,6 +233,7 @@ end
 local function build_effect_lines(itemDefinition)
 	local effects = itemDefinition and itemDefinition.Effects or {}
 	local lines = {}
+	local secondaryNeedOrder = { "Thirst", "Cleanliness", "Health", "Happiness", "Hunger" }
 
 	if itemDefinition and itemDefinition.NeedKey == "Hunger" and effects.NeedGain ~= nil then
 		lines[#lines + 1] = "Hunger: +" .. format_number(effects.NeedGain)
@@ -250,6 +251,25 @@ local function build_effect_lines(itemDefinition)
 
 	if effects.FriendshipGain ~= nil then
 		lines[#lines + 1] = "Friendship: " .. format_signed(effects.FriendshipGain)
+	end
+
+	if type(effects.SecondaryNeedAdjustments) == "table" then
+		for _, needKey in ipairs(secondaryNeedOrder) do
+			local delta = effects.SecondaryNeedAdjustments[needKey]
+			if type(delta) == "number" and delta ~= 0 then
+				lines[#lines + 1] = ("%s: %s"):format(needKey, format_signed(delta))
+			end
+		end
+	end
+
+	local healthRegen = effects.HealthRegen
+	if type(healthRegen) == "table" and tonumber(healthRegen.TotalGain) then
+		local totalGain = tonumber(healthRegen.TotalGain) or 0
+		local duration = tonumber(healthRegen.DurationMinutes)
+		if totalGain > 0 then
+			local suffix = duration and duration > 0 and (" over " .. format_number(duration) .. " min") or ""
+			lines[#lines + 1] = "Health regen: +" .. format_number(totalGain) .. suffix
+		end
 	end
 
 	local decayBuff = effects.DecayBuff

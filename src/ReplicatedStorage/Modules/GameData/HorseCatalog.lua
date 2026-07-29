@@ -21,7 +21,7 @@ local SHARED_BONDING = {
 }
 
 local SHARED_DEPENDENCIES = {
-	FavoriteFoods = { "hay_bale", "apple_treat" },
+	FavoriteFoods = { "hay_bale", "root_salad" },
 	FavoriteGroomingItems = { "soft_brush", "grooming_kit" },
 	FavoriteActivities = { "DailyCare", "ArenaSprint" },
 	StableNeeds = { "WaterBucket", "CleanStall" },
