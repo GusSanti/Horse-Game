@@ -12,6 +12,7 @@ local Utility = Modules:WaitForChild("Utility")
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -45,6 +46,24 @@ local SHOP_TABS = {
 	},
 }
 
+local CLOSE_BUTTON_NAMES = {
+	close = true,
+	closebt = true,
+	exitbt = true,
+}
+
+local RESTOCK_BUTTON_NAMES = {
+	reestockbt = true,
+	restockbt = true,
+	restyockbt = true,
+}
+
+local PURCHASE_BUTTON_NAMES = {
+	buy = true,
+	buybt = true,
+	purchasebt = true,
+}
+
 local function find_named(root, names, className)
 	for _, instance in ipairs(root:GetDescendants()) do
 		for _, name in ipairs(names) do
@@ -57,6 +76,34 @@ end
 
 local function find_button(root, names)
 	return find_named(root, names, "GuiButton")
+end
+
+local function matches_normalized_name(instance, names)
+	return instance and names[string.lower(instance.Name)] == true
+end
+
+local function is_close_button(button)
+	return matches_normalized_name(button, CLOSE_BUTTON_NAMES)
+end
+
+local function is_restock_button(button)
+	return matches_normalized_name(button, RESTOCK_BUTTON_NAMES)
+end
+
+local function is_purchase_button(button)
+	return matches_normalized_name(button, PURCHASE_BUTTON_NAMES)
+end
+
+local function is_tab_button_candidate(button)
+	if is_close_button(button) or is_restock_button(button) or is_purchase_button(button) then
+		return false
+	end
+
+	if scrollingFrame and button:IsDescendantOf(scrollingFrame) then
+		return false
+	end
+
+	return true
 end
 
 local function find_label(root, names)
@@ -307,19 +354,46 @@ local function bind_seller()
 	return true
 end
 
+local function bind_seller_hud_anim()
+	if not sellerRoot then
+		return
+	end
+
+	sellerRoot:SetAttribute("UIOpen", true)
+	pcall(function()
+		HudAnim.bind(sellerRoot)
+		HudAnim.apply_defaults_to_buttons(sellerRoot)
+		HudAnim.bind_all(sellerRoot)
+	end)
+end
+
+local function set_seller_visible(isVisible, animate)
+	if not sellerRoot then
+		return
+	end
+
+	bind_seller_hud_anim()
+
+	if HudAnim.set_visible then
+		HudAnim.set_visible(sellerRoot, isVisible == true, animate ~= false)
+	else
+		sellerRoot.Visible = isVisible == true
+	end
+end
+
 local function open_shop(shopId)
 	local tabs = SHOP_TABS[shopId]
 	if not tabs or not bind_seller() then return end
 	activeShopId = shopId
 	activeCategory = tabs[1].Category
-	sellerRoot.Visible = true
+	set_seller_visible(true, not sellerRoot.Visible)
 	local tabsRoot = find_named(sellerRoot, { "BuySellSeedsFR", "Tabs", "TabButtons" }, "GuiObject") or sellerRoot
 	if tabsRoot ~= sellerRoot then
 		tabsRoot.Visible = shopId ~= "Doctor"
 	end
 	local buttons = {}
 	for _, child in ipairs(tabsRoot:GetDescendants()) do
-		if child:IsA("GuiButton") then table.insert(buttons, child) end
+		if child:IsA("GuiButton") and is_tab_button_candidate(child) then table.insert(buttons, child) end
 	end
 	table.sort(buttons, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
 	for index, button in ipairs(buttons) do
@@ -328,8 +402,8 @@ local function open_shop(shopId)
 		if tab then
 			set_button_text(button, tab.Label)
 			button:SetAttribute("NpcSellerCategory", tab.Category)
-			if button:GetAttribute("NpcSellerBound") ~= true then
-				button:SetAttribute("NpcSellerBound", true)
+			if button:GetAttribute("NpcSellerTabBound") ~= true then
+				button:SetAttribute("NpcSellerTabBound", true)
 				button.Activated:Connect(function()
 					activeCategory = button:GetAttribute("NpcSellerCategory")
 					render()
@@ -338,15 +412,17 @@ local function open_shop(shopId)
 		end
 	end
 	local close = find_button(sellerRoot, { "CloseBT", "ExitBT", "Close" })
-	if close and close:GetAttribute("NpcSellerBound") ~= true then
-		close:SetAttribute("NpcSellerBound", true)
-		close.Activated:Connect(function() sellerRoot.Visible = false end)
+	if close and close:GetAttribute("NpcSellerCloseBound") ~= true then
+		close:SetAttribute("NpcSellerCloseBound", true)
+		close.Activated:Connect(function()
+			set_seller_visible(false, true)
+		end)
 	end
 	local restock = find_button(sellerRoot, { "RestyockBT", "RestockBT", "ReestockBT" })
 	if restock then
 		restock.Visible = shopId == "Cowboy" and activeCategory ~= "Water"
-		if restock:GetAttribute("NpcSellerBound") ~= true then
-			restock:SetAttribute("NpcSellerBound", true)
+		if restock:GetAttribute("NpcSellerRestockBound") ~= true then
+			restock:SetAttribute("NpcSellerRestockBound", true)
 			restock.Activated:Connect(function()
 				if activeShopId == "Cowboy" then
 					activeCategory = "Water"
@@ -398,7 +474,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		if isInside and not wasInside then
 			open_shop(shopId)
 		elseif not isInside and wasInside and activeShopId == shopId and sellerRoot then
-			sellerRoot.Visible = false
+			set_seller_visible(false, true)
 		end
 		zoneState[shopId] = isInside
 	end

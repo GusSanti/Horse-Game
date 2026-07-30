@@ -1,5 +1,53 @@
 local Shared = require(script.Parent:WaitForChild("Shared"))
 
+local FRUIT_IMAGE_IDS = {
+	beetroot_fruit = "rbxassetid://136673913026027",
+	beetroot_fruit_gold = "",
+	beetroot_fruit_diamond = "",
+	carrot_fruit = "rbxassetid://78452739054701",
+	carrot_fruit_gold = "",
+	carrot_fruit_diamond = "",
+	corn_fruit = "rbxassetid://129860183380571",
+	corn_fruit_gold = "",
+	corn_fruit_diamond = "",
+	eggplant_fruit = "",
+	eggplant_fruit_gold = "",
+	eggplant_fruit_diamond = "",
+	garlic_fruit = "",
+	garlic_fruit_gold = "",
+	garlic_fruit_diamond = "",
+	grape_fruit = "",
+	grape_fruit_gold = "",
+	grape_fruit_diamond = "",
+	lettuce_fruit = "",
+	lettuce_fruit_gold = "",
+	lettuce_fruit_diamond = "",
+	pepper_fruit = "",
+	pepper_fruit_gold = "",
+	pepper_fruit_diamond = "",
+	pineapple_fruit = "",
+	pineapple_fruit_gold = "",
+	pineapple_fruit_diamond = "",
+	potato_fruit = "",
+	potato_fruit_gold = "",
+	potato_fruit_diamond = "",
+	pumpkin_fruit = "",
+	pumpkin_fruit_gold = "",
+	pumpkin_fruit_diamond = "",
+	radish_fruit = "",
+	radish_fruit_gold = "",
+	radish_fruit_diamond = "",
+	strawberry_fruit = "",
+	strawberry_fruit_gold = "",
+	strawberry_fruit_diamond = "",
+	tomato_fruit = "",
+	tomato_fruit_gold = "",
+	tomato_fruit_diamond = "",
+	wheat_fruit = "",
+	wheat_fruit_gold = "",
+	wheat_fruit_diamond = "",
+}
+
 local RARITY_CONFIGS = {
 	{
 		Name = "Gold",
@@ -51,6 +99,7 @@ local function create_fruit(config)
 		CropDisplayName = displayName,
 		DisplayName = config.FruitDisplayName or displayName,
 		ToolName = toolName,
+		IdImage = config.IdImage or FRUIT_IMAGE_IDS[itemId] or "",
 		Description = config.Description or ("Freshly harvested %s from the farm."):format(string.lower(displayName)),
 		SellPrice = config.SellPrice or 0,
 		SortOrder = config.SortOrder or 0,
@@ -67,13 +116,15 @@ end
 local function create_rare_fruit(baseFruit, rarityConfig)
 	local rarityName = rarityConfig.Name
 	local rarityKey = string.lower(rarityName)
+	local itemId = ("%s_%s"):format(baseFruit.ItemId, rarityKey)
 
 	return Shared.CreateFruit({
-		ItemId = ("%s_%s"):format(baseFruit.ItemId, rarityKey),
+		ItemId = itemId,
 		CropId = baseFruit.CropId,
 		CropDisplayName = baseFruit.CropDisplayName,
 		DisplayName = ("%s %s"):format(baseFruit.DisplayName, rarityName),
 		ToolName = ("%s %s"):format(baseFruit.ToolName, rarityName),
+		IdImage = FRUIT_IMAGE_IDS[itemId] or "",
 		Description = ("%s with %s rarity."):format(baseFruit.DisplayName, rarityName),
 		SellPrice = 0,
 		SortOrder = (baseFruit.SortOrder or 0) + rarityConfig.SortOffset,

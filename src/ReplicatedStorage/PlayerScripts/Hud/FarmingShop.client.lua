@@ -59,6 +59,7 @@ type ShopCardTemplateMap = {
 	OutOfStockLabelPath: { string }?,
 	ButtonTextPath: { string }?,
 	NameLabelPath: { string }?,
+	ImageRootPath: { string }?,
 	ViewportFramePath: { string }?,
 }
 
@@ -70,6 +71,7 @@ type ShopCardEntry = {
 	ValueLabel: TextLabel?,
 	OutOfStockLabel: TextLabel?,
 	ButtonText: TextLabel?,
+	ImageRoot: GuiObject?,
 	ViewportFrame: ViewportFrame?,
 	WorldModel: WorldModel?,
 	Camera: Camera?,
@@ -240,6 +242,49 @@ local function find_viewport_frame(root: Instance?): ViewportFrame?
 	return if fallback then fallback :: ViewportFrame else nil
 end
 
+local function normalize_image_id(value): string?
+	if type(value) == "number" then
+		return ("rbxassetid://%d"):format(value)
+	end
+
+	if type(value) ~= "string" then
+		return nil
+	end
+
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	if trimmedValue == "" then
+		return nil
+	end
+
+	if string.match(trimmedValue, "^%d+$") then
+		return ("rbxassetid://%s"):format(trimmedValue)
+	end
+
+	return trimmedValue
+end
+
+local function get_item_image(itemDefinition): string?
+	if type(itemDefinition) ~= "table" then
+		return nil
+	end
+
+	return normalize_image_id(itemDefinition.IdImage)
+end
+
+local function find_image_root(root: Instance?, viewportFrame: ViewportFrame?): GuiObject?
+	local viewportParent = viewportFrame and viewportFrame.Parent
+	if viewportParent and (viewportParent:IsA("ImageLabel") or viewportParent:IsA("ImageButton")) then
+		return viewportParent :: GuiObject
+	end
+
+	local imageRoot = find_shallow_named_descendant(root, IMAGE_CONTAINER_NAMES, nil, 2)
+	if imageRoot and (imageRoot:IsA("ImageLabel") or imageRoot:IsA("ImageButton")) then
+		return imageRoot :: GuiObject
+	end
+
+	return nil
+end
+
 local function strip_local_scripts(root: Instance)
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
@@ -328,6 +373,21 @@ local function clear_world_model(worldModel: WorldModel?)
 	end
 end
 
+local function clear_viewport_frame(viewportFrame: ViewportFrame?)
+	if not viewportFrame then
+		return
+	end
+
+	for _, child in ipairs(viewportFrame:GetChildren()) do
+		if child:IsA("WorldModel") or child:IsA("Camera") then
+			child:Destroy()
+		end
+	end
+
+	viewportFrame.CurrentCamera = nil
+	viewportFrame.Visible = false
+end
+
 local function ensure_viewport_state(entry: ShopCardEntry)
 	if entry.WorldModel and entry.Camera and entry.ViewportFrame then
 		return
@@ -411,6 +471,7 @@ local function create_template_map(template: GuiObject): ShopCardTemplateMap
 	local buttonText = find_text_label(template, BUTTON_TEXT_NAMES)
 	local nameLabel = find_text_label(template, NAME_LABEL_NAMES)
 	local viewportFrame = find_viewport_frame(template)
+	local imageRoot = find_image_root(template, viewportFrame)
 
 	return {
 		PurchaseButtonPath = get_relative_child_path(template, purchaseButton),
@@ -419,8 +480,24 @@ local function create_template_map(template: GuiObject): ShopCardTemplateMap
 		OutOfStockLabelPath = get_relative_child_path(template, outOfStockLabel),
 		ButtonTextPath = get_relative_child_path(template, buttonText),
 		NameLabelPath = get_relative_child_path(template, nameLabel),
+		ImageRootPath = get_relative_child_path(template, imageRoot),
 		ViewportFramePath = get_relative_child_path(template, viewportFrame),
 	}
+end
+
+local function apply_item_image(entry: ShopCardEntry)
+	local imageRoot = entry.ImageRoot
+	local image = get_item_image(entry.ItemDefinition)
+
+	if imageRoot and (imageRoot:IsA("ImageLabel") or imageRoot:IsA("ImageButton")) then
+		imageRoot.Image = image or ""
+		imageRoot.ImageTransparency = image and 0 or 1
+		imageRoot.ScaleType = Enum.ScaleType.Fit
+	end
+
+	clear_viewport_frame(entry.ViewportFrame)
+	entry.WorldModel = nil
+	entry.Camera = nil
 end
 
 local function apply_cached_viewport(entry: ShopCardEntry)
@@ -599,11 +676,13 @@ local function create_card_entry(panel: ShopPanel, itemDefinition): ShopCardEntr
 		ValueLabel = resolve_child_by_path(card, templateMap.ValueLabelPath, "TextLabel") :: TextLabel?,
 		OutOfStockLabel = resolve_child_by_path(card, templateMap.OutOfStockLabelPath, "TextLabel") :: TextLabel?,
 		ButtonText = resolve_child_by_path(card, templateMap.ButtonTextPath, "TextLabel") :: TextLabel?,
+		ImageRoot = resolve_child_by_path(card, templateMap.ImageRootPath, nil) :: GuiObject?,
 		ViewportFrame = resolve_child_by_path(card, templateMap.ViewportFramePath, "ViewportFrame") :: ViewportFrame?,
 		WorldModel = nil,
 		Camera = nil,
 		ButtonConnection = nil,
 	}
+	entry.ImageRoot = entry.ImageRoot or find_image_root(card, entry.ViewportFrame)
 
 	local nameLabel = resolve_child_by_path(card, templateMap.NameLabelPath, "TextLabel") :: TextLabel?
 	if nameLabel then
@@ -618,7 +697,11 @@ local function create_card_entry(panel: ShopPanel, itemDefinition): ShopCardEntr
 		entry.ButtonText.Text = if panel.Kind == "Seed" then "Buy" else "Sell"
 	end
 
-	apply_cached_viewport(entry)
+	if panel.Kind == "Fruit" then
+		apply_item_image(entry)
+	else
+		apply_cached_viewport(entry)
+	end
 
 	if entry.PurchaseButton then
 		entry.ButtonConnection = entry.PurchaseButton.Activated:Connect(function()

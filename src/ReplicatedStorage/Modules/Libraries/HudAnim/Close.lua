@@ -1,172 +1,29 @@
-------------------//SERVICES
-local TweenService = game:GetService("TweenService")
-local Lighting = game:GetService("Lighting")
-local Camera = workspace.CurrentCamera
-
 ------------------//VARIABLES
 local Close = {}
-local closing_deb = {}
-local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
-
-------------------//FUNCTIONS
-local function get_number_attribute(inst: Instance, attributeName: string, fallback: number): number
-	local value = inst:GetAttribute(attributeName)
-	if typeof(value) == "number" then
-		return value
-	end
-
-	local convertedValue = tonumber(value)
-	if convertedValue ~= nil then
-		return convertedValue
-	end
-
-	return fallback
-end
-
-local function get_blur_effect()
-	return Lighting:FindFirstChild("UIBlur") or Lighting:FindFirstChildWhichIsA("BlurEffect")
-end
-
-local function tween_blur(targetSize, t)
-	local blur = get_blur_effect()
-	if blur then
-		local info = TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		TweenService:Create(blur, info, { Size = targetSize }):Play()
-	end
-end
-
-local function tween_fov(target, t)
-	local info = TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	TweenService:Create(Camera, info, { FieldOfView = target }):Play()
-end
-
-local function has_true_attribute(instance: Instance?, attributeName: string): boolean
-	local current = instance
-
-	while current do
-		if current:GetAttribute(attributeName) == true then
-			return true
-		end
-
-		current = current.Parent
-	end
-
-	return false
-end
-
-local function finish_close(inst, state, hasBlur, t)
-	inst.Visible = false
-
-	-- Limpar efeitos
-	if hasBlur then
-		tween_blur(0, t)
-	end
-	if inst:GetAttribute("fov") then
-		tween_fov(70, t)
-	end
-
-	-- Restore state
-	if state then
-		if state.origSize then
-			inst.Size = state.origSize
-		end
-		if state.origPos then
-			inst.Position = state.origPos
-		end
-
-		if inst:IsA("CanvasGroup") then
-			inst.GroupTransparency = 0
-		end
-	end
-
-	-- Safely clear the debounce
-	task.defer(function()
-		closing_deb[inst] = nil
-		inst:SetAttribute("_is_closing", nil)
-	end)
-end
 
 ------------------//MAIN FUNCTIONS
-function Close.run(inst, state, utils, sfx)
-	if sfx and sfx.play_for then
-		sfx.play_for(inst, "sfx_close")
-	end
+function Close.get_target(inst, state, utils, kind, offset)
+	local basePosition = state.BasePosition or state.origPos or inst.Position
+	local baseSize = state.BaseSize or state.origSize or inst.Size
+	local properties = {}
 
-	local kind = inst:GetAttribute("open_anim") or "pop"
-	local t = get_number_attribute(inst, "open_t", 0.25)
-	local closeTime = t * 0.8
-	local offset = get_number_attribute(inst, "open_offset_px", 200)
-	local hasBlur = inst:GetAttribute("blur") ~= nil
-
-	local easeStyle = Enum.EasingStyle.Back
-	local easeDir = Enum.EasingDirection.In
-
-	-- Fade out
-	if inst:IsA("CanvasGroup") then
-		local info = TweenInfo.new(closeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		TweenService:Create(inst, info, { GroupTransparency = 1 }):Play()
-	end
-
-	-- Animacoes
 	if kind == "slide_down" then
-		local currentPos = state.origPos or inst.Position
-		local targetPos = UDim2.new(currentPos.X.Scale, currentPos.X.Offset, currentPos.Y.Scale, currentPos.Y.Offset - (offset * 1.2))
-
-		local tween = utils.tween(inst, { Position = targetPos }, closeTime, easeStyle, easeDir)
-		tween:Play()
-		tween.Completed:Connect(function()
-			finish_close(inst, state, hasBlur, closeTime)
-		end)
+		properties.Position = utils.offset_udim2(basePosition, 0, -offset)
 	elseif kind == "slide_up" then
-		local currentPos = state.origPos or inst.Position
-		local targetPos = UDim2.new(currentPos.X.Scale, currentPos.X.Offset, currentPos.Y.Scale, currentPos.Y.Offset + (offset * 1.2))
-
-		local tween = utils.tween(inst, { Position = targetPos }, closeTime, easeStyle, easeDir)
-		tween:Play()
-		tween.Completed:Connect(function()
-			finish_close(inst, state, hasBlur, closeTime)
-		end)
-	else
-		local targetSize = UDim2.new(0, 0, 0, 0)
-		if state and state.origSize then
-			targetSize = utils.scale_udim2(state.origSize, 0.001)
-		end
-
-		local tween = utils.tween(inst, { Size = targetSize }, closeTime, easeStyle, easeDir)
-		tween:Play()
-		tween.Completed:Connect(function()
-			finish_close(inst, state, hasBlur, closeTime)
-		end)
+		properties.Position = utils.offset_udim2(basePosition, 0, offset)
+	elseif kind == "slide_left" then
+		properties.Position = utils.offset_udim2(basePosition, offset, 0)
+	elseif kind == "slide_right" then
+		properties.Position = utils.offset_udim2(basePosition, -offset, 0)
+	elseif kind ~= "fade" and kind ~= "none" then
+		properties.Size = utils.scale_udim2(baseSize, 0.001)
 	end
-end
 
-function Close.bind(inst, state, utils, sfx)
-	inst:GetPropertyChangedSignal("Visible"):Connect(function()
-		-- Detecta fechamento real
-		if inst.Visible == false then
-			if not inst:GetAttribute("UIOpen") then
-				return
-			end
-			if has_true_attribute(inst, IGNORE_HUD_ANIM_ATTRIBUTE) then
-				return
-			end
-			if inst:GetAttribute("skip_close") then
-				inst:SetAttribute("skip_close", nil)
-				return
-			end
-			if closing_deb[inst] then
-				return
-			end
+	if inst:IsA("CanvasGroup") then
+		properties.GroupTransparency = 1
+	end
 
-			-- Lock and prepare the animation
-			closing_deb[inst] = true
-			inst:SetAttribute("_is_closing", true)
-			inst:SetAttribute("skip_open", true)
-
-			inst.Visible = true
-			Close.run(inst, state, utils, sfx)
-		end
-	end)
+	return properties
 end
 
 ------------------//INIT

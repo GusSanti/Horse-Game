@@ -272,7 +272,8 @@ function IconHelper.GetDefinitionIconImage(definition): string?
 		return nil
 	end
 
-	return IconHelper.NormalizeImageId(definition.IconImage)
+	return IconHelper.NormalizeImageId(definition.IdImage)
+		or IconHelper.NormalizeImageId(definition.IconImage)
 		or IconHelper.NormalizeImageId(definition.IconImageId)
 		or IconHelper.NormalizeImageId(definition.Image)
 		or IconHelper.NormalizeImageId(definition.ImageId)
@@ -1147,6 +1148,10 @@ local function is_farming_item_definition(itemDefinition): boolean
 	return itemDefinition ~= nil and (itemDefinition.Kind == "Seed" or itemDefinition.Kind == "Fruit")
 end
 
+local function is_fruit_item_definition(itemDefinition): boolean
+	return itemDefinition ~= nil and itemDefinition.Kind == "Fruit"
+end
+
 function IconHelper.GetDefaultGenericToolDefinition(toolName)
 	local normalizedToolName = InventoryLoadout.NormalizeGenericToolName(toolName)
 	if not normalizedToolName then
@@ -1183,14 +1188,20 @@ local function resolve_tool_metadata(tool: Tool)
 		local farmingDefinition = ToolItemCatalog.GetItemDefinition(farmingItemId)
 		if is_farming_item_definition(farmingDefinition) then
 			local quantity = get_inventory_quantity(farmingDefinition.ItemId, farmingDefinition.InventoryPath)
+			local imageOnly = is_fruit_item_definition(farmingDefinition)
 			return {
 				Key = farmingDefinition.ItemId,
 				DisplayName = farmingDefinition.DisplayName or tool.Name,
 				SortCategory = categoryOrderLookup[farmingDefinition.ToolCategory] or math.huge,
 				SortOrder = farmingDefinition.SortOrder or math.huge,
-				RenderSource = get_farming_render_source(farmingDefinition) or tool,
+				RenderSource = if imageOnly
+					then nil
+					else get_farming_render_source(farmingDefinition) or tool,
 				FarmingDefinition = farmingDefinition,
-				IconImage = IconHelper.GetDefinitionIconImage(farmingDefinition) or IconHelper.GetToolIconImage(tool),
+				IconImage = if imageOnly
+					then IconHelper.NormalizeImageId(farmingDefinition.IdImage)
+					else IconHelper.GetDefinitionIconImage(farmingDefinition) or IconHelper.GetToolIconImage(tool),
+				ImageOnly = imageOnly,
 				Quantity = math.max(quantity, 1),
 				ShowsQuantity = quantity > 1,
 				IsSeed = farmingDefinition.Kind == "Seed",
@@ -1203,14 +1214,20 @@ local function resolve_tool_metadata(tool: Tool)
 		local farmingDefinition = if is_farming_item_definition(toolDefinition) then toolDefinition else nil
 		local quantity = get_inventory_quantity(toolDefinition.ItemId, toolDefinition.InventoryPath)
 		local isDefaultItem = InventoryLoadout.IsDefaultItemId(toolDefinition.ItemId)
+		local imageOnly = is_fruit_item_definition(toolDefinition)
 		return {
 			Key = toolDefinition.ItemId,
 			DisplayName = toolDefinition.DisplayName or tool.Name,
 			SortCategory = categoryOrderLookup[toolDefinition.ToolCategory] or math.huge,
 			SortOrder = toolDefinition.SortOrder or math.huge,
-			RenderSource = get_farming_render_source(farmingDefinition) or get_catalog_render_source(toolDefinition) or tool,
+			RenderSource = if imageOnly
+				then nil
+				else get_farming_render_source(farmingDefinition) or get_catalog_render_source(toolDefinition) or tool,
 			FarmingDefinition = farmingDefinition,
-			IconImage = IconHelper.GetDefinitionIconImage(toolDefinition) or IconHelper.GetToolIconImage(tool),
+			IconImage = if imageOnly
+				then IconHelper.NormalizeImageId(toolDefinition.IdImage)
+				else IconHelper.GetDefinitionIconImage(toolDefinition) or IconHelper.GetToolIconImage(tool),
+			ImageOnly = imageOnly,
 			Quantity = math.max(quantity, 1),
 			ShowsQuantity = not isDefaultItem and quantity > 1,
 			IsSeed = toolDefinition.Kind == "Seed",
@@ -1460,6 +1477,10 @@ local function render_viewport(
 	isSeed: boolean,
 	farmingDefinition
 )
+	if not viewportFrame then
+		return
+	end
+
 	for _, child in ipairs(viewportFrame:GetChildren()) do
 		if child:IsA("WorldModel") or child:IsA("Camera") then
 			child:Destroy()
@@ -1473,6 +1494,12 @@ local function render_viewport(
 	end
 
 	if cachedFarmingDefinition then
+		if is_fruit_item_definition(cachedFarmingDefinition) then
+			IconHelper.ClearViewportPreview(viewportFrame)
+			viewportFrame.Visible = false
+			return
+		end
+
 		local farmingViewportCache = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
 		if farmingViewportCache.ApplyToViewport(viewportFrame, cachedFarmingDefinition, "HotbarFarmingWorldModel", "HotbarFarmingCamera") then
 			return
@@ -1568,6 +1595,7 @@ local function build_groups()
 				RenderSource = metadata.RenderSource or tool,
 				FarmingDefinition = metadata.FarmingDefinition,
 				IconImage = metadata.IconImage,
+				ImageOnly = metadata.ImageOnly == true,
 				Quantity = metadata.Quantity or 1,
 				ShowsQuantity = metadata.ShowsQuantity == true,
 				IsSeed = metadata.IsSeed == true,
@@ -1582,6 +1610,7 @@ local function build_groups()
 		existingGroup.IsSeed = existingGroup.IsSeed or metadata.IsSeed == true
 		existingGroup.FarmingDefinition = existingGroup.FarmingDefinition or metadata.FarmingDefinition
 		existingGroup.IconImage = existingGroup.IconImage or metadata.IconImage
+		existingGroup.ImageOnly = existingGroup.ImageOnly or metadata.ImageOnly == true
 
 		existingGroup.Tools[#existingGroup.Tools + 1] = tool
 
@@ -1730,7 +1759,7 @@ local function create_generated_viewport(parent: GuiObject): ViewportFrame
 	return viewportFrame
 end
 
-local function get_slot_viewport(slot: GuiObject): ViewportFrame
+local function get_slot_viewport(slot: GuiObject, createIfMissing: boolean?): ViewportFrame?
 	local imageItem = find_named_instance(slot, { "ImageItem" }, nil, true)
 	if imageItem and imageItem:IsA("ViewportFrame") then
 		return imageItem :: ViewportFrame
@@ -1748,6 +1777,10 @@ local function get_slot_viewport(slot: GuiObject): ViewportFrame
 		return viewportFrame :: ViewportFrame
 	end
 
+	if createIfMissing == false then
+		return nil
+	end
+
 	if imageItem and imageItem:IsA("GuiObject") then
 		return create_generated_viewport(imageItem)
 	end
@@ -1755,9 +1788,19 @@ local function get_slot_viewport(slot: GuiObject): ViewportFrame
 	return create_generated_viewport(slot)
 end
 
-function IconHelper.GetSlotImageRoot(slot: GuiObject): GuiObject?
-	local imageItem = find_named_instance(slot, { "ImageItem" }, nil, true)
+function IconHelper.GetSlotImageRoot(slot: GuiObject, viewportFrame: ViewportFrame?): GuiObject?
+	local viewportParent = viewportFrame and viewportFrame.Parent
+	if viewportParent and (viewportParent:IsA("ImageLabel") or viewportParent:IsA("ImageButton")) then
+		return viewportParent :: GuiObject
+	end
+
+	local imageItem = find_named_instance(slot, { "ImageItem", "ItemImage", "ImageLabel", "Icon" }, nil, true)
 	if imageItem and (imageItem:IsA("ImageLabel") or imageItem:IsA("ImageButton")) then
+		local imageKey = normalize_key(imageItem.Name)
+		if imageKey == "rarity" or imageKey == "rarityicon" then
+			return nil
+		end
+
 		return imageItem :: GuiObject
 	end
 
@@ -1778,7 +1821,7 @@ function IconHelper.ClearViewportPreview(viewportFrame: ViewportFrame?)
 	viewportFrame.CurrentCamera = nil
 end
 
-function IconHelper.ApplyIconOrViewport(imageRoot: GuiObject?, viewportFrame: ViewportFrame?, iconImage: string?): boolean
+function IconHelper.ApplyIconOrViewport(imageRoot: GuiObject?, viewportFrame: ViewportFrame?, iconImage: string?, imageOnly: boolean?): boolean
 	if imageRoot and (imageRoot:IsA("ImageLabel") or imageRoot:IsA("ImageButton")) then
 		if imageRoot:GetAttribute("HotbarOriginalImage") == nil then
 			imageRoot:SetAttribute("HotbarOriginalImage", imageRoot.Image or "")
@@ -1798,11 +1841,31 @@ function IconHelper.ApplyIconOrViewport(imageRoot: GuiObject?, viewportFrame: Vi
 			return true
 		end
 
+		if imageOnly then
+			imageRoot.Image = ""
+			imageRoot.ImageTransparency = 1
+			IconHelper.ClearViewportPreview(viewportFrame)
+			if viewportFrame then
+				viewportFrame.Visible = false
+			end
+
+			return true
+		end
+
 		imageRoot.Image = imageRoot:GetAttribute("HotbarOriginalImage") or ""
 		local originalTransparency = imageRoot:GetAttribute("HotbarOriginalImageTransparency")
 		if type(originalTransparency) == "number" then
 			imageRoot.ImageTransparency = originalTransparency
 		end
+	end
+
+	if imageOnly then
+		IconHelper.ClearViewportPreview(viewportFrame)
+		if viewportFrame then
+			viewportFrame.Visible = false
+		end
+
+		return true
 	end
 
 	if viewportFrame then
@@ -1846,17 +1909,19 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 		rarityIcon.Visible = rarityImage ~= nil
 	end
 
-	local viewportFrame = get_slot_viewport(slot)
-	local imageRoot = IconHelper.GetSlotImageRoot(slot)
+	local imageOnly = group.ImageOnly == true
+	local viewportFrame = get_slot_viewport(slot, not imageOnly)
+	local imageRoot = IconHelper.GetSlotImageRoot(slot, viewportFrame)
 	local previewKey = if group.IconImage
 		then ("icon:%s:%s"):format(group.Key, group.IconImage)
+		elseif imageOnly then ("image-only:%s"):format(group.Key)
 		else get_preview_cache_key(group.Key, group.RenderSource, group.IsSeed == true)
 	if group.IconImage then
-		IconHelper.ApplyIconOrViewport(imageRoot, viewportFrame, group.IconImage)
+		IconHelper.ApplyIconOrViewport(imageRoot, viewportFrame, group.IconImage, imageOnly)
 		slot:SetAttribute("HotbarPreviewReady", true)
 		slot:SetAttribute("HotbarPreviewKey", previewKey)
 	elseif slot:GetAttribute("HotbarPreviewReady") ~= true or slot:GetAttribute("HotbarPreviewKey") ~= previewKey then
-		if not IconHelper.ApplyIconOrViewport(imageRoot, viewportFrame, nil) then
+		if not IconHelper.ApplyIconOrViewport(imageRoot, viewportFrame, nil, imageOnly) then
 			render_viewport(viewportFrame, group.Key, group.RenderSource, group.DisplayName, group.IsSeed == true, group.FarmingDefinition)
 		end
 		slot:SetAttribute("HotbarPreviewReady", true)
@@ -2118,25 +2183,16 @@ bind_backpack()
 bind_ui_watchers()
 try_bind_hotbar()
 rootTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", update_money_display))
-for _, inventoryPath in ipairs({
-	"Inventory.Seeds",
-	"Inventory.Fruits",
-	"Inventory.Consumables.Food",
-	"Inventory.Consumables.Water",
-	"Inventory.Consumables.Grooming",
-	"Inventory.Consumables.Misc",
-	"Inventory.Consumables.Medical",
-}) do
-	rootTrove:Add(DataUtility.client.bind(inventoryPath, queue_refresh))
-end
-
-for _, loadoutPath in ipairs({
-	InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
-	InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH,
-	InventoryLoadout.HOTBAR_INITIALIZED_PATH,
-}) do
-	rootTrove:Add(DataUtility.client.bind(loadoutPath, queue_refresh))
-end
+rootTrove:Add(DataUtility.client.bind("Inventory.Seeds", queue_refresh))
+rootTrove:Add(DataUtility.client.bind("Inventory.Fruits", queue_refresh))
+rootTrove:Add(DataUtility.client.bind("Inventory.Consumables.Food", queue_refresh))
+rootTrove:Add(DataUtility.client.bind("Inventory.Consumables.Water", queue_refresh))
+rootTrove:Add(DataUtility.client.bind("Inventory.Consumables.Grooming", queue_refresh))
+rootTrove:Add(DataUtility.client.bind("Inventory.Consumables.Misc", queue_refresh))
+rootTrove:Add(DataUtility.client.bind("Inventory.Consumables.Medical", queue_refresh))
+rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_ITEM_IDS_PATH, queue_refresh))
+rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH, queue_refresh))
+rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_INITIALIZED_PATH, queue_refresh))
 
 if localPlayer.Character then
 	bind_character(localPlayer.Character)

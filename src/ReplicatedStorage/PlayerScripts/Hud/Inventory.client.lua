@@ -255,7 +255,8 @@ local function get_definition_icon_image(definition)
         return nil
     end
 
-    return normalize_image_id(definition.IconImage)
+    return normalize_image_id(definition.IdImage)
+        or normalize_image_id(definition.IconImage)
         or normalize_image_id(definition.IconImageId)
         or normalize_image_id(definition.Image)
         or normalize_image_id(definition.ImageId)
@@ -492,7 +493,7 @@ local function clear_viewport(viewportFrame)
     viewportFrame.CurrentCamera = nil
 end
 
-local function apply_icon_or_viewport(imageRoot, viewportFrame, iconImage)
+local function apply_icon_or_viewport(imageRoot, viewportFrame, iconImage, imageOnly)
     if imageRoot and (imageRoot:IsA("ImageLabel") or imageRoot:IsA("ImageButton")) then
         if imageRoot:GetAttribute("InventoryOriginalImage") == nil then
             imageRoot:SetAttribute("InventoryOriginalImage", imageRoot.Image or "")
@@ -512,11 +513,31 @@ local function apply_icon_or_viewport(imageRoot, viewportFrame, iconImage)
             return true
         end
 
+        if imageOnly then
+            imageRoot.Image = ""
+            imageRoot.ImageTransparency = 1
+            if viewportFrame then
+                clear_viewport(viewportFrame)
+                viewportFrame.Visible = false
+            end
+
+            return true
+        end
+
         imageRoot.Image = imageRoot:GetAttribute("InventoryOriginalImage") or ""
         local originalTransparency = imageRoot:GetAttribute("InventoryOriginalImageTransparency")
         if type(originalTransparency) == "number" then
             imageRoot.ImageTransparency = originalTransparency
         end
+    end
+
+    if imageOnly then
+        if viewportFrame then
+            clear_viewport(viewportFrame)
+            viewportFrame.Visible = false
+        end
+
+        return true
     end
 
     if viewportFrame then
@@ -587,6 +608,10 @@ end
 
 local function is_farming_item_definition(itemDefinition)
     return itemDefinition ~= nil and (itemDefinition.Kind == "Seed" or itemDefinition.Kind == "Fruit")
+end
+
+local function is_fruit_item_definition(itemDefinition)
+    return itemDefinition ~= nil and itemDefinition.Kind == "Fruit"
 end
 
 local function find_named_asset(root, searchNames)
@@ -734,6 +759,12 @@ local function render_viewport(viewportFrame, entry, cameraConfig, cameraKey)
     end
 
     if farmingDefinition then
+        if is_fruit_item_definition(farmingDefinition) then
+            clear_viewport(viewportFrame)
+            viewportFrame.Visible = false
+            return
+        end
+
         local farmingViewportCache = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
         if farmingViewportCache.ApplyToViewport(viewportFrame, farmingDefinition, "InventoryFarmingWorldModel", "InventoryFarmingCamera") then
             return
@@ -795,11 +826,13 @@ local function create_item_entry(itemDefinition, farmingDefinition, count)
     local entryKey = get_entry_key_from_item_id(itemId)
     local isDefaultItem = InventoryLoadout.IsDefaultItemId(itemId)
     local displayCount = isDefaultItem and math.max(count, 1) or count
+    local definition = itemDefinition or farmingDefinition
+    local imageOnly = is_fruit_item_definition(definition)
 
     return {
         EntryKey = entryKey,
         ItemId = itemId,
-        Definition = itemDefinition or farmingDefinition,
+        Definition = definition,
         FarmingDefinition = farmingDefinition,
         DisplayName = itemDefinition and itemDefinition.DisplayName or farmingDefinition and farmingDefinition.DisplayName or "",
         Description = get_item_description(itemDefinition, farmingDefinition),
@@ -810,8 +843,11 @@ local function create_item_entry(itemDefinition, farmingDefinition, count)
         SortOrder = (itemDefinition and itemDefinition.SortOrder)
             or (farmingDefinition and farmingDefinition.SortOrder)
             or math.huge,
-        RenderSource = get_farming_render_source(farmingDefinition) or get_catalog_render_source(itemDefinition),
-        IconImage = get_definition_icon_image(itemDefinition or farmingDefinition),
+        RenderSource = if imageOnly
+            then nil
+            else get_farming_render_source(farmingDefinition) or get_catalog_render_source(itemDefinition),
+        IconImage = if imageOnly then normalize_image_id(definition and definition.IdImage) else get_definition_icon_image(definition),
+        ImageOnly = imageOnly,
         LoadoutKind = "item",
         LoadoutValue = itemId,
         CanHotbarEquip = displayCount > 0 or isDefaultItem,
@@ -1100,7 +1136,12 @@ local function render_details(entry)
 
     if currentUi.DetailsViewport then
         if entry then
-            if not apply_icon_or_viewport(currentUi.DetailsImageRoot, currentUi.DetailsViewport, entry.IconImage) then
+            if not apply_icon_or_viewport(
+                currentUi.DetailsImageRoot,
+                currentUi.DetailsViewport,
+                entry.IconImage,
+                entry.ImageOnly == true
+            ) then
                 render_viewport(currentUi.DetailsViewport, entry, DETAILS_VIEWPORT_CONFIG, "details")
             end
         else
@@ -1153,7 +1194,7 @@ local function configure_card(card, entry, layoutOrder)
     local rarityLabel = find_text_label(card, RARITY_LABEL_NAMES, true)
     local imageRoot = find_gui_object(card, ITEM_IMAGE_NAMES, true)
     local viewportFrame = find_viewport_frame(imageRoot or card)
-    local useIcon = apply_icon_or_viewport(imageRoot, viewportFrame, entry.IconImage)
+    local useIcon = apply_icon_or_viewport(imageRoot, viewportFrame, entry.IconImage, entry.ImageOnly == true)
 
     if nameLabel then nameLabel.Text = entry.DisplayName end
     if amountLabel then amountLabel.Text = ("x%d"):format(entry.Count) end
@@ -1449,10 +1490,6 @@ local function bind_ui(ui)
     uiTrove:Connect(ui.UtilityButton.Activated, function() set_active_category("Utility") end)
     uiTrove:Connect(ui.SeedsButton.Activated, function() set_active_category("Seeds") end)
     uiTrove:Connect(ui.FoodsButton.Activated, function() set_active_category("Foods") end)
-
-    if ui.CloseButton then
-        uiTrove:Connect(ui.CloseButton.Activated, function() set_gui_visible(ui.Root, false) end)
-    end
 
     if ui.EquipButton then uiTrove:Connect(ui.EquipButton.Activated, equip_selected_item) end
     if ui.UnequipButton then uiTrove:Connect(ui.UnequipButton.Activated, unequip_selected_item) end

@@ -1,15 +1,19 @@
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 
+local Utils = require(script.Utils)
 local SFX = require(script.SFX)
+local Pulse = require(script.Pulse)
+local Hover = require(script.Hover)
+local Click = require(script.Click)
+local Open = require(script.Open)
+local Close = require(script.Close)
 
 local HudAnim = {}
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer and localPlayer:WaitForChild("PlayerGui") or nil
 
-local EXIT_BUTTON_NAME = "ExitBT"
 local BUTTON_SUFFIX = "BT"
 local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAMES = { "MainframeFR", "MainFrameFR" }
@@ -17,38 +21,40 @@ local HUD_ROOT_NAME = "HUDFR"
 local HOTBAR_ROOT_NAME = "BottomFrameFR"
 local MONEY_TAB_NAME = "MoneyTabBG"
 local FRAMES_CONTAINER_NAME = "Frames"
-local INVENTORY_FRAME_NAME = "Inventory"
 local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
 local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
+local HUD_FADE_EXCLUSIONS_ATTRIBUTE = "HudFadeExclusions"
+local TARGET_FRAME_ATTRIBUTE = "TargetFrame"
+local CLOSE_TARGET_ATTRIBUTE = "CloseTarget"
 
-local SHOP_FRAME_NAMES = {
-	SeedShop = true,
-	FruitShop = true,
-	Seller = true,
-	Shop = true,
+local CLOSE_BUTTON_NAMES = {
+	ExitBT = true,
+	CloseBT = true,
 }
 
-local INVENTORY_HUD_FADE_EXCLUDED_NAMES = {
-	[HOTBAR_ROOT_NAME] = true,
-}
-
-local SHOP_HUD_FADE_EXCLUDED_NAMES = {
-	[MONEY_TAB_NAME] = true,
+-- Legacy defaults stay data-driven; any frame can override them with
+-- HudFadeExclusions="NameA,NameB".
+local DEFAULT_HUD_EXCLUSIONS_BY_FRAME = {
+	Inventory = { [HOTBAR_ROOT_NAME] = true },
+	SeedShop = { [MONEY_TAB_NAME] = true },
+	FruitShop = { [MONEY_TAB_NAME] = true },
+	Seller = { [MONEY_TAB_NAME] = true },
+	Shop = { [MONEY_TAB_NAME] = true },
 }
 
 local DEFAULTS = {
-	hover_scale = 0.08,
-	click_scale = 0.1,
-	hover_t = 0.3,
-	click_t = 0.15,
-	rotate_hover_deg = 3,
+	hover_scale = 0.04,
+	click_scale = 0.06,
+	hover_t = 0.14,
+	click_t = 0.09,
+	rotate_hover_deg = 0,
 	pulse = false,
-	open_t = 0.5,
-	open_offset_px = 50,
-	open_pop_scale = 0.85,
-	blur = 18,
-	blur_t = 0.5,
-	hud_fade_t = 0.15,
+	open_t = 0.24,
+	open_offset_px = 36,
+	open_pop_scale = 0.92,
+	blur = 12,
+	blur_t = 0.22,
+	hud_fade_t = 0.14,
 }
 
 local states = setmetatable({}, { __mode = "k" })
@@ -70,44 +76,11 @@ local function has_true_attribute(instance, attributeName)
 end
 
 local function get_number_attribute(instance, attributeName, fallback)
-	local value = instance and instance:GetAttribute(attributeName)
-	if typeof(value) == "number" then
-		return value
-	end
-
-	local numberValue = tonumber(value)
-	if numberValue ~= nil then
-		return numberValue
-	end
-
-	return fallback
+	return Utils.get_number_attribute(instance, attributeName, fallback)
 end
 
 local function get_optional_number_attribute(instance, attributeName)
-	local value = instance and instance:GetAttribute(attributeName)
-	if typeof(value) == "number" then
-		return value
-	end
-
-	return tonumber(value)
-end
-
-local function scale_udim2(value, multiplier)
-	return UDim2.new(
-		value.X.Scale * multiplier,
-		value.X.Offset * multiplier,
-		value.Y.Scale * multiplier,
-		value.Y.Offset * multiplier
-	)
-end
-
-local function offset_udim2(value, xOffset, yOffset)
-	return UDim2.new(
-		value.X.Scale,
-		value.X.Offset + xOffset,
-		value.Y.Scale,
-		value.Y.Offset + yOffset
-	)
+	return Utils.get_optional_number_attribute(instance, attributeName)
 end
 
 local function safe_play_sound(instance, soundKey)
@@ -117,13 +90,13 @@ local function safe_play_sound(instance, soundKey)
 end
 
 local function make_tween(instance, properties, duration, easingStyle, easingDirection)
-	local tweenInfo = TweenInfo.new(
+	return Utils.tween(
+		instance,
+		properties,
 		math.max(0, duration or 0),
 		easingStyle or Enum.EasingStyle.Quad,
 		easingDirection or Enum.EasingDirection.Out
 	)
-
-	return TweenService:Create(instance, tweenInfo, properties)
 end
 
 local function disconnect_connections(connections)
@@ -136,6 +109,8 @@ local function disconnect_connections(connections)
 end
 
 local function cancel_state_tweens(state)
+	Pulse.stop(state)
+
 	for tween in pairs(state.Tweens) do
 		pcall(function()
 			tween:Cancel()
@@ -347,36 +322,8 @@ local function update_button_visual(button, state, duration)
 	capture_base_state(button, state, false)
 	cancel_state_tweens(state)
 
-	local hoverScale = math.max(0, get_number_attribute(button, "hover_scale", DEFAULTS.hover_scale))
-	local clickScale = math.max(0, get_number_attribute(button, "click_scale", DEFAULTS.click_scale))
-	local rotateHoverDegrees = get_number_attribute(button, "rotate_hover_deg", DEFAULTS.rotate_hover_deg)
-
-	local scale = 1
-	if state.Pressed then
-		scale = 1 - clickScale
-	elseif state.Hovered then
-		scale = 1 + hoverScale
-	end
-
-	local properties = {
-		Size = scale_udim2(state.BaseSize or button.Size, scale),
-		Position = state.BasePosition or button.Position,
-		Rotation = (state.BaseRotation or button.Rotation) + (state.Hovered and rotateHoverDegrees or 0),
-	}
-
-	local hoverBackground = button:GetAttribute("hover_bg")
-	if typeof(hoverBackground) == "Color3" then
-		properties.BackgroundColor3 = state.Hovered and hoverBackground or state.BaseBackgroundColor
-	end
-
-	if button:IsA("ImageButton") then
-		local hoverImageColor = button:GetAttribute("hover_img")
-		if typeof(hoverImageColor) == "Color3" then
-			properties.ImageColor3 = state.Hovered and hoverImageColor or state.BaseImageColor
-		elseif state.BaseImageColor then
-			properties.ImageColor3 = state.BaseImageColor
-		end
-	end
+	local properties = Hover.get_target(button, state, DEFAULTS, Utils)
+	Click.apply_target(button, state, DEFAULTS, Utils, properties)
 
 	play_state_tween(
 		button,
@@ -384,7 +331,17 @@ local function update_button_visual(button, state, duration)
 		properties,
 		duration or get_number_attribute(button, "hover_t", DEFAULTS.hover_t),
 		Enum.EasingStyle.Quad,
-		Enum.EasingDirection.Out
+		Enum.EasingDirection.Out,
+		function(playbackState)
+			if playbackState == Enum.PlaybackState.Completed
+				and states[button] == state
+				and state.Hovered
+				and not state.Pressed
+				and button:GetAttribute("pulse") == true
+			then
+				Pulse.start(button, state, Utils)
+			end
+		end
 	)
 end
 
@@ -543,57 +500,15 @@ local function reset_transition(instance, state)
 end
 
 local function apply_open_start(instance, state, openKind, offset, popScale)
-	if openKind == "slide_down" then
-		instance.Position = offset_udim2(state.BasePosition or instance.Position, 0, -offset)
-	elseif openKind == "slide_up" then
-		instance.Position = offset_udim2(state.BasePosition or instance.Position, 0, offset)
-	elseif openKind == "slide_left" then
-		instance.Position = offset_udim2(state.BasePosition or instance.Position, offset, 0)
-	elseif openKind == "slide_right" then
-		instance.Position = offset_udim2(state.BasePosition or instance.Position, -offset, 0)
-	elseif openKind ~= "fade" and openKind ~= "none" then
-		instance.Size = scale_udim2(state.BaseSize or instance.Size, popScale)
-	end
-
-	if instance:IsA("CanvasGroup") then
-		instance.GroupTransparency = 1
-	end
+	Open.apply_start(instance, state, Utils, openKind, offset, popScale)
 end
 
 local function build_open_target_properties(instance, state)
-	local properties = {
-		Size = state.BaseSize or instance.Size,
-		Position = state.BasePosition or instance.Position,
-		Rotation = state.BaseRotation or instance.Rotation,
-	}
-
-	if instance:IsA("CanvasGroup") then
-		properties.GroupTransparency = state.BaseGroupTransparency or 0
-	end
-
-	return properties
+	return Open.get_target(instance, state)
 end
 
 local function build_close_target_properties(instance, state, openKind, offset)
-	local properties = {}
-
-	if openKind == "slide_down" then
-		properties.Position = offset_udim2(state.BasePosition or instance.Position, 0, -offset)
-	elseif openKind == "slide_up" then
-		properties.Position = offset_udim2(state.BasePosition or instance.Position, 0, offset)
-	elseif openKind == "slide_left" then
-		properties.Position = offset_udim2(state.BasePosition or instance.Position, offset, 0)
-	elseif openKind == "slide_right" then
-		properties.Position = offset_udim2(state.BasePosition or instance.Position, -offset, 0)
-	elseif openKind ~= "fade" and openKind ~= "none" then
-		properties.Size = scale_udim2(state.BaseSize or instance.Size, 0.001)
-	end
-
-	if instance:IsA("CanvasGroup") then
-		properties.GroupTransparency = 1
-	end
-
-	return properties
+	return Close.get_target(instance, state, Utils, openKind, offset)
 end
 
 local function play_open(instance, state, force)
@@ -897,16 +812,30 @@ local function get_open_frame_for_hud(instance, forcedOpenFrame)
 	return if is_open_frame(forcedOpenFrame) then forcedOpenFrame else nil
 end
 
+local function parse_name_set(value)
+	if type(value) ~= "string" then
+		return nil
+	end
+
+	local names = {}
+	for name in string.gmatch(value, "[^,%s;]+") do
+		names[name] = true
+	end
+
+	return if next(names) then names else nil
+end
+
 local function get_hud_fade_excluded_names(openFrame)
-	if openFrame and openFrame.Name == INVENTORY_FRAME_NAME then
-		return INVENTORY_HUD_FADE_EXCLUDED_NAMES
+	if not openFrame then
+		return nil
 	end
 
-	if openFrame and SHOP_FRAME_NAMES[openFrame.Name] == true then
-		return SHOP_HUD_FADE_EXCLUDED_NAMES
+	local configuredValue = openFrame:GetAttribute(HUD_FADE_EXCLUSIONS_ATTRIBUTE)
+	if type(configuredValue) == "string" then
+		return parse_name_set(configuredValue) or {}
 	end
 
-	return nil
+	return DEFAULT_HUD_EXCLUSIONS_BY_FRAME[openFrame.Name]
 end
 
 local function has_exclusions(excludedNames)
@@ -1111,8 +1040,13 @@ end
 
 local function get_target_frame_name(button)
 	local buttonName = button.Name
-	if buttonName == EXIT_BUTTON_NAME then
+	if CLOSE_BUTTON_NAMES[buttonName] then
 		return nil
+	end
+
+	local configuredTarget = button:GetAttribute(TARGET_FRAME_ATTRIBUTE)
+	if type(configuredTarget) == "string" and configuredTarget ~= "" then
+		return configuredTarget
 	end
 
 	if #buttonName <= #BUTTON_SUFFIX or string.sub(buttonName, -#BUTTON_SUFFIX) ~= BUTTON_SUFFIX then
@@ -1177,12 +1111,20 @@ local function show_target_frame(target)
 end
 
 local function find_exit_target(button)
+	local framesContainer = find_frames_container(button)
+	local configuredTarget = button:GetAttribute(CLOSE_TARGET_ATTRIBUTE)
+	if framesContainer and type(configuredTarget) == "string" and configuredTarget ~= "" then
+		local target = framesContainer:FindFirstChild(configuredTarget)
+		if target and target:IsA("GuiObject") then
+			return target
+		end
+	end
+
 	local mainframe = find_mainframe(button)
 	if not mainframe then
 		return nil
 	end
 
-	local framesContainer = find_frames_container(button)
 	local current = button.Parent
 	while current and current ~= mainframe do
 		if framesContainer and current.Parent == framesContainer and current:IsA("GuiObject") then
@@ -1220,7 +1162,7 @@ local function bind_auto_open_button(button, state)
 end
 
 local function bind_exit_button(button, state)
-	if state.BoundExitButton or button.Name ~= EXIT_BUTTON_NAME then
+	if state.BoundExitButton or not CLOSE_BUTTON_NAMES[button.Name] then
 		return
 	end
 
@@ -1237,12 +1179,12 @@ local function bind_exit_button(button, state)
 			return
 		end
 
-		bind_instance(target)
-		local targetState = states[target]
-		if targetState and target:GetAttribute("UIOpen") == true then
-			request_close(target, targetState, true)
-		else
+		if has_true_attribute(target, IGNORE_HUD_ANIM_ATTRIBUTE) then
 			target.Visible = false
+		else
+			bind_instance(target)
+			local targetState = states[target] or get_or_create_state(target)
+			request_close(target, targetState, true)
 		end
 
 		task.defer(function()
@@ -1264,7 +1206,8 @@ bind_instance = function(instance)
 	local isButton = instance:IsA("GuiButton")
 	local hasButtonAnimation = isButton and should_animate_button(instance)
 	local hasOpenAnimation = instance:GetAttribute("UIOpen") == true
-	local hasAutoButton = isButton and (instance.Name == EXIT_BUTTON_NAME or (is_hud_button(instance) and get_target_frame_name(instance)))
+	local hasAutoButton = isButton
+		and (CLOSE_BUTTON_NAMES[instance.Name] or (is_hud_button(instance) and get_target_frame_name(instance)))
 
 	if not hasButtonAnimation and not hasOpenAnimation and not hasAutoButton then
 		return
@@ -1273,7 +1216,7 @@ bind_instance = function(instance)
 	local state = get_or_create_state(instance)
 
 	if isButton then
-		if instance.Name == EXIT_BUTTON_NAME then
+		if CLOSE_BUTTON_NAMES[instance.Name] then
 			bind_exit_button(instance, state)
 		else
 			bind_auto_open_button(instance, state)

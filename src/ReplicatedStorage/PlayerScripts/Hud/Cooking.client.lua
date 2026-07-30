@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -8,8 +9,6 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local CookingCatalog = require(GameData:WaitForChild("CookingCatalog"))
-local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
-local FarmingShopViewportCache = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FarmingShopViewportCache"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
@@ -21,13 +20,15 @@ local COOKING_ACTION_REMOTE_NAME = "CookingAction"
 local UI_RETRY_SECONDS = 0.5
 local UI_WARNING_INTERVAL = 20
 local DYNAMIC_REFRESH_SECONDS = 0.1
-local LOAD_STEP_SECONDS = 0.03
 local IGNORE_HUD_ANIM_ATTRIBUTE = "IgnoreHudAnim"
+local INGREDIENT_INTRO_STAGGER_SECONDS = 0.035
+local DEBUG_COOKING = false
 
 local MAIN_UI_NAMES = { "MainUI" }
 local MAINFRAME_NAMES = { "MainframeFR", "MainFrameFR" }
 local FRAMES_NAMES = { "Frames" }
 local COOKING_NAMES = { "Cooking" }
+local IMAGE_OBJECT_NAMES = { "HorseImage", "FoodImage", "ItemImage", "ImageItem", "ImageLabel", "Icon" }
 
 local INSUFFICIENT_COLOR = Color3.fromRGB(229, 85, 85)
 local DEFAULT_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
@@ -44,22 +45,6 @@ local FOOD_STAT_AMOUNT_NAMES = { "StatAmountTX" }
 local FOOD_STAT_BAR_NAMES = { "BarBG" }
 local FOOD_STAT_INSIDE_BAR_NAMES = { "InsideBarBG" }
 
-local GRID_VIEWPORT_CONFIG = {
-	FieldOfView = 32,
-	RadiusScale = 0.42,
-	DistanceMultiplier = 1.42,
-	FocusYOffsetScale = 0.04,
-	CameraOffsetScale = Vector3.new(0.18, 0.12, 1.1),
-}
-
-local DETAILS_VIEWPORT_CONFIG = {
-	FieldOfView = 29,
-	RadiusScale = 0.46,
-	DistanceMultiplier = 1.28,
-	FocusYOffsetScale = 0.05,
-	CameraOffsetScale = Vector3.new(0.18, 0.15, 1.02),
-}
-
 local rootTrove = Trove.new()
 local uiTrove = Trove.new()
 local cardTrove = Trove.new()
@@ -68,7 +53,9 @@ local foodStatsTrove = Trove.new()
 
 local currentUi = nil
 local cardEntries = {}
-local previewCache = {}
+local ingredientRows = {}
+local foodStatRows = {}
+local preloadedImages = {}
 local selectedRecipeId = nil
 local requestInFlight = false
 local dataReady = false
@@ -77,13 +64,8 @@ local refreshQueued = false
 local retryScheduled = false
 local uiSearchAttempts = 0
 local dynamicAccumulator = 0
-local loadToken = 0
 local panelToken = 0
 local cardsBuilt = false
-local cardsLoading = false
-local refreshPending = false
-local renderedPanelRecipeId = nil
-local renderedFoodTemplateRecipeId = nil
 local uiWasVisible = false
 
 local try_bind_ui
@@ -204,6 +186,49 @@ local function find_gui_object(root, names)
 	return nil
 end
 
+local function is_image_object(instance)
+	return instance and (instance:IsA("ImageLabel") or instance:IsA("ImageButton"))
+end
+
+local function is_rarity_icon(instance)
+	local key = normalize_key(instance and instance.Name)
+	return key == "rarity" or key == "rarityicon" or key == "rarityimage"
+end
+
+local function find_image_object(root, preferredPaths)
+	if not root then
+		return nil
+	end
+
+	for _, path in ipairs(preferredPaths or {}) do
+		local instance = find_path(root, path)
+		if is_image_object(instance) then
+			return instance
+		end
+	end
+
+	if is_image_object(root) and not is_rarity_icon(root) then
+		return root
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if is_image_object(descendant)
+			and matches_name(descendant, IMAGE_OBJECT_NAMES)
+			and not is_rarity_icon(descendant)
+		then
+			return descendant
+		end
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("ImageLabel") and not is_rarity_icon(descendant) then
+			return descendant
+		end
+	end
+
+	return nil
+end
+
 local function set_text(instance, text)
 	if instance and (instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox")) then
 		instance.Text = text
@@ -294,6 +319,10 @@ local function disable_hud_anim_tree(root)
 end
 
 local function is_ui_visible(instance)
+	if not instance then
+		return false
+	end
+
 	local current = instance
 
 	while current do
@@ -311,10 +340,55 @@ local function is_ui_visible(instance)
 	return true
 end
 
+local function get_debug_path(instance)
+	if not instance then
+		return "nil"
+	end
+
+	local ok, fullName = pcall(function()
+		return instance:GetFullName()
+	end)
+
+	return if ok then fullName else instance.Name
+end
+
+local function debug_print(eventName, ...)
+	if not DEBUG_COOKING then
+		return
+	end
+
+	local parts = {}
+	for index = 1, select("#", ...) do
+		local value = select(index, ...)
+		parts[#parts + 1] = tostring(value)
+	end
+
+	print(("[CookingDebug %.3f] %s %s"):format(os.clock(), eventName, table.concat(parts, " ")))
+end
+
 local function strip_scripts(root)
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
 			descendant:Destroy()
+		end
+	end
+end
+
+local function disable_viewport_previews(root)
+	if not root then
+		return
+	end
+
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("ViewportFrame") then
+			descendant.Visible = false
+			descendant.CurrentCamera = nil
+
+			for _, child in ipairs(descendant:GetChildren()) do
+				if child:IsA("WorldModel") or child:IsA("Camera") then
+					child:Destroy()
+				end
+			end
 		end
 	end
 end
@@ -324,7 +398,9 @@ local function create_template_source(template)
 	source.Visible = true
 	source.Parent = nil
 	strip_scripts(source)
+	disable_viewport_previews(source)
 	template.Visible = false
+	disable_viewport_previews(template)
 	return source
 end
 
@@ -346,306 +422,64 @@ local function ensure_template_sources(ui)
 	return true
 end
 
-local function clear_viewport(viewport)
-	if not viewport or not viewport:IsA("ViewportFrame") then
+local function normalize_image_id(value)
+	if type(value) == "number" then
+		return "rbxassetid://" .. tostring(math.floor(value))
+	end
+
+	if type(value) ~= "string" then
+		return ""
+	end
+
+	local trimmedValue = string.gsub(value, "^%s*(.-)%s*$", "%1")
+	if trimmedValue == "" then
+		return ""
+	end
+
+	if string.find(trimmedValue, "://", 1, true) then
+		return trimmedValue
+	end
+
+	if tonumber(trimmedValue) then
+		return "rbxassetid://" .. trimmedValue
+	end
+
+	return trimmedValue
+end
+
+local function get_definition_image(definition)
+	if type(definition) ~= "table" then
+		return ""
+	end
+
+	return normalize_image_id(definition.IdImage or definition.ImageId or definition.IconImage)
+end
+
+local function preload_image(imageId)
+	if imageId == "" or preloadedImages[imageId] then
 		return
 	end
 
-	for _, child in ipairs(viewport:GetChildren()) do
-		if not child:IsA("UIAspectRatioConstraint") and not child:IsA("UICorner") and not child:IsA("UIStroke") then
-			child:Destroy()
-		end
-	end
-
-	viewport.CurrentCamera = nil
-end
-
-local function collect_base_parts(root)
-	local parts = {}
-
-	if root:IsA("BasePart") then
-		parts[#parts + 1] = root
-	end
-
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("BasePart") then
-			parts[#parts + 1] = descendant
-		end
-	end
-
-	return parts
-end
-
-local function create_placeholder_model(displayName)
-	local model = Instance.new("Model")
-	model.Name = ("%sPreview"):format(displayName or "Food")
-
-	local part = Instance.new("Part")
-	part.Name = "Preview"
-	part.Size = Vector3.new(1.25, 1.25, 1.25)
-	part.Material = Enum.Material.SmoothPlastic
-	part.Color = Color3.fromRGB(214, 214, 214)
-	part.Parent = model
-
-	return model
-end
-
-local function prepare_preview_model(source, displayName)
-	local model
-
-	if source then
-		local ok, clone = pcall(function()
-			return source:Clone()
+	preloadedImages[imageId] = true
+	task.spawn(function()
+		pcall(function()
+			ContentProvider:PreloadAsync({ imageId })
 		end)
-
-		if ok and clone then
-			strip_scripts(clone)
-
-			if clone:IsA("Model") then
-				model = clone
-			else
-				model = Instance.new("Model")
-				model.Name = clone.Name
-				clone.Parent = model
-			end
-		end
-	end
-
-	if not model then
-		model = create_placeholder_model(displayName)
-	end
-
-	local parts = collect_base_parts(model)
-	if #parts == 0 then
-		model:Destroy()
-		model = create_placeholder_model(displayName)
-		parts = collect_base_parts(model)
-	end
-
-	for _, part in ipairs(parts) do
-		part.Anchored = true
-		part.CanCollide = false
-		part.CanTouch = false
-		part.CanQuery = false
-		part.CastShadow = false
-	end
-
-	pcall(function()
-		model:PivotTo(CFrame.new())
 	end)
-
-	return model
 end
 
-local function push_unique(list, value)
-	if type(value) ~= "string" or value == "" then
+local function set_item_image(imageObject, definition)
+	if not is_image_object(imageObject) then
 		return
 	end
 
-	for _, existing in ipairs(list) do
-		if existing == value then
-			return
-		end
-	end
-
-	list[#list + 1] = value
-end
-
-local function get_search_names(definition)
-	local names = {}
-
-	push_unique(names, definition and definition.ToolName)
-	push_unique(names, definition and definition.DisplayName)
-	push_unique(names, definition and definition.ItemId)
-	push_unique(names, definition and definition.CropId)
-	push_unique(names, definition and definition.CropDisplayName)
-
-	for _, legacyName in ipairs(type(definition and definition.LegacyToolNames) == "table" and definition.LegacyToolNames or {}) do
-		push_unique(names, legacyName)
-	end
-
-	return names
-end
-
-local function get_category_folder_name(definition)
-	if not definition then
-		return nil
-	end
-
-	if type(definition.ToolCategory) == "string" and definition.ToolCategory ~= "" then
-		local ok, folderName = pcall(function()
-			return ToolItemCatalog.GetCategoryFolderName(definition)
-		end)
-
-		if ok and type(folderName) == "string" and folderName ~= "" then
-			return folderName
-		end
-	end
-
-	if definition.Kind == "Seed" then
-		return "Seeds"
-	end
-
-	if definition.Kind == "Fruit" then
-		return "Fruits"
-	end
-
-	local inventoryPath = normalize_inventory_path(definition.InventoryPath)
-	if inventoryPath == "Inventory.Consumables.Food" then
-		return "Food"
-	end
-
-	return nil
-end
-
-local function find_named_asset(root, definition)
-	if not root then
-		return nil
-	end
-
-	for _, name in ipairs(get_search_names(definition)) do
-		local asset = root:FindFirstChild(name, true)
-		if asset then
-			return asset
-		end
-	end
-
-	return nil
-end
-
-local function resolve_asset(definition)
-	local assets = ReplicatedStorage:FindFirstChild("Assets")
-	if not assets or not definition then
-		return nil
-	end
-
-	local items = assets:FindFirstChild("Items")
-	local categoryName = get_category_folder_name(definition)
-	local roots = {}
-
-	local function add_root(root)
-		if not root then
-			return
-		end
-
-		for _, existing in ipairs(roots) do
-			if existing == root then
-				return
-			end
-		end
-
-		roots[#roots + 1] = root
-	end
-
-	if type(definition.ViewportAssetPath) == "table" then
-		add_root(find_path(assets, definition.ViewportAssetPath))
-	end
-
-	if type(definition.AssetPath) == "table" then
-		add_root(find_path(assets, definition.AssetPath))
-	end
-
-	if categoryName then
-		add_root(items and items:FindFirstChild(categoryName))
-		add_root(assets:FindFirstChild(categoryName))
-	end
-
-	add_root(items and items:FindFirstChild("Food"))
-	add_root(items and items:FindFirstChild("Fruits"))
-	add_root(items and items:FindFirstChild("Seeds"))
-	add_root(items)
-	add_root(assets)
-
-	for _, root in ipairs(roots) do
-		if root == assets or root == items or root:IsA("Folder") then
-			local asset = find_named_asset(root, definition)
-			if asset then
-				return asset
-			end
-		else
-			return root
-		end
-	end
-
-	return nil
-end
-
-local function is_farming_item_definition(definition)
-	return definition ~= nil and (definition.Kind == "Seed" or definition.Kind == "Fruit")
-end
-
-local function get_preview_snapshot(itemId, source, displayName, cameraConfig, cameraKey)
-	local cacheKey = ("%s|%s"):format(cameraKey, itemId)
-	local cachedPreview = previewCache[cacheKey]
-	if cachedPreview then
-		return cachedPreview
-	end
-
-	local previewModel = prepare_preview_model(source, displayName)
-	local boxCFrame, boxSize = previewModel:GetBoundingBox()
-	local maxDimension = math.max(boxSize.X, boxSize.Y, boxSize.Z, 1)
-	local focusPosition = boxCFrame.Position + Vector3.new(0, boxSize.Y * cameraConfig.FocusYOffsetScale, 0)
-	local radius = maxDimension * cameraConfig.RadiusScale
-	local distance = math.max(
-		1.75,
-		(radius / math.tan(math.rad(cameraConfig.FieldOfView * 0.5))) * cameraConfig.DistanceMultiplier
-	)
-	local cameraOffsetScale = cameraConfig.CameraOffsetScale
-	local cameraOffset = Vector3.new(
-		distance * cameraOffsetScale.X,
-		distance * cameraOffsetScale.Y,
-		distance * cameraOffsetScale.Z
-	)
-
-	cachedPreview = {
-		ModelTemplate = previewModel,
-		FieldOfView = cameraConfig.FieldOfView,
-		CameraCFrame = CFrame.lookAt(focusPosition + cameraOffset, focusPosition),
-	}
-	previewCache[cacheKey] = cachedPreview
-	return cachedPreview
-end
-
-local function render_viewport(viewport, definition, cameraConfig, cameraKey)
-	if not viewport or not viewport:IsA("ViewportFrame") then
-		return
-	end
-
-	clear_viewport(viewport)
-
-	local displayName = definition and (definition.DisplayName or definition.ItemId) or "Food"
-	local itemId = definition and definition.ItemId or displayName
-	cameraConfig = cameraConfig or GRID_VIEWPORT_CONFIG
-	cameraKey = cameraKey or "grid"
-
-	if is_farming_item_definition(definition)
-		and FarmingShopViewportCache.ApplyToViewport(viewport, definition, "CookingFarmingWorldModel", "CookingFarmingCamera")
-	then
-		return
-	end
-
-	local ok, snapshot = pcall(function()
-		return get_preview_snapshot(itemId, resolve_asset(definition), displayName, cameraConfig, cameraKey)
-	end)
-
-	if not ok or not snapshot then
-		clear_viewport(viewport)
-		return
-	end
-
-	local worldModel = Instance.new("WorldModel")
-	worldModel.Parent = viewport
-	snapshot.ModelTemplate:Clone().Parent = worldModel
-
-	local camera = Instance.new("Camera")
-	camera.FieldOfView = snapshot.FieldOfView
-	camera.CFrame = snapshot.CameraCFrame
-	camera.Parent = viewport
-
-	viewport.BackgroundTransparency = 1
-	viewport.Ambient = Color3.fromRGB(220, 220, 220)
-	viewport.LightColor = Color3.fromRGB(255, 255, 255)
-	viewport.CurrentCamera = camera
+	local imageId = get_definition_image(definition)
+	imageObject.Image = imageId
+	imageObject.ImageTransparency = imageId == "" and 1 or 0
+	imageObject.Visible = true
+	imageObject.ScaleType = Enum.ScaleType.Fit
+	preload_image(imageId)
+	disable_viewport_previews(imageObject)
 end
 
 local function round_number(value)
@@ -852,12 +686,7 @@ local function build_food_stat_descriptors(recipe)
 	if type(effects.SecondaryNeedAdjustments) == "table" then
 		for _, secondaryNeed in ipairs(secondaryNeedOrder) do
 			if not alreadyShown[secondaryNeed] then
-				add_food_stat(
-					descriptors,
-					secondaryNeed,
-					secondaryNeed,
-					effects.SecondaryNeedAdjustments[secondaryNeed]
-				)
+				add_food_stat(descriptors, secondaryNeed, secondaryNeed, effects.SecondaryNeedAdjustments[secondaryNeed])
 			end
 		end
 	end
@@ -872,23 +701,16 @@ local function build_food_stat_descriptors(recipe)
 		local multiplier = tonumber(decayBuff.Multiplier)
 		if multiplier and multiplier < 1 then
 			local reduction = math.max(0, (1 - multiplier) * 100)
-			add_food_stat(
-				descriptors,
-				"HungerDecay",
-				"Hunger Decay",
-				reduction,
-				reduction / 100,
-				"-" .. format_unsigned_percent(reduction)
-			)
+			add_food_stat(descriptors, "HungerDecay", "Hunger Decay", reduction, reduction / 100, "-" .. format_unsigned_percent(reduction))
 		end
 	end
 
 	return descriptors
 end
 
-local function rebuild_food_stats(ui, recipe)
-	foodStatsTrove:Clean()
+local ensure_food_stat_row
 
+local function update_food_stats(ui, recipe)
 	if not ui or not ui.FoodStatsContainer or not ui.FoodStatTemplate then
 		return
 	end
@@ -898,25 +720,22 @@ local function rebuild_food_stats(ui, recipe)
 	ui.FoodStatsContainer.Visible = #descriptors > 0
 
 	for index, descriptor in ipairs(descriptors) do
-		local row = ui.FoodStatTemplate:Clone()
+		local rowRecord = ensure_food_stat_row(ui, index)
+		if not rowRecord then
+			continue
+		end
+
+		local row = rowRecord.Row
 		row.Name = descriptor.Key
 		row.Visible = true
 		row.LayoutOrder = index
-		row.Parent = ui.FoodStatsContainer
-		foodStatsTrove:Add(row)
 
-		local nameLabel = find_text(row, FOOD_STAT_NAME_NAMES)
-		local amountLabel = find_text(row, FOOD_STAT_AMOUNT_NAMES)
-		local barBackground = find_gui_object(row, FOOD_STAT_BAR_NAMES)
-		local barFill = find_gui_object(barBackground, FOOD_STAT_INSIDE_BAR_NAMES)
-			or find_gui_object(row, FOOD_STAT_INSIDE_BAR_NAMES)
+		set_text(rowRecord.NameLabel, descriptor.Label)
+		set_text(rowRecord.AmountLabel, descriptor.AmountText)
 
-		set_text(nameLabel, descriptor.Label)
-		set_text(amountLabel, descriptor.AmountText)
-
-		if barFill then
-			local currentSize = barFill.Size
-			barFill.Size = UDim2.new(
+		if rowRecord.BarFill then
+			local currentSize = rowRecord.BarFill.Size
+			rowRecord.BarFill.Size = UDim2.new(
 				math.clamp(descriptor.Alpha, 0, 1),
 				0,
 				currentSize.Y.Scale,
@@ -924,9 +743,44 @@ local function rebuild_food_stats(ui, recipe)
 			)
 		end
 	end
+
+	for index = #descriptors + 1, #foodStatRows do
+		foodStatRows[index].Row.Visible = false
+	end
 end
 
-local function refresh_food_template_panel(recipe, token, shouldRenderViewport)
+ensure_food_stat_row = function(ui, index)
+	if not ui or not ui.FoodStatsContainer or not ui.FoodStatTemplate then
+		return nil
+	end
+
+	local rowRecord = foodStatRows[index]
+	if rowRecord then
+		return rowRecord
+	end
+
+	local row = ui.FoodStatTemplate:Clone()
+	disable_hud_anim_tree(row)
+	row.Visible = false
+	row.LayoutOrder = index
+	row.Parent = ui.FoodStatsContainer
+	foodStatsTrove:Add(row)
+
+	rowRecord = {
+		Row = row,
+		NameLabel = find_text(row, FOOD_STAT_NAME_NAMES),
+		AmountLabel = find_text(row, FOOD_STAT_AMOUNT_NAMES),
+	}
+
+	local barBackground = find_gui_object(row, FOOD_STAT_BAR_NAMES)
+	rowRecord.BarFill = find_gui_object(barBackground, FOOD_STAT_INSIDE_BAR_NAMES)
+		or find_gui_object(row, FOOD_STAT_INSIDE_BAR_NAMES)
+	foodStatRows[index] = rowRecord
+
+	return rowRecord
+end
+
+local function refresh_food_template_panel(recipe)
 	local ui = currentUi
 	if not ui or not ui.FoodTemplate then
 		return
@@ -936,35 +790,20 @@ local function refresh_food_template_panel(recipe, token, shouldRenderViewport)
 		ui.FoodTemplate.Visible = false
 		set_text(ui.FoodTemplateNameLabel, "")
 		set_text(ui.FoodTemplateDetailsLabel, "")
+		set_item_image(ui.FoodTemplateImage, nil)
 		set_rarity_icon(ui.FoodTemplateRarityIcon, nil)
-		clear_viewport(ui.FoodTemplateViewport)
-		foodStatsTrove:Clean()
-		renderedFoodTemplateRecipeId = nil
+		for _, rowRecord in ipairs(foodStatRows) do
+			rowRecord.Row.Visible = false
+		end
 		return
 	end
 
-	local rarity = get_food_rarity(recipe)
 	ui.FoodTemplate.Visible = true
 	set_text(ui.FoodTemplateNameLabel, recipe.DisplayName)
 	set_text(ui.FoodTemplateDetailsLabel, build_food_details_text(recipe))
-	set_rarity_icon(ui.FoodTemplateRarityIcon, rarity)
-
-	if renderedFoodTemplateRecipeId ~= recipe.RecipeId then
-		renderedFoodTemplateRecipeId = recipe.RecipeId
-		rebuild_food_stats(ui, recipe)
-	end
-
-	if shouldRenderViewport then
-		clear_viewport(ui.FoodTemplateViewport)
-		task.spawn(function()
-			task.wait(LOAD_STEP_SECONDS)
-			if token ~= panelToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
-				return
-			end
-
-			render_viewport(ui.FoodTemplateViewport, recipe.FoodDefinition, DETAILS_VIEWPORT_CONFIG, "foodTemplate")
-		end)
-	end
+	set_item_image(ui.FoodTemplateImage, recipe.FoodDefinition)
+	set_rarity_icon(ui.FoodTemplateRarityIcon, get_food_rarity(recipe))
+	update_food_stats(ui, recipe)
 end
 
 local function get_cooking_remote()
@@ -1111,16 +950,9 @@ local function update_canvas_size(scrollingFrame)
 end
 
 local function set_selected_visual(card, selected)
-	local stroke = card:FindFirstChildWhichIsA("UIStroke", true)
-	if not stroke then
-		stroke = Instance.new("UIStroke")
-		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-		stroke.Parent = card
+	if card then
+		card:SetAttribute("CookingSelected", selected == true)
 	end
-
-	stroke.Thickness = selected and 2.5 or 1
-	stroke.Transparency = selected and 0 or 0.25
-	stroke.Color = selected and Color3.fromRGB(255, 222, 129) or Color3.fromRGB(255, 255, 255)
 end
 
 local function get_action_mode()
@@ -1229,7 +1061,7 @@ local function refresh_recipe_cards()
 	end
 end
 
-local function refresh_ingredient_counts(recipe)
+local function refresh_ingredient_counts()
 	if not currentUi or not currentUi.IngredientEntries then
 		return
 	end
@@ -1243,7 +1075,88 @@ local function refresh_ingredient_counts(recipe)
 	end
 end
 
-local function render_ingredients_lazy(recipe, token)
+local function ensure_ingredient_row(ui, index)
+	if not ui or not ui.IngredientTemplateSource or not ui.IngredientContainer then
+		return nil
+	end
+
+	local rowRecord = ingredientRows[index]
+	if rowRecord then
+		return rowRecord
+	end
+
+	local row = ui.IngredientTemplateSource:Clone()
+	disable_hud_anim_tree(row)
+	disable_viewport_previews(row)
+	row.Visible = false
+	row.LayoutOrder = index
+	row.Parent = ui.IngredientContainer
+	ingredientTrove:Add(row)
+
+	rowRecord = {
+		Row = row,
+		NameLabel = find_text(row, { "IngredientName", "ItemNameTX", "ItemName" }),
+		StockLabel = find_text(row, { "StockCountTX", "StockCount" }),
+		Image = find_image_object(row, { { "HorseImage" }, { "ItemImage" }, { "ImageLabel" } }),
+	}
+	ingredientRows[index] = rowRecord
+
+	return rowRecord
+end
+
+local function hide_ingredient_row(rowRecord)
+	if rowRecord and rowRecord.Row then
+		rowRecord.Row.Visible = false
+	end
+end
+
+local function play_ingredient_intro(rowRecord, index, token, ui)
+	if not rowRecord or not rowRecord.Row then
+		return
+	end
+
+	local row = rowRecord.Row
+	row.Visible = false
+
+	task.delay((index - 1) * INGREDIENT_INTRO_STAGGER_SECONDS, function()
+		if token ~= panelToken or currentUi ~= ui or not ui.Root or not is_ui_visible(ui.Root) then
+			return
+		end
+
+		row.Visible = true
+	end)
+end
+
+local function prewarm_dynamic_rows(ui)
+	if not ui or not ensure_template_sources(ui) then
+		return
+	end
+
+	local maxIngredientRows = 0
+	local maxFoodStatRows = 0
+	for _, recipe in ipairs(CookingCatalog.GetRecipes()) do
+		maxIngredientRows = math.max(maxIngredientRows, #recipe.Ingredients)
+		maxFoodStatRows = math.max(maxFoodStatRows, #build_food_stat_descriptors(recipe))
+	end
+
+	for index = 1, maxIngredientRows do
+		local rowRecord = ensure_ingredient_row(ui, index)
+		if rowRecord then
+			rowRecord.Row.Visible = false
+		end
+	end
+
+	for index = 1, maxFoodStatRows do
+		local rowRecord = ensure_food_stat_row(ui, index)
+		if rowRecord then
+			rowRecord.Row.Visible = false
+		end
+	end
+
+	ui.IngredientEntries = {}
+end
+
+local function render_ingredients(recipe, token)
 	if not currentUi or not currentUi.IngredientContainer then
 		return
 	end
@@ -1253,77 +1166,37 @@ local function render_ingredients_lazy(recipe, token)
 		return
 	end
 
-	task.spawn(function()
-		local pendingRows = {}
-		local pendingEntries = {}
+	local activeEntries = {}
 
-		local function destroy_pending_rows()
-			for _, pending in ipairs(pendingRows) do
-				if pending.Row and not pending.Row.Parent then
-					pending.Row:Destroy()
-				end
-			end
+	for index, ingredient in ipairs(recipe.Ingredients) do
+		local rowRecord = ensure_ingredient_row(ui, index)
+		if not rowRecord then
+			continue
 		end
 
-		for index, ingredient in ipairs(recipe.Ingredients) do
-			if token ~= panelToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
-				destroy_pending_rows()
-				return
-			end
+		local owned = get_definition_count(ingredient.Definition)
+		local hasEnough = owned >= ingredient.Amount
 
-			local row = ui.IngredientTemplateSource:Clone()
-			row.Name = ingredient.ItemId
-			disable_hud_anim_tree(row)
-			row.Visible = true
-			row.LayoutOrder = index
+		rowRecord.Row.Name = ingredient.ItemId or ("Ingredient%d"):format(index)
+		rowRecord.Row.LayoutOrder = index
+		set_text(rowRecord.NameLabel, ingredient.DisplayName or ingredient.ToolName or ingredient.ItemId)
+		set_text(rowRecord.StockLabel, ("%s/%s"):format(format_count(owned), format_count(ingredient.Amount)))
+		set_text_color(rowRecord.StockLabel, hasEnough and ui.DefaultIngredientTextColor or INSUFFICIENT_COLOR)
+		set_item_image(rowRecord.Image, ingredient.Definition)
 
-			local nameLabel = find_text(row, { "IngredientName", "ItemNameTX", "ItemName" })
-			local stockLabel = find_text(row, { "StockCountTX", "StockCount" })
-			local viewport = find_path(row, { "HorseImage", "ViewportFrame" })
-				or find_descendant(row, { "ViewportFrame", "ViewPortFrame", "Viewport" }, "ViewportFrame")
-			local owned = get_definition_count(ingredient.Definition)
-			local hasEnough = owned >= ingredient.Amount
+		activeEntries[#activeEntries + 1] = {
+			Ingredient = ingredient,
+			StockLabel = rowRecord.StockLabel,
+		}
 
-			pendingEntries[#pendingEntries + 1] = {
-				Ingredient = ingredient,
-				StockLabel = stockLabel,
-			}
+		play_ingredient_intro(rowRecord, index, token, ui)
+	end
 
-			pendingRows[#pendingRows + 1] = {
-				Row = row,
-				Viewport = viewport,
-				Definition = ingredient.Definition,
-			}
+	for index = #recipe.Ingredients + 1, #ingredientRows do
+		hide_ingredient_row(ingredientRows[index])
+	end
 
-			set_text(nameLabel, ingredient.DisplayName or ingredient.ToolName or ingredient.ItemId)
-			set_text(stockLabel, ("%s/%s"):format(format_count(owned), format_count(ingredient.Amount)))
-			set_text_color(stockLabel, hasEnough and ui.DefaultIngredientTextColor or INSUFFICIENT_COLOR)
-		end
-
-		if token ~= panelToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
-			destroy_pending_rows()
-			return
-		end
-
-		ingredientTrove:Clean()
-		ui.IngredientEntries = pendingEntries
-
-		for _, pending in ipairs(pendingRows) do
-			pending.Row.Parent = ui.IngredientContainer
-			ingredientTrove:Add(pending.Row)
-		end
-
-		for _, pending in ipairs(pendingRows) do
-			task.wait(LOAD_STEP_SECONDS)
-
-			if token ~= panelToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
-				return
-			end
-
-			render_viewport(pending.Viewport, pending.Definition, GRID_VIEWPORT_CONFIG, "grid")
-			task.wait(LOAD_STEP_SECONDS)
-		end
-	end)
+	ui.IngredientEntries = activeEntries
 end
 
 local function refresh_selected_panel()
@@ -1334,44 +1207,27 @@ local function refresh_selected_panel()
 	sync_selected_recipe()
 
 	local recipe = get_selected_recipe()
+	panelToken += 1
+	local token = panelToken
+
 	if not recipe then
 		set_text(currentUi.FoodNameLabel, "")
+		set_item_image(currentUi.FoodImage, nil)
 		set_rarity_icon(currentUi.FoodRarityIcon, nil)
-		clear_viewport(currentUi.FoodViewport)
 		refresh_food_template_panel(nil)
-		ingredientTrove:Clean()
+		for _, rowRecord in ipairs(ingredientRows) do
+			hide_ingredient_row(rowRecord)
+		end
 		currentUi.IngredientEntries = {}
-		renderedPanelRecipeId = nil
 		refresh_dynamic_ui()
 		return
 	end
 
 	set_text(currentUi.FoodNameLabel, recipe.DisplayName)
+	set_item_image(currentUi.FoodImage, recipe.FoodDefinition)
 	set_rarity_icon(currentUi.FoodRarityIcon, get_food_rarity(recipe))
-
-	if renderedPanelRecipeId == recipe.RecipeId then
-		refresh_food_template_panel(recipe, panelToken, false)
-		refresh_ingredient_counts(recipe)
-	else
-		renderedPanelRecipeId = recipe.RecipeId
-		panelToken += 1
-		local token = panelToken
-		local ui = currentUi
-
-		refresh_food_template_panel(recipe, token, true)
-		clear_viewport(ui.FoodViewport)
-		task.spawn(function()
-			task.wait(LOAD_STEP_SECONDS)
-			if token ~= panelToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
-				return
-			end
-
-			render_viewport(ui.FoodViewport, recipe.FoodDefinition, DETAILS_VIEWPORT_CONFIG, "details")
-		end)
-
-		render_ingredients_lazy(recipe, token)
-	end
-
+	refresh_food_template_panel(recipe)
+	render_ingredients(recipe, token)
 	refresh_dynamic_ui()
 end
 
@@ -1381,7 +1237,6 @@ local function refresh_all()
 	end
 
 	if not is_ui_visible(currentUi.Root) or not cardsBuilt then
-		refreshPending = true
 		return
 	end
 
@@ -1410,9 +1265,14 @@ local function select_recipe(recipeId)
 		return
 	end
 
+	if selectedRecipeId == recipe.RecipeId then
+		return
+	end
+
 	local state = get_cooking_state()
 	local activeRecipe = get_active_recipe(state)
 	if activeRecipe and activeRecipe.RecipeId ~= recipe.RecipeId then
+		debug_print("select_recipe_blocked_active_job", "requested=" .. tostring(recipe.RecipeId), "active=" .. tostring(activeRecipe.RecipeId))
 		return
 	end
 
@@ -1421,103 +1281,62 @@ local function select_recipe(recipeId)
 end
 
 local function build_recipe_cards()
-	if not currentUi then
+	if not currentUi or cardsBuilt then
 		return
 	end
 
-	if cardsLoading then
-		return
-	end
-
-	loadToken += 1
-	local token = loadToken
 	local ui = currentUi
-
-	if not is_ui_visible(ui.Root) or not ensure_template_sources(ui) then
-		refreshPending = true
+	if not ensure_template_sources(ui) then
 		return
 	end
 
-	cardsLoading = true
-	cardsBuilt = false
 	cardTrove:Clean()
 	table.clear(cardEntries)
+	ui.CardTemplate.Visible = false
 
-	task.spawn(function()
-		for index, recipe in ipairs(CookingCatalog.GetRecipes()) do
-			if token ~= loadToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
-				if token == loadToken and currentUi == ui then
-					cardsLoading = false
-				end
-				return
-			end
+	for index, recipe in ipairs(CookingCatalog.GetRecipes()) do
+		local card = ui.CardTemplateSource:Clone()
+		card.Name = recipe.RecipeId
+		card.Visible = true
+		card.LayoutOrder = index
+		card.Parent = ui.ListScrollingFrame
+		disable_hud_anim_tree(card)
+		disable_viewport_previews(card)
+		cardTrove:Add(card)
 
-			local card = ui.CardTemplateSource:Clone()
-			card.Name = recipe.RecipeId
-			disable_hud_anim_tree(card)
-			card.Visible = true
-			card.LayoutOrder = index
-			card.Parent = ui.ListScrollingFrame
-			cardTrove:Add(card)
+		local button = find_descendant(card, { "PurchaseBT" }, "GuiButton")
+		local buttonText = button and find_text(button, { "BTTX" }) or nil
+		local nameLabel = find_text(card, { "ItemNameTX", "ItemName" })
+		local stockLabel = find_text(card, { "StockCountTX", "StockCount" })
+		local image = find_image_object(card, { { "ImageLabel" }, { "HorseImage" }, { "ItemImage" } })
+		local rarityIcon = find_descendant(card, { "rarity", "Rarity" }, "ImageLabel")
+			or find_descendant(card, { "rarity", "Rarity" }, "ImageButton")
+			or find_gui_object(card, { "rarity", "Rarity" })
 
-			local button = find_descendant(card, { "PurchaseBT" }, "GuiButton")
-			local buttonText = button and find_text(button, { "BTTX" }) or nil
-			local nameLabel = find_text(card, { "ItemNameTX", "ItemName" })
-			local stockLabel = find_text(card, { "StockCountTX", "StockCount" })
-			local viewport = find_path(card, { "ImageLabel", "ViewportFrame" })
-				or find_descendant(card, { "ViewportFrame", "ViewPortFrame", "Viewport" }, "ViewportFrame")
-			local rarityIcon = find_descendant(card, { "rarity", "Rarity" }, "ImageLabel")
-				or find_descendant(card, { "rarity", "Rarity" }, "ImageButton")
-				or find_gui_object(card, { "rarity", "Rarity" })
+		set_text(nameLabel, recipe.DisplayName)
+		set_text(buttonText, "Select")
+		set_text(stockLabel, format_count(get_definition_count(recipe.FoodDefinition)))
+		set_item_image(image, recipe.FoodDefinition)
+		set_rarity_icon(rarityIcon, get_food_rarity(recipe))
 
-			set_text(nameLabel, recipe.DisplayName)
-			set_text(buttonText, "Select")
-			set_text(stockLabel, format_count(get_definition_count(recipe.FoodDefinition)))
-			set_rarity_icon(rarityIcon, get_food_rarity(recipe))
+		cardEntries[#cardEntries + 1] = {
+			Recipe = recipe,
+			Card = card,
+			Button = button,
+			ButtonText = buttonText,
+			StockLabel = stockLabel,
+		}
 
-			local entry = {
-				Recipe = recipe,
-				Card = card,
-				Button = button,
-				ButtonText = buttonText,
-				StockLabel = stockLabel,
-			}
-
-			cardEntries[#cardEntries + 1] = entry
-
-			if button then
-				cardTrove:Connect(button.Activated, function()
-					select_recipe(recipe.RecipeId)
-				end)
-			end
-
-			update_canvas_size(ui.ListScrollingFrame)
-			task.wait(LOAD_STEP_SECONDS)
-
-			if token ~= loadToken or currentUi ~= ui or not is_ui_visible(ui.Root) then
-				if token == loadToken and currentUi == ui then
-					cardsLoading = false
-				end
-				return
-			end
-
-			render_viewport(viewport, recipe.FoodDefinition, GRID_VIEWPORT_CONFIG, "grid")
-			task.wait(LOAD_STEP_SECONDS)
+		if button then
+			cardTrove:Connect(button.Activated, function()
+				select_recipe(recipe.RecipeId)
+			end)
 		end
+	end
 
-		if token ~= loadToken or currentUi ~= ui then
-			if token == loadToken and currentUi == ui then
-				cardsLoading = false
-			end
-			return
-		end
-
-		cardsLoading = false
-		cardsBuilt = true
-		update_canvas_size(ui.ListScrollingFrame)
-		refreshPending = false
-		refresh_all()
-	end)
+	cardsBuilt = true
+	update_canvas_size(ui.ListScrollingFrame)
+	refresh_recipe_cards()
 end
 
 ensure_open_ui_loaded = function()
@@ -1526,22 +1345,12 @@ ensure_open_ui_loaded = function()
 	end
 
 	if not is_ui_visible(currentUi.Root) then
-		refreshPending = true
 		return
 	end
 
 	bind_data_paths()
 	sync_selected_recipe()
-
-	if not cardsBuilt then
-		build_recipe_cards()
-		return
-	end
-
-	if refreshPending then
-		refreshPending = false
-	end
-
+	build_recipe_cards()
 	refresh_all()
 end
 
@@ -1617,28 +1426,25 @@ bind_data_paths = function()
 	dataBindingsReady = true
 end
 
-local function cancel_deferred_loads()
-	loadToken += 1
+local function reset_runtime_state()
 	panelToken += 1
-	cardsLoading = false
+	requestInFlight = false
 end
 
 local function destroy_ui_binding()
-	cancel_deferred_loads()
+	reset_runtime_state()
 	cardTrove:Clean()
 	ingredientTrove:Clean()
 	foodStatsTrove:Clean()
+	table.clear(cardEntries)
+	table.clear(ingredientRows)
+	table.clear(foodStatRows)
 	uiTrove:Destroy()
 	uiTrove = Trove.new()
 	currentUi = nil
 	dataBindingsReady = false
 	cardsBuilt = false
-	cardsLoading = false
-	refreshPending = false
-	renderedPanelRecipeId = nil
-	renderedFoodTemplateRecipeId = nil
 	uiWasVisible = false
-	table.clear(cardEntries)
 end
 
 local function get_cooking_ui(root)
@@ -1670,12 +1476,6 @@ local function get_cooking_ui(root)
 		barFill = nil
 	end
 
-	local foodViewport = foodRoot and (find_path(foodRoot, { "HorseImage", "ViewportFrame" })
-		or find_descendant(foodRoot, { "ViewportFrame", "ViewPortFrame", "Viewport" }, "ViewportFrame")) or nil
-	if foodViewport and not foodViewport:IsA("ViewportFrame") then
-		foodViewport = nil
-	end
-
 	local foodRarityIcon = foodRoot and (
 		find_descendant(foodRoot, { "rarity", "Rarity" }, "ImageLabel")
 			or find_descendant(foodRoot, { "rarity", "Rarity" }, "ImageButton")
@@ -1684,14 +1484,6 @@ local function get_cooking_ui(root)
 
 	if foodTemplate and not foodTemplate:IsA("GuiObject") then
 		foodTemplate = nil
-	end
-
-	local foodTemplateViewport = foodTemplate and (
-		find_path(foodTemplate, { "ItemDisplayBG", "HorseImage", "ViewportFrame" })
-			or find_descendant(foodTemplate, { "ViewportFrame", "ViewPortFrame", "Viewport" }, "ViewportFrame")
-	) or nil
-	if foodTemplateViewport and not foodTemplateViewport:IsA("ViewportFrame") then
-		foodTemplateViewport = nil
 	end
 
 	local foodStatsContainer = foodTemplate and find_gui_object(foodTemplate, { "StatsFR" }) or nil
@@ -1721,12 +1513,17 @@ local function get_cooking_ui(root)
 		BarFill = barFill,
 		CookingLabel = mainLeft and find_text(mainLeft, { "Cooking" }) or nil,
 		FoodNameLabel = mainLeft and find_text(mainLeft, { "FoodNameTX" }) or nil,
-		FoodViewport = foodViewport,
+		FoodImage = foodRoot and find_image_object(foodRoot, { { "HorseImage" }, { "FoodImage" }, { "ImageLabel" } }) or nil,
 		FoodRarityIcon = foodRarityIcon,
 		FoodTemplate = foodTemplate,
 		FoodTemplateNameLabel = foodTemplate and find_text(foodTemplate, { "FoodNameTX" }) or nil,
 		FoodTemplateDetailsLabel = foodTemplate and find_text(foodTemplate, { "DetailsTX" }) or nil,
-		FoodTemplateViewport = foodTemplateViewport,
+		FoodTemplateImage = foodTemplate and find_image_object(foodTemplate, {
+			{ "ItemDisplayBG", "HorseImage" },
+			{ "HorseImage" },
+			{ "FoodImage" },
+			{ "ImageLabel" },
+		}) or nil,
 		FoodTemplateRarityIcon = foodTemplateRarityIcon,
 		FoodStatsContainer = foodStatsContainer,
 		FoodStatTemplate = foodStatTemplate,
@@ -1759,28 +1556,32 @@ local function bind_ui(ui)
 
 	destroy_ui_binding()
 	currentUi = ui
+	debug_print("bind_ui", "root=" .. get_debug_path(ui.Root), "visible=" .. tostring(ui.Root.Visible))
 
 	disable_hud_anim_tree(ui.ListScrollingFrame)
 	disable_hud_anim_tree(ui.IngredientContainer)
 	disable_hud_anim_tree(ui.CardTemplate)
 	disable_hud_anim_tree(ui.IngredientTemplate)
 	disable_hud_anim_tree(ui.FoodTemplate)
+	disable_viewport_previews(ui.Root)
 	bind_open_hud_anim(ui.Root)
+
 	ui.CardTemplate.Visible = false
 	ui.IngredientTemplate.Visible = false
-
 	if ui.FoodTemplate then
 		ui.FoodTemplate.Visible = false
 	end
-
 	if ui.FoodStatTemplate then
 		ui.FoodStatTemplate.Visible = false
 	end
+
+	prewarm_dynamic_rows(ui)
 
 	ui.ListScrollingFrame.Active = true
 	ui.ListScrollingFrame.ScrollingEnabled = true
 	ui.ListScrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
 	ui.ListScrollingFrame.CanvasSize = UDim2.fromOffset(0, 0)
+	build_recipe_cards()
 
 	local layout = ui.ListScrollingFrame:FindFirstChildOfClass("UIListLayout")
 	if layout then
@@ -1815,7 +1616,7 @@ local function bind_ui(ui)
 			if isVisible then
 				ensure_open_ui_loaded()
 			else
-				cancel_deferred_loads()
+				reset_runtime_state()
 			end
 		end)
 	end
@@ -1834,8 +1635,6 @@ local function bind_ui(ui)
 	uiWasVisible = is_ui_visible(ui.Root)
 	if uiWasVisible then
 		ensure_open_ui_loaded()
-	else
-		refreshPending = true
 	end
 	refresh_dynamic_ui()
 end
@@ -1895,8 +1694,6 @@ local function initialize_data()
 		dataReady = true
 		if currentUi and is_ui_visible(currentUi.Root) then
 			ensure_open_ui_loaded()
-		else
-			refreshPending = true
 		end
 
 		queue_refresh_all()
@@ -1907,26 +1704,65 @@ initialize_data()
 sync_selected_recipe()
 try_bind_ui()
 
-rootTrove:Connect(playerGui.DescendantAdded, function(instance)
-	if matches_name(instance, MAIN_UI_NAMES)
+local function is_cooking_structure_instance(instance)
+	return matches_name(instance, MAIN_UI_NAMES)
 		or matches_name(instance, MAINFRAME_NAMES)
 		or matches_name(instance, FRAMES_NAMES)
 		or matches_name(instance, COOKING_NAMES)
+		or instance.Name == "MainLeft"
+		or instance.Name == "ListScrollingFrame"
 		or instance.Name == "TemplateCraft"
 		or instance.Name == "Ingredient"
 		or instance.Name == "FoodTemplate"
 		or instance.Name == "StatsFR"
 		or instance.Name == "StatFR"
-		or instance.Name == "DetailsTX"
-		or instance.Name == "FoodNameTX"
-		or instance.Name == "ViewportFrame"
-	then
+end
+
+local function is_current_bound_structure_instance(instance)
+	if not currentUi then
+		return false
+	end
+
+	return instance == currentUi.Root
+		or instance == currentUi.MainLeft
+		or instance == currentUi.IngredientContainer
+		or instance == currentUi.IngredientTemplate
+		or instance == currentUi.ListScrollingFrame
+		or instance == currentUi.CardTemplate
+		or instance == currentUi.FoodTemplate
+		or instance == currentUi.FoodStatsContainer
+		or instance == currentUi.FoodStatTemplate
+end
+
+local function should_rebind_for_added_instance(instance)
+	if not is_cooking_structure_instance(instance) then
+		return false
+	end
+
+	if currentUi and currentUi.Root and instance:IsDescendantOf(currentUi.Root) then
+		return is_current_bound_structure_instance(instance)
+	end
+
+	return true
+end
+
+rootTrove:Connect(playerGui.DescendantAdded, function(instance)
+	if should_rebind_for_added_instance(instance) then
+		debug_print("structure_added", "instance=" .. get_debug_path(instance))
 		task.defer(try_bind_ui)
 	end
 end)
 
 rootTrove:Connect(playerGui.DescendantRemoving, function(instance)
-	if currentUi and (instance == currentUi.Root or instance:IsDescendantOf(currentUi.Root)) then
+	if currentUi and (
+		instance == currentUi.Root
+		or instance == currentUi.MainLeft
+		or instance == currentUi.IngredientContainer
+		or instance == currentUi.IngredientTemplate
+		or instance == currentUi.ListScrollingFrame
+		or instance == currentUi.CardTemplate
+	) then
+		debug_print("structure_removing", "instance=" .. get_debug_path(instance))
 		task.defer(try_bind_ui)
 	end
 end)
@@ -1945,7 +1781,7 @@ rootTrove:Connect(RunService.Heartbeat, function(deltaTime)
 		if isVisible and not uiWasVisible then
 			ensure_open_ui_loaded()
 		elseif not isVisible and uiWasVisible then
-			cancel_deferred_loads()
+			reset_runtime_state()
 		end
 
 		uiWasVisible = isVisible

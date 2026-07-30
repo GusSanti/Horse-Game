@@ -134,14 +134,14 @@ local cropDefinitions = {
 		SeedItemId = "beetroot_seed",
 		FruitItemId = "beetroot_fruit",
 		SortOrder = 10,
-		WaterIntervalSeconds = 300,
+		WaterIntervalSeconds = 3,
 	}),
 	build_crop_definition({
 		CropId = "Carrot",
 		SeedItemId = "carrot_seed",
 		FruitItemId = "carrot_fruit",
 		SortOrder = 20,
-		WaterIntervalSeconds = 7,
+		WaterIntervalSeconds = 3,
 		StageFolderAliases = { "CarrotStage" },
 	}),
 	build_crop_definition({
@@ -149,7 +149,7 @@ local cropDefinitions = {
 		SeedItemId = "corn_seed",
 		FruitItemId = "corn_fruit",
 		SortOrder = 30,
-		WaterIntervalSeconds = 420,
+		WaterIntervalSeconds = 3,
 	}),
 	build_crop_definition({
 		CropId = "Eggplant",

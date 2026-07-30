@@ -1,17 +1,16 @@
-------------------//SERVICES
-
 ------------------//VARIABLES
 local Rotate = {}
 
-------------------//FUNCTIONS
-
 ------------------//MAIN FUNCTIONS
-function Rotate.on_bind(inst, state, utils)
-	local rdeg = inst:GetAttribute("rotate_deg") or 0
-	local rt = inst:GetAttribute("rotate_t") or 0.15
-	if rdeg ~= 0 then
-		utils.tween(inst, { Rotation = state.origRot + rdeg }, rt):Play()
+function Rotate.get_hover_rotation(inst, state, defaults)
+	local baseRotation = state.BaseRotation or state.origRot or inst.Rotation
+	local fallback = defaults and defaults.rotate_hover_deg or 0
+	local rotation = tonumber(inst:GetAttribute("rotate_hover_deg"))
+	if rotation == nil then
+		rotation = fallback
 	end
+
+	return baseRotation + (state.Hovered and rotation or 0)
 end
 
 ------------------//INIT

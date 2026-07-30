@@ -1,6 +1,22 @@
 local Shared = require(script.Parent:WaitForChild("Shared"))
 
+local FOOD_IMAGE_IDS = {
+	hay_bale = "",
+	bread = "",
+	beet_pellets = "",
+	berry_mash = "",
+	root_salad = "",
+	garden_soup = "",
+	stuffed_pumpkin = "",
+	harvest_skewers = "",
+	golden_salad = "",
+	golden_grain_loaf = "",
+	diamond_root_feast = "",
+	diamond_champion_bowl = "",
+}
+
 local function crafted_food(config)
+	config.IdImage = config.IdImage or FOOD_IMAGE_IDS[config.ItemId] or ""
 	config.ShopId = false
 	config.Price = config.Price or 0
 	config.PriceLabel = config.PriceLabel or "Crafted"
