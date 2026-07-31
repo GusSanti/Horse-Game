@@ -28,7 +28,9 @@ local Libraries = Modules:WaitForChild("Libraries")
 local ServerModules = ServerStorage:WaitForChild("Modules")
 local HorseModules = ServerModules:WaitForChild("Horse")
 local StableDictionary = require(Modules:WaitForChild("Dictionary"):WaitForChild("StableDictionary"))
+local HorseRoamingConfig = require(Modules:WaitForChild("GameData"):WaitForChild("HorseRoamingConfig"))
 local DataUtility = require(Modules:WaitForChild("Utility"):WaitForChild("DataUtility"))
+local HorseRoamingService = require(HorseModules:WaitForChild("HorseRoamingService"))
 local HorseService = require(HorseModules:WaitForChild("HorseService"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local Net = require(Libraries:WaitForChild("Net"))
@@ -218,11 +220,101 @@ local function get_slot_prompt(plot: Instance, slotName: string): ProximityPromp
 	return nil
 end
 
+local function get_slot_folder(plot: Instance, slotName: string): Instance?
+	local horseFolder = plot:FindFirstChild(HORSE_FOLDER_NAME)
+	return horseFolder and horseFolder:FindFirstChild(slotName) or nil
+end
+
+local function ensure_free_horse_part(slotFolder: Instance): BasePart?
+	local existing = slotFolder:FindFirstChild(HorseRoamingConfig.FreeHorsePartName)
+	if existing then
+		if existing:IsA("BasePart") then
+			return existing
+		end
+
+		warn(("%s precisa ser uma BasePart em %s"):format(
+			HorseRoamingConfig.FreeHorsePartName,
+			slotFolder:GetFullName()
+		))
+		return nil
+	end
+
+	local referencePart = slotFolder:FindFirstChild(SLOT_PROMPT_PART_NAME)
+	if not referencePart or not referencePart:IsA("BasePart") then
+		referencePart = slotFolder:FindFirstChild("HorsePosition")
+	end
+	if not referencePart or not referencePart:IsA("BasePart") then
+		return nil
+	end
+
+	local freeHorsePart = Instance.new("Part")
+	freeHorsePart.Name = HorseRoamingConfig.FreeHorsePartName
+	freeHorsePart.Size = referencePart.Size
+	freeHorsePart.CFrame = referencePart.CFrame
+	freeHorsePart.Transparency = 1
+	freeHorsePart.Anchored = true
+	freeHorsePart.CanCollide = false
+	freeHorsePart.CanQuery = false
+	freeHorsePart.CanTouch = false
+	freeHorsePart.CastShadow = false
+	freeHorsePart.Parent = slotFolder
+	return freeHorsePart
+end
+
+local function get_free_horse_prompt(plot: Instance, slotName: string): ProximityPrompt?
+	local slotFolder = get_slot_folder(plot, slotName)
+	local freeHorsePart = slotFolder and slotFolder:FindFirstChild(HorseRoamingConfig.FreeHorsePartName)
+	if not freeHorsePart then
+		return nil
+	end
+
+	local prompt = freeHorsePart:FindFirstChild(HorseRoamingConfig.FreePromptName)
+	return if prompt and prompt:IsA("ProximityPrompt") then prompt else nil
+end
+
+local function ensure_free_horse_prompt(plot: Instance, slotName: string): ProximityPrompt?
+	local slotFolder = get_slot_folder(plot, slotName)
+	if not slotFolder then
+		return nil
+	end
+
+	local freeHorsePart = ensure_free_horse_part(slotFolder)
+	if not freeHorsePart then
+		return nil
+	end
+
+	local prompt = freeHorsePart:FindFirstChild(HorseRoamingConfig.FreePromptName)
+	if prompt and not prompt:IsA("ProximityPrompt") then
+		warn(("%s precisa ser um ProximityPrompt em %s"):format(
+			HorseRoamingConfig.FreePromptName,
+			freeHorsePart:GetFullName()
+		))
+		return nil
+	end
+
+	if not prompt then
+		prompt = Instance.new("ProximityPrompt")
+		prompt.Name = HorseRoamingConfig.FreePromptName
+		prompt.Parent = freeHorsePart
+	end
+
+	prompt.HoldDuration = HorseRoamingConfig.FreePromptHoldDuration
+	prompt.MaxActivationDistance = HorseRoamingConfig.FreePromptMaxActivationDistance
+	prompt.KeyboardKeyCode = HorseRoamingConfig.FreePromptKeyboardKeyCode
+	prompt.RequiresLineOfSight = false
+	return prompt
+end
+
 disable_plot_slot_prompts = function(plot: Instance): ()
 	for _, slotName: string in ipairs(StableDictionary.HorseSlotOrder) do
 		local prompt = get_slot_prompt(plot, slotName)
 		if prompt then
 			prompt.Enabled = false
+		end
+
+		local freeHorsePrompt = get_free_horse_prompt(plot, slotName)
+		if freeHorsePrompt then
+			freeHorsePrompt.Enabled = false
 		end
 	end
 end
@@ -264,6 +356,34 @@ local function refresh_plot_slot_prompts(player: Player): ()
 	end
 end
 
+local function refresh_free_horse_prompts(player: Player): ()
+	local plotData = assignedPlotByPlayer[player]
+	if not plotData then
+		return
+	end
+
+	local stable = DataUtility.server.get(player, "Stable")
+	local horseSlots = type(stable) == "table" and stable.HorseSlots or nil
+	local ownedStalls = get_owned_stalls_from_stable(stable)
+
+	for slotIndex, slotName: string in ipairs(StableDictionary.HorseSlotOrder) do
+		local prompt = get_free_horse_prompt(plotData.instance, slotName)
+		if prompt then
+			local horseId = type(horseSlots) == "table" and horseSlots[slotName] or nil
+			local hasAssignedHorse = slotIndex <= ownedStalls
+				and type(horseId) == "string"
+				and horseId ~= ""
+			local isFree = hasAssignedHorse and HorseRoamingService.IsHorseFree(player, horseId)
+
+			prompt.Enabled = hasAssignedHorse
+			prompt.ActionText = if isFree
+				then HorseRoamingConfig.ReturnPromptActionText
+				else HorseRoamingConfig.FreePromptActionText
+			prompt.ObjectText = HorseRoamingConfig.FreePromptObjectText
+		end
+	end
+end
+
 local function bind_plot_slot_prompts(player: Player, playerTrove, plot: Instance): ()
 	for _, slotName: string in ipairs(StableDictionary.HorseSlotOrder) do
 		local prompt = get_slot_prompt(plot, slotName)
@@ -275,11 +395,36 @@ local function bind_plot_slot_prompts(player: Player, playerTrove, plot: Instanc
 
 				HorseService.BuyStableSlot(player, slotName)
 				refresh_plot_slot_prompts(player)
+				refresh_free_horse_prompts(player)
+			end))
+		end
+
+		local freeHorsePrompt = ensure_free_horse_prompt(plot, slotName)
+		if freeHorsePrompt then
+			playerTrove:Add(freeHorsePrompt.Triggered:Connect(function(triggeringPlayer: Player)
+				if triggeringPlayer ~= player then
+					return
+				end
+
+				local stable = DataUtility.server.get(player, "Stable")
+				local horseSlots = type(stable) == "table" and stable.HorseSlots or nil
+				local horseId = type(horseSlots) == "table" and horseSlots[slotName] or nil
+				if type(horseId) ~= "string" or horseId == "" then
+					refresh_free_horse_prompts(player)
+					return
+				end
+
+				local isFree = HorseRoamingService.ToggleHorseFree(player, horseId)
+				if not isFree then
+					HorseService.SyncPlotHorses(player, plot)
+				end
+				refresh_free_horse_prompts(player)
 			end))
 		end
 	end
 
 	refresh_plot_slot_prompts(player)
+	refresh_free_horse_prompts(player)
 end
 
 local function teleport_character_to_plot(player: Player, character: Model): ()
@@ -337,6 +482,7 @@ local function on_player_added(player: Player): ()
 
 	local horsesConnection = DataUtility.server.bind(player, "Horses", function()
 		sync_plot_horses(player)
+		refresh_free_horse_prompts(player)
 	end)
 
 	if horsesConnection then
@@ -346,6 +492,7 @@ local function on_player_added(player: Player): ()
 	local stableConnection = DataUtility.server.bind(player, "Stable", function()
 		sync_plot_horses(player)
 		refresh_plot_slot_prompts(player)
+		refresh_free_horse_prompts(player)
 	end)
 
 	if stableConnection then

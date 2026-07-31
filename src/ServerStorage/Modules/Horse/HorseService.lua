@@ -17,6 +17,7 @@ local HORSE_ID_ATTRIBUTE = "HorseId"
 local HORSE_CATALOG_ID_ATTRIBUTE = "HorseCatalogId"
 local HORSE_VISUAL_MODEL_NAME_ATTRIBUTE = "HorseVisualModelName"
 local MOUNTED_USER_ID_ATTRIBUTE = "MountedUserId"
+local ROAMING_HORSE_ATTRIBUTE = "IsHorseRoaming"
 local STATUS_UPDATE_INTERVAL_SECONDS = 60
 local STABLE_GROUND_RAY_DISTANCE = 100
 local STABLE_GROUND_MIN_HORIZONTAL_AREA = 16
@@ -752,6 +753,23 @@ local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 	create_visual_horse_in_slot(slotFolder, horse)
 end
 
+local function find_active_visual_outside_slot(horseFolder: Instance, slotFolder: Instance, horseId: string): Instance?
+	for _, descendant in horseFolder:GetDescendants() do
+		if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true
+			and descendant:GetAttribute(HORSE_ID_ATTRIBUTE) == horseId
+			and not descendant:IsDescendantOf(slotFolder)
+			and (
+				descendant:GetAttribute(ROAMING_HORSE_ATTRIBUTE) == true
+				or is_visual_horse_mounted(descendant)
+			)
+		then
+			return descendant
+		end
+	end
+
+	return nil
+end
+
 local function build_horse_summary(horse, equippedHorseId, now: number?)
 	local movement, naturePerformance, saddleDefinition = HorseEquipmentUtility.GetEffectiveMovement(horse)
 	local nature = NatureCatalog.GetHorseNatureDefinition(horse)
@@ -1221,7 +1239,18 @@ function HorseService.SyncPlotHorses(player: Player, plot: Instance): (boolean, 
 		if slotFolder then
 			local horseId = slotIndex <= ownedStalls and horseSlots[slotName] or ""
 			local horse = horseId ~= "" and ownedHorses[horseId] or nil
-			sync_visual_horse_in_slot(slotFolder, horse)
+
+			-- A released (or temporarily mounted) horse lives in another container
+			-- under HorseFolder. Do not recreate a duplicate in its stable slot when
+			-- needs/status data is saved while that live visual is away.
+			local activeVisual = horse and find_active_visual_outside_slot(horseFolder, slotFolder, horseId) or nil
+			if horse and activeVisual then
+				clear_visual_horse_from_slot(slotFolder)
+				apply_visual_horse_metadata(activeVisual, horse)
+				HorseSaddleVisualService.Sync(activeVisual, horse)
+			else
+				sync_visual_horse_in_slot(slotFolder, horse)
+			end
 		end
 	end
 

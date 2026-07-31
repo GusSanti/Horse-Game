@@ -17,6 +17,7 @@ local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local HorseMountAnimation = require(HorseModules:WaitForChild("HorseMountAnimation"))
 local HorseMountCharacter = require(HorseModules:WaitForChild("HorseMountCharacter"))
 local HorseMountGeometry = require(HorseModules:WaitForChild("HorseMountGeometry"))
+local HorseRoamingService = require(HorseModules:WaitForChild("HorseRoamingService"))
 local HorseService = require(HorseModules:WaitForChild("HorseService"))
 
 local HorseMountAction = Net.Function.HorseMountAction
@@ -73,9 +74,11 @@ local return_horse_to_stable, get_ground_offset, get_character_lowest_y, get_hor
 	HorseMountGeometry.buildSeatOffset,
 	HorseMountGeometry.resolveGroundPosition
 
-local create_mount_animation_state, play_horse_idle_animation, destroy_mount_animation_state, update_mount_animation_state, start_mount_animations, stop_mount_animations =
+local create_mount_animation_state, play_horse_idle_animation, play_player_mount_animation, play_player_dismount_animation, destroy_mount_animation_state, update_mount_animation_state, start_mount_animations, stop_mount_animations =
 	HorseMountAnimation.createMountAnimationState,
 	HorseMountAnimation.playHorseIdleAnimation,
+	HorseMountAnimation.playPlayerMountAnimation,
+	HorseMountAnimation.playPlayerDismountAnimation,
 	HorseMountAnimation.destroyMountAnimationState,
 	HorseMountAnimation.updateMountAnimationState,
 	HorseMountAnimation.startMountAnimations,
@@ -821,40 +824,14 @@ local function set_horse_run_dust_enabled(emitters, enabled)
 	end
 end
 
-local function fade_out_horse_visual(mountState, duration)
-	if not mountState or not mountState.HorseState then
-		return
-	end
-
-	local savedParts = mountState.HorseState.Parts or {}
-	local fadeDuration = math.max(duration or 0, 0.05)
-	local startedAt = os.clock()
-
-	while true do
-		local elapsed = os.clock() - startedAt
-		local alpha = math.clamp(elapsed / fadeDuration, 0, 1)
-
-		for part, state in pairs(savedParts) do
-			if part and part.Parent and state then
-				part.Transparency = state.Transparency + ((1 - state.Transparency) * alpha)
-			end
-		end
-
-		if alpha >= 1 then
-			break
-		end
-
-		RunService.Heartbeat:Wait()
-	end
-end
-
 local get_dismount_cframe
 local send_unmounted_state
 
-local function cleanup_mount_horse(mountState)
+local function cleanup_mount_horse(mountState, options)
 	if not mountState then
 		return
 	end
+	options = options or {}
 
 	destroy_instances(mountState.DustResources)
 	restore_horse_state(mountState.HorseVisual, mountState.HorseState)
@@ -862,6 +839,43 @@ local function cleanup_mount_horse(mountState)
 	destroy_instances({ mountState.RiderWeld })
 	destroy_instances(mountState.HorseWelds)
 	destroy_instances({ mountState.MountSeat, mountState.MountRoot })
+
+	if options.ReleaseToRoam == true
+		and mountState.Player
+		and mountState.Player.Parent == Players
+		and mountState.HorseVisual
+		and mountState.HorseVisual.Parent
+	then
+		local released = HorseRoamingService.Release(
+			mountState.Player,
+			mountState.HorseId,
+			mountState.HorseVisual,
+			{
+				ClampIfTooFar = options.ClampIfTooFar == true,
+			}
+		)
+		if released then
+			return
+		end
+	end
+
+	if mountState.Player
+		and mountState.Player.Parent == Players
+		and mountState.HorseVisual
+		and mountState.HorseVisual.Parent
+	then
+		local returned = HorseRoamingService.ReturnHorseToStable(
+			mountState.Player,
+			mountState.HorseId
+		)
+		if returned then
+			local plot = get_player_plot(mountState.Player)
+			if plot then
+				HorseService.SyncPlotHorses(mountState.Player, plot)
+			end
+			return
+		end
+	end
 
 	if mountState.IsTemporaryVisual and mountState.HorseVisual and mountState.HorseVisual.Parent then
 		mountState.HorseVisual:Destroy()
@@ -901,6 +915,7 @@ local function begin_dismount_transition(player, reason)
 	mountState.InputZ = 0
 	mountState.Sprinting = false
 	play_horse_idle_animation(mountState.AnimationState)
+	play_player_dismount_animation(mountState.AnimationState)
 	set_horse_run_dust_enabled(mountState.DustEmitters, false)
 
 	mountState.DismountCFrame = dismountCFrame
@@ -1050,7 +1065,12 @@ local function clear_mount_state(player, reason, options)
 
 	stop_mount_animations(mountState)
 	destroy_instances({ mountState.RiderWeld })
-	cleanup_mount_horse(mountState)
+	local remainsFree = options.ReturnToStable ~= true
+		and HorseRoamingService.IsHorseFree(player, mountState.HorseId)
+	cleanup_mount_horse(mountState, {
+		ReleaseToRoam = remainsFree,
+		ClampIfTooFar = remainsFree,
+	})
 
 	if mountState.Character and mountState.Character.Parent and mountState.Humanoid and mountState.Humanoid.Parent then
 		restore_character_state(mountState.Character, mountState.Humanoid, mountState.CharacterState)
@@ -1199,6 +1219,8 @@ local function mount_player(player, payload)
 		}
 	end
 
+	local wasRoaming = HorseRoamingService.TakeControl(horseVisual, true)
+
 	local horseSummary = build_horse_summary(horse)
 	local horseState = capture_horse_state(horseVisual, baseParts)
 	local characterState = capture_character_state(character, humanoid)
@@ -1249,10 +1271,13 @@ local function mount_player(player, payload)
 
 	local mountingAnimationState = create_mount_animation_state(humanoid, horseVisual)
 	if mountingAnimationState then
+		play_player_mount_animation(mountingAnimationState)
 		play_horse_idle_animation(mountingAnimationState)
 		debug_mount_log(player, "MountIdlePreview", {
 			HorseIdleTrackLoaded = mountingAnimationState.HorseIdleTrack ~= nil,
 			HorseWalkTrackLoaded = mountingAnimationState.HorseWalkTrack ~= nil,
+			PlayerHopOnTrackLoaded = mountingAnimationState.PlayerHopOnTrack ~= nil,
+			PlayerHopOffTrackLoaded = mountingAnimationState.PlayerHopOffTrack ~= nil,
 		})
 	end
 
@@ -1278,7 +1303,15 @@ local function mount_player(player, payload)
 		restore_horse_state(horseVisual, horseState)
 		clear_visual_mount_marker(horseVisual)
 
-		if isTemporaryVisual and horseVisual.Parent then
+		if wasRoaming
+			and HorseRoamingService.IsHorseFree(player, horseId)
+			and player.Parent == Players
+			and horseVisual.Parent
+		then
+			HorseRoamingService.Release(player, horseId, horseVisual)
+		elseif wasRoaming and player.Parent == Players and horseVisual.Parent then
+			HorseRoamingService.ReturnHorseToStable(player, horseId)
+		elseif isTemporaryVisual and horseVisual.Parent then
 			horseVisual:Destroy()
 		else
 			return_horse_to_stable(horseVisual, horseState)
@@ -1307,7 +1340,15 @@ local function mount_player(player, payload)
 		restore_horse_state(horseVisual, horseState)
 		clear_visual_mount_marker(horseVisual)
 
-		if isTemporaryVisual and horseVisual.Parent then
+		if wasRoaming
+			and HorseRoamingService.IsHorseFree(player, horseId)
+			and player.Parent == Players
+			and horseVisual.Parent
+		then
+			HorseRoamingService.Release(player, horseId, horseVisual)
+		elseif wasRoaming and player.Parent == Players and horseVisual.Parent then
+			HorseRoamingService.ReturnHorseToStable(player, horseId)
+		elseif isTemporaryVisual and horseVisual.Parent then
 			horseVisual:Destroy()
 		else
 			return_horse_to_stable(horseVisual, horseState)
@@ -1434,10 +1475,6 @@ local function dismount_player(player)
 			local humanoid = mountState.Humanoid
 			local rootPart = mountState.RootPart
 
-			task.spawn(function()
-				fade_out_horse_visual(mountState, animationDuration)
-			end)
-
 			if releaseDelay > 0 then
 				task.wait(releaseDelay)
 			end
@@ -1470,7 +1507,11 @@ local function dismount_player(player)
 				restore_character_state(character, humanoid, mountState.CharacterState)
 			end
 
-			cleanup_mount_horse(mountState)
+			local remainsFree = HorseRoamingService.IsHorseFree(player, mountState.HorseId)
+			cleanup_mount_horse(mountState, {
+				ReleaseToRoam = remainsFree,
+				ClampIfTooFar = remainsFree,
+			})
 			RunService.Heartbeat:Wait()
 			send_unmounted_state(player, "Dismounted")
 		end)
@@ -1549,7 +1590,14 @@ function HorseMountService.Init()
 	Players.PlayerRemoving:Connect(function(player)
 		clear_mount_state(player, "PlayerRemoving", {
 			SkipCharacterPlacement = true,
+			ReturnToStable = true,
 		})
+		HorseRoamingService.ReturnPlayerHorsesToStable(player)
+
+		local plot = get_player_plot(player)
+		if plot then
+			HorseService.SyncPlotHorses(player, plot)
+		end
 		disconnect_player_connections(player)
 	end)
 

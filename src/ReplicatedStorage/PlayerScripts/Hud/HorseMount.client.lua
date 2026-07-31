@@ -877,6 +877,17 @@ local function clear_stable_mount_prompts()
 	table.clear(stableMountPromptAttachments)
 end
 
+local function set_stable_mount_prompts_enabled(enabled)
+	for _, attachment in ipairs(stableMountPromptAttachments) do
+		if attachment and attachment.Parent then
+			local prompt = attachment:FindFirstChild("StableMountPrompt")
+			if prompt and prompt:IsA("ProximityPrompt") then
+				prompt.Enabled = enabled == true
+			end
+		end
+	end
+end
+
 local function get_stable_mount_prompt_parent(horseVisual)
 	if horseVisual:IsA("BasePart") then
 		return horseVisual
@@ -1473,7 +1484,10 @@ request_mount = function(horseId)
 	end
 
 	requestInFlight = true
-	clear_stable_mount_prompts()
+	-- Keep the currently triggered prompt alive until Roblox finishes its input
+	-- cycle. Destroying it inside Triggered can leave the custom prompt system
+	-- holding the input and interfere with nearby E prompts after dismounting.
+	set_stable_mount_prompts_enabled(false)
 
 	local success, response = pcall(function()
 		return Net.Function.HorseMountAction:Call({
@@ -1593,7 +1607,7 @@ Net.Event.HorseMountState:Connect(function(payload)
 			duration,
 			payload.TargetCFrame
 		)
-		refresh_stable_mount_prompts()
+		set_stable_mount_prompts_enabled(false)
 	elseif payload.Kind == "Mounted" and payload.State then
 		sync_mount_state_from_server(payload.State)
 	elseif payload.Kind == "Dismounting" then

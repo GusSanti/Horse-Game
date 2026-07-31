@@ -731,7 +731,7 @@ local function finish_round(round, winnerParticipant)
 end
 
 local function begin_race(round)
-	if activeRound ~= round or round.State ~= "Invite" then
+	if activeRound ~= round or round.State ~= "Countdown" then
 		return
 	end
 
@@ -819,6 +819,36 @@ local function begin_race(round)
 	end)
 end
 
+local function begin_start_countdown(round)
+	if activeRound ~= round or round.State ~= "Invite" then
+		return
+	end
+
+	if #round.Participants == 0 then
+		cleanup_round(round, "NoParticipants")
+		return
+	end
+
+	local countdownDuration = math.max(0, tonumber(RaceConfig.StartCountdownDuration) or 0)
+	round.State = "Countdown"
+	round.CountdownEndsAt = os.clock() + countdownDuration
+
+	broadcast_state({
+		Kind = "CountdownStarted",
+		RoundId = round.Id,
+		Duration = countdownDuration,
+		SecondsRemaining = countdownDuration,
+		CameraCFrame = round.Assets.CameraCFrame,
+		Entries = build_entries_payload(round),
+	})
+
+	task.delay(countdownDuration, function()
+		if activeRound == round and round.State == "Countdown" then
+			begin_race(round)
+		end
+	end)
+end
+
 local function open_invite_round()
 	if activeRound then
 		return
@@ -853,7 +883,7 @@ local function open_invite_round()
 
 	task.delay(RaceConfig.InviteDuration, function()
 		if activeRound == round and round.State == "Invite" then
-			begin_race(round)
+			begin_start_countdown(round)
 		end
 	end)
 end
@@ -1099,6 +1129,22 @@ function RaceService.Init()
 
 		if round.State == "Invite" then
 			broadcast_queue_update(round)
+			return
+		end
+
+		if round.State == "Countdown" then
+			if #round.Participants == 0 then
+				cleanup_round(round, "NoParticipants")
+			else
+				broadcast_state({
+					Kind = "CountdownStarted",
+					RoundId = round.Id,
+					Duration = math.max(0, tonumber(RaceConfig.StartCountdownDuration) or 0),
+					SecondsRemaining = math.max(0, (round.CountdownEndsAt or os.clock()) - os.clock()),
+					CameraCFrame = round.Assets.CameraCFrame,
+					Entries = build_entries_payload(round),
+				})
+			end
 			return
 		end
 

@@ -48,6 +48,7 @@ local state = {
 	Phase = "Idle",
 	RoundId = nil,
 	InviteDeadline = 0,
+	CountdownDeadline = 0,
 	ResultDeadline = 0,
 	LocalJoined = false,
 	LocalWatchingRace = false,
@@ -179,6 +180,7 @@ local function reset_state()
 	state.Phase = "Idle"
 	state.RoundId = nil
 	state.InviteDeadline = 0
+	state.CountdownDeadline = 0
 	state.ResultDeadline = 0
 	state.LocalJoined = false
 	state.LocalWatchingRace = false
@@ -800,6 +802,15 @@ local function format_race_time(seconds)
 	return ("%02d:%02d"):format(math.floor(wholeSeconds / 60), wholeSeconds % 60)
 end
 
+local function format_start_countdown(seconds)
+	local remaining = math.ceil(math.max(0, seconds))
+	if remaining > 0 then
+		return tostring(remaining)
+	end
+
+	return "GO"
+end
+
 local function get_result_entry()
 	return find_local_entry() or (state.Result and state.Result.Winner)
 end
@@ -855,7 +866,9 @@ update_dynamic_text = function()
 		elapsed = (state.Result.Winner.FinishTimeMs or 0) / 1000
 	end
 
-	local displayTime = format_race_time(elapsed)
+	local displayTime = state.Phase == "Countdown"
+		and format_start_countdown(state.CountdownDeadline - os.clock())
+		or format_race_time(elapsed)
 	set_text(ui.TimeTX, displayTime)
 	set_text(ui.TimeShadowTX, displayTime)
 end
@@ -864,6 +877,7 @@ local function handle_invite(payload)
 	state.Phase = "Invite"
 	state.RoundId = payload.RoundId
 	state.InviteDeadline = os.clock() + math.max(0, payload.SecondsRemaining or 0)
+	state.CountdownDeadline = 0
 	state.HorseOptions = payload.HorseOptions or {}
 	state.Entries = payload.Entries or state.Entries
 	state.LocalJoined = false
@@ -886,6 +900,7 @@ local function handle_queue_update(payload)
 
 	state.RoundId = payload.RoundId
 	state.InviteDeadline = os.clock() + math.max(0, payload.SecondsRemaining or 0)
+	state.CountdownDeadline = 0
 	state.Entries = payload.Entries or {}
 	state.NoticeText = ""
 
@@ -909,6 +924,34 @@ local function handle_queue_update(payload)
 	update_dynamic_text()
 end
 
+local function handle_countdown_started(payload)
+	if state.RoundId and payload.RoundId ~= state.RoundId then
+		return
+	end
+
+	state.RoundId = payload.RoundId
+	state.Phase = "Countdown"
+	state.CountdownDeadline = os.clock() + math.max(0, payload.SecondsRemaining or payload.Duration or 0)
+	state.Entries = payload.Entries or state.Entries
+	state.LocalWatchingRace = find_local_entry() ~= nil
+	state.LocalJoined = state.LocalWatchingRace
+	state.CameraMoving = false
+	state.NoticeText = ""
+	raceStartedAt = nil
+	hide_race_invite_notification()
+
+	if state.LocalWatchingRace and payload.CameraCFrame then
+		lock_camera(payload.CameraCFrame, false)
+	else
+		unlock_camera()
+	end
+
+	refresh_leaderboard()
+	sync_race_visuals()
+	update_visibility()
+	update_dynamic_text()
+end
+
 local function handle_race_started(payload)
 	if state.RoundId and payload.RoundId ~= state.RoundId then
 		return
@@ -916,6 +959,7 @@ local function handle_race_started(payload)
 
 	state.RoundId = payload.RoundId
 	state.Phase = "Race"
+	state.CountdownDeadline = 0
 	state.Entries = payload.Entries or {}
 	state.LocalWatchingRace = find_local_entry() ~= nil
 	state.LocalJoined = state.LocalWatchingRace
@@ -1020,6 +1064,8 @@ Net.Event.RaceState:Connect(function(payload)
 		handle_invite(payload)
 	elseif payload.Kind == "QueueUpdated" then
 		handle_queue_update(payload)
+	elseif payload.Kind == "CountdownStarted" then
+		handle_countdown_started(payload)
 	elseif payload.Kind == "RaceStarted" then
 		handle_race_started(payload)
 	elseif payload.Kind == "RaceStatus" then

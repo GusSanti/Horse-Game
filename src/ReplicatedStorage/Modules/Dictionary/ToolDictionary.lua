@@ -9,6 +9,9 @@ local ToolDictionary = {
 	VisualHorseAttribute = "IsStableVisualHorse",
 	HorseIdAttribute = "HorseId",
 	MountedUserIdAttribute = "MountedUserId",
+	RoamingHorseAttribute = "IsHorseRoaming",
+	FreeHorseAttribute = "IsHorseFree",
+	RoamingBehaviorAttribute = "HorseRoamingBehavior",
 	IgnoreRefreshAttribute = "IgnoreToolPromptRefresh",
 }
 

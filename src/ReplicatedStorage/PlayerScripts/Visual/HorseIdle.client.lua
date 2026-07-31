@@ -19,6 +19,8 @@ local PLOT_VALUE_NAME: string = ToolDictionary.PlotValueName
 local HORSE_FOLDER_NAME: string = ToolDictionary.HorseFolderName
 local VISUAL_HORSE_ATTRIBUTE: string = ToolDictionary.VisualHorseAttribute
 local MOUNTED_USER_ID_ATTRIBUTE: string = ToolDictionary.MountedUserIdAttribute
+local ROAMING_HORSE_ATTRIBUTE: string = ToolDictionary.RoamingHorseAttribute or "IsHorseRoaming"
+local ROAMING_BEHAVIOR_ATTRIBUTE: string = ToolDictionary.RoamingBehaviorAttribute or "HorseRoamingBehavior"
 local IGNORE_REFRESH_ATTRIBUTE: string = ToolDictionary.IgnoreRefreshAttribute
 
 local plotValue: ObjectValue = localPlayer:WaitForChild(PLOT_VALUE_NAME)
@@ -100,11 +102,12 @@ local function stop_idle_animation(entry, fadeTime: number?): ()
 		return
 	end
 
-	if entry.track then
+	for _, track in entry.tracks or {} do
 		pcall(function()
-			entry.track:Stop(fadeTime or HorseMountConfig.AnimationFadeTime or 0.12)
+			track:Stop(fadeTime or HorseMountConfig.AnimationFadeTime or 0.12)
 		end)
 	end
+	entry.mode = nil
 end
 
 local function destroy_idle_animation(horseVisual: Instance): ()
@@ -116,8 +119,8 @@ local function destroy_idle_animation(horseVisual: Instance): ()
 	disconnect_all(entry.connections)
 	stop_idle_animation(entry, 0)
 
-	if entry.animation then
-		entry.animation:Destroy()
+	for _, animation in entry.animations or {} do
+		animation:Destroy()
 	end
 
 	activeAnimations[horseVisual] = nil
@@ -173,9 +176,9 @@ local function get_horse_visuals(): {Instance}
 	return visuals
 end
 
-local function ensure_idle_track(entry): AnimationTrack?
-	if entry.track then
-		return entry.track
+local function ensure_animation_track(entry, mode: string): AnimationTrack?
+	if entry.tracks[mode] then
+		return entry.tracks[mode]
 	end
 
 	local horseVisual = entry.horseVisual
@@ -184,7 +187,9 @@ local function ensure_idle_track(entry): AnimationTrack?
 	end
 
 	local animator = get_model_animator(horseVisual)
-	local animationId = HorseMountConfig.HorseIdleAnimationId
+	local animationId = if mode == "Walk"
+		then HorseMountConfig.HorseWalkAnimationId
+		else HorseMountConfig.HorseIdleAnimationId
 	if not animator or type(animationId) ~= "string" or animationId == "" then
 		return nil
 	end
@@ -209,15 +214,25 @@ local function ensure_idle_track(entry): AnimationTrack?
 		track.Looped = true
 	end)
 
-	entry.animation = animation
-	entry.track = track
+	entry.animations[#entry.animations + 1] = animation
+	entry.tracks[mode] = track
 	return track
 end
 
-local function play_idle_animation(entry): ()
-	local track = ensure_idle_track(entry)
+local function play_animation_mode(entry, mode: string): ()
+	local track = ensure_animation_track(entry, mode)
 	if not track then
 		return
+	end
+
+	if entry.mode ~= mode then
+		for trackMode, otherTrack in entry.tracks do
+			if trackMode ~= mode then
+				pcall(function()
+					otherTrack:Stop(HorseMountConfig.HorseAnimationBlendTime or 0.24)
+				end)
+			end
+		end
 	end
 
 	local isPlaying = false
@@ -238,6 +253,8 @@ local function play_idle_animation(entry): ()
 	pcall(function()
 		track:AdjustSpeed(1)
 	end)
+
+	entry.mode = mode
 end
 
 local function sync_horse_idle_animation(horseVisual: Instance): ()
@@ -246,10 +263,18 @@ local function sync_horse_idle_animation(horseVisual: Instance): ()
 		entry = {
 			horseVisual = horseVisual,
 			connections = {},
+			tracks = {},
+			animations = {},
 		}
 
 		activeAnimations[horseVisual] = entry
 		entry.connections[#entry.connections + 1] = horseVisual:GetAttributeChangedSignal(MOUNTED_USER_ID_ATTRIBUTE):Connect(function()
+			sync_horse_idle_animation(horseVisual)
+		end)
+		entry.connections[#entry.connections + 1] = horseVisual:GetAttributeChangedSignal(ROAMING_HORSE_ATTRIBUTE):Connect(function()
+			sync_horse_idle_animation(horseVisual)
+		end)
+		entry.connections[#entry.connections + 1] = horseVisual:GetAttributeChangedSignal(ROAMING_BEHAVIOR_ATTRIBUTE):Connect(function()
 			sync_horse_idle_animation(horseVisual)
 		end)
 	end
@@ -259,12 +284,22 @@ local function sync_horse_idle_animation(horseVisual: Instance): ()
 		return
 	end
 
-	if not horseVisual:IsA("Model") or is_horse_mounted(horseVisual) then
+	if not horseVisual:IsA("Model") then
 		stop_idle_animation(entry)
 		return
 	end
+	if is_horse_mounted(horseVisual) then
+		-- Do not cross-fade the roaming walk/idle into the mount controller. Both
+		-- target the horse rig, so the roaming track must release it immediately.
+		stop_idle_animation(entry, 0)
+		return
+	end
 
-	play_idle_animation(entry)
+	local roamingBehavior = horseVisual:GetAttribute(ROAMING_BEHAVIOR_ATTRIBUTE)
+	local mode = if horseVisual:GetAttribute(ROAMING_HORSE_ATTRIBUTE) == true and roamingBehavior == "Walking"
+		then "Walk"
+		else "Idle"
+	play_animation_mode(entry, mode)
 end
 
 local function sync_idle_animations(): ()

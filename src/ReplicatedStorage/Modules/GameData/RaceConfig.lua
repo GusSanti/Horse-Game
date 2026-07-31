@@ -6,6 +6,7 @@ local RaceConfig = {
 	InviteInterval = isStudio and 60 or 300,
 	InitialInviteDelay = isStudio and 10 or 300,
 	InviteDuration = 20,
+	StartCountdownDuration = 3,
 	RaceDistance = 440,
 	SegmentLength = 30,
 	BaseSpeed = 24.5,

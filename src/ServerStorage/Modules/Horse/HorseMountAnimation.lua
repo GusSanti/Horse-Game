@@ -198,6 +198,20 @@ function HorseMountAnimation.createMountAnimationState(humanoid, horseVisual)
 	}
 
 	local horseAnimator = get_model_animator(horseVisual)
+	local riderAnimator = ensure_animator(humanoid)
+
+	animationState.PlayerHopOnTrack, animationState.PlayerHopOnAnimation = load_animation_track(
+		riderAnimator,
+		HorseMountConfig.PlayerHopOnAnimationId,
+		Enum.AnimationPriority.Action4,
+		false
+	)
+	animationState.PlayerHopOffTrack, animationState.PlayerHopOffAnimation = load_animation_track(
+		riderAnimator,
+		HorseMountConfig.PlayerHopOffAnimationId,
+		Enum.AnimationPriority.Action4,
+		false
+	)
 
 	animationState.HorseIdleTrack, animationState.HorseIdleAnimation = load_animation_track(
 		horseAnimator,
@@ -219,6 +233,8 @@ function HorseMountAnimation.createMountAnimationState(humanoid, horseVisual)
 	)
 
 	for _, animation in ipairs({
+		animationState.PlayerHopOnAnimation,
+		animationState.PlayerHopOffAnimation,
 		animationState.HorseIdleAnimation,
 		animationState.HorseWalkAnimation,
 		animationState.HorseRunAnimation,
@@ -229,6 +245,35 @@ function HorseMountAnimation.createMountAnimationState(humanoid, horseVisual)
 	end
 
 	return animationState
+end
+
+function HorseMountAnimation.playPlayerMountAnimation(animationState)
+	if not animationState then
+		return
+	end
+
+	stop_track(animationState.PlayerHopOffTrack, 0.05)
+	play_track(animationState.PlayerHopOnTrack, 0.05, 1, 1)
+end
+
+function HorseMountAnimation.finishPlayerMountAnimation(animationState)
+	if not animationState then
+		return
+	end
+
+	stop_track(
+		animationState.PlayerHopOnTrack,
+		HorseMountConfig.MountIdleBlendLeadTime or HorseMountConfig.AnimationFadeTime or 0.12
+	)
+end
+
+function HorseMountAnimation.playPlayerDismountAnimation(animationState)
+	if not animationState then
+		return
+	end
+
+	stop_track(animationState.PlayerHopOnTrack, 0.05)
+	play_track(animationState.PlayerHopOffTrack, 0.05, 1, 1)
 end
 
 function HorseMountAnimation.playHorseIdleAnimation(animationState)
@@ -252,6 +297,8 @@ function HorseMountAnimation.destroyMountAnimationState(animationState)
 	end
 
 	animationState.Destroyed = true
+	stop_track(animationState.PlayerHopOnTrack)
+	stop_track(animationState.PlayerHopOffTrack)
 	stop_track(animationState.HorseIdleTrack)
 	stop_track(animationState.HorseWalkTrack)
 	stop_track(animationState.HorseRunTrack)
@@ -298,6 +345,7 @@ function HorseMountAnimation.startMountAnimations(mountState)
 	end
 
 	if animationState then
+		HorseMountAnimation.finishPlayerMountAnimation(animationState)
 		HorseMountAnimation.playHorseIdleAnimation(animationState)
 	end
 
