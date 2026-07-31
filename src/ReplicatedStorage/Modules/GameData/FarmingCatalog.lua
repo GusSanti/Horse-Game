@@ -6,23 +6,7 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 
 local FarmingCatalog = {}
 
-local rarityDefinitions = {
-	Diamond = {
-		Name = "Diamond",
-		Chance = 0.02,
-	},
-	Gold = {
-		Name = "Gold",
-		Chance = 0.05,
-	},
-}
-
-local rarityRollOrder = {
-	rarityDefinitions.Diamond,
-	rarityDefinitions.Gold,
-}
-
-local rarityRandom = Random.new()
+local rarityDefinitions = {}
 
 local function normalize_key(value): string?
 	if type(value) ~= "string" then
@@ -285,17 +269,7 @@ function FarmingCatalog.GetRarityDefinition(rarityName)
 	return nil
 end
 
-function FarmingCatalog.RollHarvestRarity(randomGenerator)
-	local roll = if randomGenerator then randomGenerator:NextNumber() else rarityRandom:NextNumber()
-	local cumulativeChance = 0
-
-	for _, rarityDefinition in ipairs(rarityRollOrder) do
-		cumulativeChance += rarityDefinition.Chance
-		if roll < cumulativeChance then
-			return rarityDefinition.Name
-		end
-	end
-
+function FarmingCatalog.RollHarvestRarity(_randomGenerator)
 	return nil
 end
 

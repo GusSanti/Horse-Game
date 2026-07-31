@@ -28,6 +28,7 @@ local WHEEL_BACKGROUND_NAMES = { "WheelBG" }
 local SPIN_BUTTON_NAMES = { "SpinBT" }
 local CLOSE_BUTTON_NAMES = { "CloseBT" }
 local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
+local HORSE_IMAGE_NAMES = { "HorseImage" }
 
 local RESULT_GUI_NAME = "HorseStarterRevealRewardGui"
 local POINTER_ANGLE_DEGREES = -90
@@ -132,6 +133,23 @@ local function find_viewport_frame(root)
 	end
 
 	return find_named_instance(root, VIEWPORT_FRAME_NAMES, "ViewportFrame", true)
+end
+
+local function find_horse_image(root)
+	if not root then
+		return nil
+	end
+
+	if root:IsA("ImageLabel") or root:IsA("ImageButton") then
+		return root
+	end
+
+	local imageObject = find_named_instance(root, HORSE_IMAGE_NAMES, nil, true)
+	if imageObject and (imageObject:IsA("ImageLabel") or imageObject:IsA("ImageButton")) then
+		return imageObject
+	end
+
+	return nil
 end
 
 local function create(className, properties)
@@ -286,6 +304,30 @@ local function populate_horse_viewport(viewportFrame, horseOption, cameraConfig,
 	})
 end
 
+local function get_horse_image_id(horseOption)
+	if type(horseOption) ~= "table" then
+		return ""
+	end
+
+	if type(horseOption.Image) == "string" and horseOption.Image ~= "" then
+		return horseOption.Image
+	end
+
+	local definition = HorseCatalog.GetDefinition(horseOption.CatalogId)
+	return definition and definition.Image or ""
+end
+
+local function populate_horse_image(imageObject, horseOption)
+	if not imageObject or not (imageObject:IsA("ImageLabel") or imageObject:IsA("ImageButton")) then
+		return
+	end
+
+	local imageId = get_horse_image_id(horseOption)
+	imageObject.Image = type(imageId) == "string" and imageId or ""
+	imageObject.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	imageObject.ImageTransparency = imageObject.Image ~= "" and 0 or 1
+end
+
 local function find_horse_option(catalogId)
 	for _, horseOption in ipairs(horseOptions) do
 		if horseOption.CatalogId == catalogId then
@@ -303,6 +345,7 @@ local function find_horse_option(catalogId)
 		DisplayName = definition.DisplayName,
 		Rarity = definition.Rarity,
 		ModelKey = definition.PlaceholderModelKey,
+		Image = definition.Image,
 	}
 end
 
@@ -353,13 +396,15 @@ local function collect_wheel_slots(wheelBg)
 		end
 
 		local viewportFrame = find_viewport_frame(candidate)
-		if not viewportFrame then
+		local imageObject = find_horse_image(candidate)
+		if not viewportFrame and not imageObject then
 			return
 		end
 
 		slots[#slots + 1] = {
 			Label = candidate,
 			ViewportFrame = viewportFrame,
+			ImageObject = imageObject,
 		}
 	end
 
@@ -557,6 +602,7 @@ local function prepare_raffle_ui_for_reveal(pendingReveal)
 		local horseOption = slotAssignments[((slotIndex - 1) % #slotAssignments) + 1]
 		slot.HorseOption = horseOption
 		slot.Label.Text = horseOption.DisplayName or horseOption.CatalogId
+		populate_horse_image(slot.ImageObject, horseOption)
 		populate_horse_viewport(slot.ViewportFrame, horseOption, SLOT_CAMERA_CONFIG, "wheel")
 	end
 
@@ -692,6 +738,7 @@ local function is_reveal_ui_related(instance)
 		or matches_alias(instance, SPIN_BUTTON_NAMES)
 		or matches_alias(instance, CLOSE_BUTTON_NAMES)
 		or matches_alias(instance, VIEWPORT_FRAME_NAMES)
+		or matches_alias(instance, HORSE_IMAGE_NAMES)
 end
 
 local function queue_reveal(pendingReveal)

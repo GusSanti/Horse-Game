@@ -2,65 +2,20 @@ local Shared = require(script.Parent:WaitForChild("Shared"))
 
 local FRUIT_IMAGE_IDS = {
 	beetroot_fruit = "rbxassetid://136673913026027",
-	beetroot_fruit_gold = "",
-	beetroot_fruit_diamond = "",
 	carrot_fruit = "rbxassetid://78452739054701",
-	carrot_fruit_gold = "",
-	carrot_fruit_diamond = "",
 	corn_fruit = "rbxassetid://129860183380571",
-	corn_fruit_gold = "",
-	corn_fruit_diamond = "",
 	eggplant_fruit = "rbxassetid://88479108383566",
-	eggplant_fruit_gold = "",
-	eggplant_fruit_diamond = "",
 	garlic_fruit = "rbxassetid://106412346747593",
-	garlic_fruit_gold = "",
-	garlic_fruit_diamond = "",
 	grape_fruit = "rbxassetid://114455612544610",
-	grape_fruit_gold = "",
-	grape_fruit_diamond = "",
 	lettuce_fruit = "rbxassetid://126947296393285",
-	lettuce_fruit_gold = "",
-	lettuce_fruit_diamond = "",
 	pepper_fruit = "rbxassetid://90548924696388",
-	pepper_fruit_gold = "",
-	pepper_fruit_diamond = "",
 	pineapple_fruit = "rbxassetid://76176951210606",
-	pineapple_fruit_gold = "",
-	pineapple_fruit_diamond = "",
 	potato_fruit = "rbxassetid://97456292530893",
-	potato_fruit_gold = "",
-	potato_fruit_diamond = "",
 	pumpkin_fruit = "rbxassetid://77922108770901",
-	pumpkin_fruit_gold = "",
-	pumpkin_fruit_diamond = "",
 	radish_fruit = "rbxassetid://135353218234234",
-	radish_fruit_gold = "",
-	radish_fruit_diamond = "",
 	strawberry_fruit = "rbxassetid://96751196625233",
-	strawberry_fruit_gold = "",
-	strawberry_fruit_diamond = "",
 	tomato_fruit = "rbxassetid://133781086648596",
-	tomato_fruit_gold = "",
-	tomato_fruit_diamond = "",
 	wheat_fruit = "rbxassetid://86382292626844",
-	wheat_fruit_gold = "",
-	wheat_fruit_diamond = "",
-}
-
-local RARITY_CONFIGS = {
-	{
-		Name = "Gold",
-		SortOffset = 1,
-		VFXName = "StarsGold",
-		TextColor = Color3.fromRGB(255, 211, 64),
-	},
-	{
-		Name = "Diamond",
-		SortOffset = 2,
-		VFXName = "StarsDiamond",
-		TextColor = Color3.fromRGB(73, 191, 255),
-	},
 }
 
 local function push_unique(list, seen, value)
@@ -110,37 +65,6 @@ local function create_fruit(config)
 		LegacyInventoryItems = config.LegacyInventoryItems or {},
 		LegacyToolNames = build_legacy_names(cropId, toolName, displayName, config.LegacyToolNames),
 		Tags = config.Tags or { "Crop", "Farming", "Produce" },
-	})
-end
-
-local function create_rare_fruit(baseFruit, rarityConfig)
-	local rarityName = rarityConfig.Name
-	local rarityKey = string.lower(rarityName)
-	local itemId = ("%s_%s"):format(baseFruit.ItemId, rarityKey)
-
-	return Shared.CreateFruit({
-		ItemId = itemId,
-		CropId = baseFruit.CropId,
-		CropDisplayName = baseFruit.CropDisplayName,
-		DisplayName = ("%s %s"):format(baseFruit.DisplayName, rarityName),
-		ToolName = ("%s %s"):format(baseFruit.ToolName, rarityName),
-		IdImage = FRUIT_IMAGE_IDS[itemId] or "",
-		Description = ("%s with %s rarity."):format(baseFruit.DisplayName, rarityName),
-		SellPrice = 0,
-		SortOrder = (baseFruit.SortOrder or 0) + rarityConfig.SortOffset,
-		HarvestYield = baseFruit.HarvestYield,
-		EffectsSummary = ("%s rarity farming produce"):format(rarityName),
-		AssetPath = baseFruit.AssetPath,
-		ViewportAssetPath = baseFruit.ViewportAssetPath,
-		LegacyInventoryItems = {},
-		LegacyToolNames = {},
-		Tags = { "Crop", "Farming", "Produce", "RareCrop", rarityName },
-		Rarity = rarityName,
-		RarityVFXName = rarityConfig.VFXName,
-		RarityColor = rarityConfig.TextColor,
-		BaseItemId = baseFruit.ItemId,
-		FarmingShopVisible = false,
-		CanSell = false,
 	})
 end
 
@@ -244,12 +168,6 @@ local fruits = {}
 for _, baseFruit in ipairs(baseFruits) do
 	fruits[#fruits + 1] = baseFruit
 	baseFruit.RareItemIds = {}
-
-	for _, rarityConfig in ipairs(RARITY_CONFIGS) do
-		local rareFruit = create_rare_fruit(baseFruit, rarityConfig)
-		baseFruit.RareItemIds[rarityConfig.Name] = rareFruit.ItemId
-		fruits[#fruits + 1] = rareFruit
-	end
 end
 
 return fruits

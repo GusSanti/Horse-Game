@@ -33,7 +33,7 @@ local RaceConfig = {
 		[1] = {
 			Horseshoes = 125,
 			Items = {
-				{ ItemId = "golden_salad", Amount = 1 },
+				{ ItemId = "pineapple_pie", Amount = 1 },
 				{ ItemId = "recovery_tonic", Amount = 1 },
 			},
 		},
