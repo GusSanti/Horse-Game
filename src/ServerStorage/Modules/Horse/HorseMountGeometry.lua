@@ -59,6 +59,30 @@ local function get_instance_lowest_y(instance)
 	return lowestY
 end
 
+local function get_hoof_bone_lowest_y(instance)
+	local lowestY = math.huge
+	local foundHoofBone = false
+
+	for _, descendant in ipairs(instance:GetDescendants()) do
+		if descendant:IsA("Bone") then
+			local boneName = string.lower(descendant.Name)
+			local isHoofBone = string.find(boneName, "hoof", 1, true)
+				or string.find(boneName, "foot", 1, true)
+				or boneName == "leg_1"
+				or boneName == "leg_2"
+				or boneName == "leg_3"
+				or boneName == "leg_4"
+
+			if isHoofBone then
+				foundHoofBone = true
+				lowestY = math.min(lowestY, descendant.WorldPosition.Y)
+			end
+		end
+	end
+
+	return foundHoofBone and lowestY or nil
+end
+
 function HorseMountGeometry.captureHorseState(horseVisual, baseParts)
 	local partStates = {
 		Parts = {},
@@ -127,7 +151,9 @@ end
 
 function HorseMountGeometry.getGroundOffset(horseVisual)
 	local pivot = horseVisual:GetPivot()
-	local lowestY = get_instance_lowest_y(horseVisual)
+	-- A skinned rig can move its visible hooves relative to the MeshPart. Its
+	-- Bone positions are therefore the correct ground reference while mounted.
+	local lowestY = get_hoof_bone_lowest_y(horseVisual) or get_instance_lowest_y(horseVisual)
 	if not lowestY then
 		return 0
 	end
@@ -163,7 +189,10 @@ function HorseMountGeometry.buildSeatOffset(horseVisual)
 	local boxOffset = pivot:ToObjectSpace(boxCFrame)
 
 	return CFrame.new(
-		boxOffset.Position.X + (HorseMountConfig.SeatSideOffset or 0),
+		-- The rig pivot is the stable left/right center. Bounding boxes can be
+		-- asymmetrical (for example, due to a pose or accessories), so using their
+		-- X center causes the rider to sit beside some horses.
+		HorseMountConfig.SeatSideOffset or 0,
 		boxSize.Y * HorseMountConfig.SeatHeightScale,
 		boxOffset.Position.Z + (boxSize.Z * HorseMountConfig.SeatBackwardScale)
 	)

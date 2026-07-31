@@ -27,6 +27,7 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 local CONTROL_ACTION_NAME = "HorseRaceLockControls"
 local RACE_INVITE_NOTIFICATION_ID = "HorseRaceInvite"
 local HORSESHOE_ICON = "rbxassetid://113664849235987"
+local WAITING_PLAYERS_TEXT = "Waiting Players"
 local requestInFlight = false
 local rowFrames = {}
 local selectedHorseId = nil
@@ -83,6 +84,58 @@ local raceVisualContext = {
 local function extract_rotation(cframe) return CFrame.fromMatrix(Vector3.zero, cframe.XVector, cframe.YVector, cframe.ZVector) end
 
 local function format_countdown(seconds) local clamped = math.max(0, math.floor(seconds + 0.999)); return ("%02d:%02d"):format(math.floor(clamped / 60), clamped % 60) end
+
+local function get_horizontal_unit_direction(direction, fallback)
+	if typeof(direction) ~= "Vector3" or direction.Magnitude <= 0.001 then
+		direction = fallback
+	end
+
+	if typeof(direction) ~= "Vector3" or direction.Magnitude <= 0.001 then
+		return Vector3.new(0, 0, -1)
+	end
+
+	local horizontalDirection = Vector3.new(direction.X, 0, direction.Z)
+	if horizontalDirection.Magnitude <= 0.001 then
+		return direction.Unit
+	end
+
+	return horizontalDirection.Unit
+end
+
+local function get_track_progress_direction(fallbackCFrame)
+	local raceFolder = Workspace:FindFirstChild("Race")
+	local positionsFolder = raceFolder and raceFolder:FindFirstChild("Positions")
+	local startSlot = positionsFolder and (positionsFolder:FindFirstChild("1") or positionsFolder:FindFirstChild("01"))
+
+	if not startSlot and positionsFolder then
+		local slots = {}
+		for _, child in ipairs(positionsFolder:GetChildren()) do
+			if child:IsA("BasePart") then
+				slots[#slots + 1] = child
+			end
+		end
+
+		table.sort(slots, function(a, b)
+			local aValue = tonumber(a.Name)
+			local bValue = tonumber(b.Name)
+
+			if aValue and bValue then
+				return aValue < bValue
+			end
+
+			return a.Name < b.Name
+		end)
+
+		startSlot = slots[1]
+	end
+
+	local fallbackDirection = typeof(fallbackCFrame) == "CFrame" and -fallbackCFrame.RightVector or nil
+	if startSlot and startSlot:IsA("BasePart") then
+		return get_horizontal_unit_direction(-startSlot.CFrame.ZVector, fallbackDirection)
+	end
+
+	return get_horizontal_unit_direction(fallbackDirection)
+end
 
 local function hide_race_invite_notification()
 	Notifications.HideDialogue(RACE_INVITE_NOTIFICATION_ID)
@@ -362,15 +415,73 @@ local function render_player_viewport(viewport, userId)
 	characterClone.Parent = worldModel
 	worldModel.Parent = viewport
 
+	local head = characterClone:FindFirstChild("Head", true)
+	if not head or not head:IsA("BasePart") then
+		characterClone:Destroy()
+		return
+	end
+
+	local keptBodyPartNames = {
+		Head = true,
+		UpperTorso = true,
+		LowerTorso = true,
+		Torso = true,
+	}
+	local keptBodyParts = {}
+	for _, descendant in ipairs(characterClone:GetDescendants()) do
+		if descendant:IsA("BasePart") and keptBodyPartNames[descendant.Name] then
+			keptBodyParts[descendant] = true
+		end
+	end
+
+	for _, accessory in ipairs(characterClone:GetChildren()) do
+		if accessory:IsA("Accessory") then
+			local handle = accessory:FindFirstChild("Handle")
+			local isKeptAccessory = false
+			if handle then
+				for _, child in ipairs(handle:GetChildren()) do
+					if child:IsA("Attachment") then
+						for bodyPart in pairs(keptBodyParts) do
+							if bodyPart:FindFirstChild(child.Name) then
+								isKeptAccessory = true
+								break
+							end
+						end
+					elseif child:IsA("Weld") and (keptBodyParts[child.Part0] or keptBodyParts[child.Part1]) then
+						isKeptAccessory = true
+					end
+
+					if isKeptAccessory then
+						break
+					end
+				end
+			end
+
+			if not isKeptAccessory then
+				accessory:Destroy()
+			end
+		end
+	end
+
+	for _, descendant in ipairs(characterClone:GetDescendants()) do
+		if descendant:IsA("BasePart")
+			and not keptBodyPartNames[descendant.Name]
+			and not descendant:FindFirstAncestorWhichIsA("Accessory")
+		then
+			descendant:Destroy()
+		end
+	end
+
 	local boxCFrame, boxSize = characterClone:GetBoundingBox()
 	local boxOffset = characterClone:GetPivot():ToObjectSpace(boxCFrame)
 	characterClone:PivotTo(CFrame.new(0, boxSize.Y * 0.5, 0) * boxOffset:Inverse())
 	boxCFrame, boxSize = characterClone:GetBoundingBox()
 
-	local focus = boxCFrame.Position + Vector3.new(0, boxSize.Y * 0.08, 0)
+	local focus = head.Position + Vector3.new(0, head.Size.Y * 0.03, 0)
+	local distance = math.max(3.8, head.Size.Y * 3.4, boxSize.Y * 0.9)
 	local camera = Instance.new("Camera")
-	camera.FieldOfView = 34
-	camera.CFrame = CFrame.lookAt(focus + Vector3.new(boxSize.X * 0.34, boxSize.Y * 0.08, -math.max(5.8, boxSize.Y * 1.7)), focus)
+	camera.FieldOfView = 30
+	camera.CFrame = CFrame.lookAt(focus + Vector3.new(0, head.Size.Y * 0.02, -distance), focus)
 	camera.Parent = viewport
 	viewport.BackgroundTransparency = 1
 	viewport.Ambient = Color3.fromRGB(210, 210, 210)
@@ -866,9 +977,13 @@ update_dynamic_text = function()
 		elapsed = (state.Result.Winner.FinishTimeMs or 0) / 1000
 	end
 
-	local displayTime = state.Phase == "Countdown"
-		and format_start_countdown(state.CountdownDeadline - os.clock())
-		or format_race_time(elapsed)
+	local displayTime = format_race_time(elapsed)
+	if state.Phase == "Queue" then
+		displayTime = WAITING_PLAYERS_TEXT
+	elseif state.Phase == "Countdown" then
+		displayTime = format_start_countdown(state.CountdownDeadline - os.clock())
+	end
+
 	set_text(ui.TimeTX, displayTime)
 	set_text(ui.TimeShadowTX, displayTime)
 end
@@ -1096,13 +1211,10 @@ RunService.RenderStepped:Connect(function(deltaTime)
 				)
 			end
 
-			local basePosition = state.CameraBaseCFrame.Position
+			local progressDirection = get_track_progress_direction(state.CameraBaseCFrame)
+			local cameraPosition = state.CameraBaseCFrame.Position + (progressDirection * state.CameraProgress)
 			camera.CameraType = Enum.CameraType.Scriptable
-			camera.CFrame = CFrame.new(
-				basePosition.X,
-				basePosition.Y,
-				basePosition.Z - state.CameraProgress
-			) * state.CameraRotation
+			camera.CFrame = CFrame.new(cameraPosition) * state.CameraRotation
 		end
 	end
 

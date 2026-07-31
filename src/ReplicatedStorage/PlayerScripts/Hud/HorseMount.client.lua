@@ -85,6 +85,8 @@ local mountMovementSound = nil
 local stableMountPromptAttachments = {}
 local stableMountPromptConnections = {}
 local stableMountPromptCharacterConnections = {}
+local mountTransitionCollisionStates = {}
+local mountTransitionCollisionToken = 0
 local riderAnimationState = {
 	Character = nil,
 	Humanoid = nil,
@@ -127,6 +129,36 @@ local function unbind_dismount_action()
 end
 
 local function get_default_camera_subject() return localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid") or nil end
+
+local function disable_character_collisions_for_mount_transition()
+	mountTransitionCollisionToken += 1
+	table.clear(mountTransitionCollisionStates)
+
+	local character = localPlayer.Character
+	if not character then
+		return
+	end
+
+	for _, descendant in ipairs(character:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			mountTransitionCollisionStates[descendant] = descendant.CanCollide
+			descendant.CanCollide = false
+		end
+	end
+
+	return mountTransitionCollisionToken
+end
+
+local function restore_character_collisions_after_failed_mount()
+	for part, canCollide in pairs(mountTransitionCollisionStates) do
+		if part and part.Parent then
+			part.CanCollide = canCollide
+		end
+	end
+
+	table.clear(mountTransitionCollisionStates)
+	mountTransitionCollisionToken += 1
+end
 
 local function normalize_animation_id(animationId)
 	if type(animationId) ~= "string" or animationId == "" then
@@ -783,8 +815,32 @@ local function get_instance_lowest_y(instance)
 	return lowestY
 end
 
+local function get_hoof_bone_lowest_y(instance)
+	local lowestY = math.huge
+	local foundHoofBone = false
+
+	for _, descendant in ipairs(instance:GetDescendants()) do
+		if descendant:IsA("Bone") then
+			local boneName = string.lower(descendant.Name)
+			local isHoofBone = string.find(boneName, "hoof", 1, true)
+				or string.find(boneName, "foot", 1, true)
+				or boneName == "leg_1"
+				or boneName == "leg_2"
+				or boneName == "leg_3"
+				or boneName == "leg_4"
+
+			if isHoofBone then
+				foundHoofBone = true
+				lowestY = math.min(lowestY, descendant.WorldPosition.Y)
+			end
+		end
+	end
+
+	return foundHoofBone and lowestY or nil
+end
+
 local function get_ground_offset(instance)
-	local lowestY = get_instance_lowest_y(instance)
+	local lowestY = get_hoof_bone_lowest_y(instance) or get_instance_lowest_y(instance)
 	if not lowestY then
 		return 0
 	end
@@ -1434,6 +1490,8 @@ sync_mount_state_from_server = function(statePayload)
 	mountedState.HorseName = mounted and statePayload.HorseName or nil
 
 	if mounted then
+		mountTransitionCollisionToken += 1
+		table.clear(mountTransitionCollisionStates)
 		bind_dismount_action()
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
@@ -1450,6 +1508,8 @@ sync_mount_state_from_server = function(statePayload)
 
 		set_local_rider_mode("Idle")
 	elseif wasMounted then
+		mountTransitionCollisionToken += 1
+		table.clear(mountTransitionCollisionStates)
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
 		reset_local_prediction()
@@ -1508,6 +1568,7 @@ request_mount = function(horseId)
 		clear_transition_root_targets()
 		cancel_camera_transition()
 		stop_local_rider_tracks(0.08)
+		restore_character_collisions_after_failed_mount()
 		restore_camera()
 		refresh_stable_mount_prompts()
 	end
@@ -1542,6 +1603,8 @@ end
 
 localPlayer.CharacterRemoving:Connect(function()
 	disconnect_stable_mount_prompt_character_connections()
+	mountTransitionCollisionToken += 1
+	table.clear(mountTransitionCollisionStates)
 	clear_local_rider_animation_state()
 	sync_mount_state_from_server({
 		Mounted = false,
@@ -1593,6 +1656,7 @@ Net.Event.HorseMountState:Connect(function(payload)
 			mountedState.CameraYaw = payload.CameraYaw
 		end
 
+		local collisionToken = disable_character_collisions_for_mount_transition()
 		local rootPart = get_character_root_part()
 		mountedState.TransitionMode = "Mounting"
 		mountedState.TransitionStartRootCFrame = typeof(payload.StartCFrame) == "CFrame"
@@ -1607,6 +1671,11 @@ Net.Event.HorseMountState:Connect(function(payload)
 			duration,
 			payload.TargetCFrame
 		)
+		task.delay(duration + 0.5, function()
+			if collisionToken == mountTransitionCollisionToken and not mountedState.Active then
+				restore_character_collisions_after_failed_mount()
+			end
+		end)
 		set_stable_mount_prompts_enabled(false)
 	elseif payload.Kind == "Mounted" and payload.State then
 		sync_mount_state_from_server(payload.State)

@@ -13,6 +13,7 @@ local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))
 local HorseMountGeometry = require(script.Parent:WaitForChild("HorseMountGeometry"))
+local HorseService = require(script.Parent:WaitForChild("HorseService"))
 
 local PLOT_VALUE_NAME = ToolDictionary.PlotValueName
 local HORSE_FOLDER_NAME = ToolDictionary.HorseFolderName
@@ -253,7 +254,7 @@ local function move_visual_to_stable(player: Player, horseId: string, visual: In
 
 	local horsePosition = slotFolder:FindFirstChild(HORSE_POSITION_NAME)
 	if horsePosition and horsePosition:IsA("BasePart") then
-		visual:PivotTo(horsePosition.CFrame)
+		HorseService.PositionVisualHorseInStable(visual, horsePosition)
 	end
 
 	return true

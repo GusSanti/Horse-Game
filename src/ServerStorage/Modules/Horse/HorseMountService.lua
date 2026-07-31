@@ -144,6 +144,14 @@ local function get_visual_base_parts(horseVisual)
 	return baseParts
 end
 
+local function disable_horse_transition_collisions(baseParts)
+	for _, basePart in ipairs(baseParts) do
+		basePart.CanCollide = false
+		basePart.CanTouch = false
+		basePart.CanQuery = false
+	end
+end
+
 local function build_angle_y(cframe)
 	local lookVector = cframe.LookVector
 	return math.atan2(-lookVector.X, -lookVector.Z)
@@ -1224,6 +1232,9 @@ local function mount_player(player, payload)
 	local horseSummary = build_horse_summary(horse)
 	local horseState = capture_horse_state(horseVisual, baseParts)
 	local characterState = capture_character_state(character, humanoid)
+	-- The client begins the hop-on movement as soon as it receives Mounting.
+	-- Disable the horse colliders first so that movement cannot push the horse.
+	disable_horse_transition_collisions(baseParts)
 	local groundOffset = get_ground_offset(horseVisual)
 	local seatOffset = build_seat_offset(horseVisual)
 	local playerLowestY = get_character_lowest_y(character, rootPart)

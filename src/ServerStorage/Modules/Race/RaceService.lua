@@ -20,14 +20,30 @@ local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseService = require(HorseModules:WaitForChild("HorseService"))
 local InventoryService = require(InventoryModules:WaitForChild("InventoryServer"))
 local QuestService = require(QuestModules:WaitForChild("QuestService"))
-local RaceStateEvent = Net.Event.RaceState
-local RaceActionFunction = Net.Function.RaceAction
 
 local RaceService = {}
 
 local initialized = false
 local activeRound = nil
 local hasWarnedAboutTrack = false
+local raceStateEvent = nil
+local raceActionFunction = nil
+
+local function get_race_state_event()
+	if not raceStateEvent then
+		raceStateEvent = Net.Event.RaceState
+	end
+
+	return raceStateEvent
+end
+
+local function get_race_action_function()
+	if not raceActionFunction then
+		raceActionFunction = Net.Function.RaceAction
+	end
+
+	return raceActionFunction
+end
 
 local HORSE_COLORS = {
 	american_paint_horse = {
@@ -238,7 +254,7 @@ local function grant_placement_reward(participant, reward)
 end
 
 local function broadcast_state(payload)
-	RaceStateEvent:FireAll(payload)
+	get_race_state_event():FireAll(payload)
 end
 
 local function broadcast_queue_update(round)
@@ -657,7 +673,7 @@ local function create_participant(round, player, horseSummary)
 		SegmentStartedAt = 0,
 		PartOffsets = capture_part_offsets(model),
 		ActiveTweens = {},
-		IntroTag = create_intro_tag(slot, player),
+		IntroTag = nil,
 		IsRemoved = false,
 	}
 
@@ -915,7 +931,7 @@ function RaceService.SyncPlayer(player)
 		return
 	end
 
-	RaceStateEvent:Fire(player, {
+	get_race_state_event():Fire(player, {
 		Kind = "InviteOpened",
 		RoundId = round.Id,
 		SecondsRemaining = math.max(0, round.InviteEndsAt - os.clock()),
@@ -927,7 +943,7 @@ function RaceService.SyncPlayer(player)
 
 	local participant = get_round_participant(round, player)
 	if participant then
-		RaceStateEvent:Fire(player, {
+		get_race_state_event():Fire(player, {
 			Kind = "QueueUpdated",
 			RoundId = round.Id,
 			ParticipantCount = #get_live_participants(round),
@@ -1112,7 +1128,7 @@ function RaceService.Init()
 		return
 	end
 
-	RaceActionFunction:Respond(function(player, payload)
+	get_race_action_function():Respond(function(player, payload)
 		return RaceService.HandleAction(player, payload)
 	end)
 

@@ -9,6 +9,7 @@ local CAMERA_R15_HEAD_OFFSET = Vector3.new(0, 1.5, 0)
 local CAMERA_R15_HEAD_OFFSET_NO_SCALING = Vector3.new(0, 2, 0)
 local CAMERA_HUMANOID_ROOT_PART_SIZE = Vector3.new(2, 2, 1)
 local CAMERA_SEAT_OFFSET = Vector3.new(0, 5, 0)
+local FIRST_PERSON_DISTANCE_THRESHOLD = 1
 
 local function build_angle_y(cframe)
 	local lookVector = cframe.LookVector
@@ -527,6 +528,42 @@ function HorseMountCamera:releaseCameraAfterDismount()
 	self.previousFieldOfView = nil
 end
 
+function HorseMountCamera:leaveFirstPersonForMount(camera)
+	local cameras = self:getPlayerCameras()
+	local activeCameraController = cameras and cameras.activeCameraController
+	local isFirstPerson = self.localPlayer.CameraMode == Enum.CameraMode.LockFirstPerson
+
+	if not isFirstPerson and activeCameraController then
+		local success, subjectDistance = pcall(function()
+			return activeCameraController:GetCameraToSubjectDistance()
+		end)
+		isFirstPerson = success and type(subjectDistance) == "number"
+			and subjectDistance <= FIRST_PERSON_DISTANCE_THRESHOLD
+	end
+
+	if not isFirstPerson then
+		return
+	end
+
+	self.localPlayer.CameraMode = Enum.CameraMode.Classic
+
+	local thirdPersonDistance = math.max(
+		self.localPlayer.CameraMinZoomDistance,
+		self.config.CameraRestoreBackOffset or 10
+	)
+	if activeCameraController then
+		pcall(function()
+			activeCameraController:SetCameraToSubjectDistance(thirdPersonDistance)
+		end)
+	end
+
+	local subjectPosition = get_camera_subject_position(camera.CameraSubject)
+	if subjectPosition then
+		local lookVector = camera.CFrame.LookVector
+		camera.CFrame = CFrame.lookAt(subjectPosition - (lookVector * thirdPersonDistance), subjectPosition)
+	end
+end
+
 function HorseMountCamera:prepareCameraForMount()
 	local camera = Workspace.CurrentCamera
 	if not camera then
@@ -534,6 +571,7 @@ function HorseMountCamera:prepareCameraForMount()
 	end
 
 	self:cancelCameraRestore()
+	self:leaveFirstPersonForMount(camera)
 	if self.previousCameraType == nil then
 		self.previousCameraType = camera.CameraType
 		self.previousCameraSubject = camera.CameraSubject

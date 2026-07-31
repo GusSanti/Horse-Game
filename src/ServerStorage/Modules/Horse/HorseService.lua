@@ -527,6 +527,32 @@ local function get_instance_lowest_y(instance: Instance): number?
 end
 
 local function get_visible_instance_lowest_y(instance: Instance): number?
+	local lowestHoofBoneY = math.huge
+	local foundHoofBone = false
+
+	for _, descendant: Instance in instance:GetDescendants() do
+		if descendant:IsA("Bone") then
+			local boneName = string.lower(descendant.Name)
+			local isHoofBone = string.find(boneName, "hoof", 1, true)
+				or string.find(boneName, "foot", 1, true)
+				or boneName == "leg_1"
+				or boneName == "leg_2"
+				or boneName == "leg_3"
+				or boneName == "leg_4"
+
+			if isHoofBone then
+				foundHoofBone = true
+				lowestHoofBoneY = math.min(lowestHoofBoneY, descendant.WorldPosition.Y)
+			end
+		end
+	end
+
+	-- Skinned meshes do not update their BasePart bounds when their root Bone
+	-- moves. Hoof Bones therefore reflect the visible feet more accurately.
+	if foundHoofBone then
+		return lowestHoofBoneY
+	end
+
 	if instance:IsA("BasePart") then
 		if instance.Transparency < 1 then
 			return get_base_part_lowest_y(instance)
@@ -696,6 +722,16 @@ local function position_visual_horse(visualHorse: Instance, horsePosition: BaseP
 	visualHorse:PivotTo(currentPivot + Vector3.new(0, heightOffset, 0))
 end
 
+function HorseService.PositionVisualHorseInStable(visualHorse: Instance, horsePosition: BasePart): ()
+	-- This helper is also used when a free horse returns to its stall, so both
+	-- creation and return paths place its visible hooves on the stable floor.
+	horsePosition.Transparency = 1
+	horsePosition.CanCollide = false
+	horsePosition.CanTouch = false
+	horsePosition.CanQuery = false
+	position_visual_horse(visualHorse, horsePosition)
+end
+
 local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instance?, string)
 	clear_visual_horse_from_slot(slotFolder)
 
@@ -714,7 +750,7 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 	visualHorse.Parent = slotFolder
 
 	if visualHorse:IsA("Model") or visualHorse:IsA("BasePart") then
-		position_visual_horse(visualHorse, horsePosition)
+		HorseService.PositionVisualHorseInStable(visualHorse, horsePosition)
 		HorseSaddleVisualService.Sync(visualHorse, horse)
 
 		return visualHorse, "Created"
@@ -744,7 +780,7 @@ local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 	if #visualHorses == 1 and is_visual_horse_current(visualHorses[1], horse) then
 		apply_visual_horse_metadata(visualHorses[1], horse)
 		if horsePosition then
-			position_visual_horse(visualHorses[1], horsePosition)
+			HorseService.PositionVisualHorseInStable(visualHorses[1], horsePosition)
 		end
 		HorseSaddleVisualService.Sync(visualHorses[1], horse)
 		return
