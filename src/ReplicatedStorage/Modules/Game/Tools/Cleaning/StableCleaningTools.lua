@@ -3,7 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 
-local StableCleaningConfig = require(GameData:WaitForChild("StableCleaningConfig"))
+local StableCleaningConfig = require(GameData:WaitForChild("Horse"):WaitForChild("StableCleaningConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 
 local definitions = {}

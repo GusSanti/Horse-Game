@@ -4,7 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
-local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
+local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 
 local HorseRaceVisuals = {}

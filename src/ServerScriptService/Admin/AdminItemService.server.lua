@@ -10,7 +10,7 @@ local HorseModules = ServerModules:WaitForChild("Horse")
 
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
-local HorseStatusService = require(Utility:WaitForChild("HorseStatusService"))
+local HorseStatusService = require(Utility:WaitForChild("Horse"):WaitForChild("HorseStatusService"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local AdminAccessService = require(AdminModules:WaitForChild("AdminAccessService"))
 local HorseRouletteService = require(HorseModules:WaitForChild("HorseRouletteService"))

@@ -3,7 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 
-local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 
 local HorseEquipmentUtility = {}

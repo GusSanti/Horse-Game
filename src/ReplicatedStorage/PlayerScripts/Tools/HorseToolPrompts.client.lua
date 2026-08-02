@@ -146,7 +146,7 @@ local function get_client_handler(definition): any
 		return cachedHandlers[clientHandlerName]
 	end
 
-	local handlerModule = clientFolder:FindFirstChild(clientHandlerName)
+	local handlerModule = clientFolder:FindFirstChild(clientHandlerName, true)
 	if not handlerModule or not handlerModule:IsA("ModuleScript") then
 		return nil
 	end

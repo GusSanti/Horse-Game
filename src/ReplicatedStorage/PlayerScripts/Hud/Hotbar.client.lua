@@ -13,7 +13,7 @@ local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
-local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
+local HorseEquipmentUtility = require(Utility:WaitForChild("Horse"):WaitForChild("HorseEquipmentUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 
 local localPlayer = Players.LocalPlayer

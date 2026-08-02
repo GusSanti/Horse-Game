@@ -9,7 +9,7 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
-local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
+local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 
 local DYNAMIC_ATTRIBUTE = "HorseViewportDynamic"

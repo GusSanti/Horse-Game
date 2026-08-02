@@ -25,11 +25,11 @@ local STABLE_GROUND_MAX_RAYCAST_HITS = 32
 
 ------------------//VARIABLES
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
-local HorseBondService = require(Utility:WaitForChild("HorseBondService"))
-local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
-local HorseStatusService = require(Utility:WaitForChild("HorseStatusService"))
+local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
+local HorseBondService = require(Utility:WaitForChild("Horse"):WaitForChild("HorseBondService"))
+local HorseEquipmentUtility = require(Utility:WaitForChild("Horse"):WaitForChild("HorseEquipmentUtility"))
+local HorseStatusService = require(Utility:WaitForChild("Horse"):WaitForChild("HorseStatusService"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))

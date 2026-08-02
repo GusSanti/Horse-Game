@@ -9,7 +9,7 @@ local playerScripts: PlayerScripts = localPlayer:WaitForChild("PlayerScripts")
 local sourceFolder: Folder = ReplicatedStorage:WaitForChild("PlayerScripts")
 local modulesFolder = ReplicatedStorage:WaitForChild("Modules")
 local gameDataFolder = modulesFolder:WaitForChild("GameData")
-local HorseMountConfig = require(gameDataFolder:WaitForChild("HorseMountConfig"))
+local HorseMountConfig = require(gameDataFolder:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 
 local PRELOAD_ANIMATION_IDS = {
 	HorseMountConfig.PlayerHopOnAnimationId,

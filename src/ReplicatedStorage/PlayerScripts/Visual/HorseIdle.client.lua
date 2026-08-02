@@ -13,7 +13,7 @@ local dictionary: Folder = modules:WaitForChild("Dictionary")
 local gameData: Folder = modules:WaitForChild("GameData")
 
 local ToolDictionary = require(dictionary:WaitForChild("ToolDictionary"))
-local HorseMountConfig = require(gameData:WaitForChild("HorseMountConfig"))
+local HorseMountConfig = require(gameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 
 local PLOT_VALUE_NAME: string = ToolDictionary.PlotValueName
 local HORSE_FOLDER_NAME: string = ToolDictionary.HorseFolderName

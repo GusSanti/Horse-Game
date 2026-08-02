@@ -9,7 +9,7 @@ local Utility: Folder = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
-local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
 
 local SOAP_ITEM_ID = "soap"
 local MANAGED_TOOL_ATTRIBUTE = "InventoryManaged"

@@ -7,7 +7,7 @@ local GameData = Modules:WaitForChild("GameData")
 local GameModules = Modules:WaitForChild("Game")
 
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
-local StableCleaningConfig = require(GameData:WaitForChild("StableCleaningConfig"))
+local StableCleaningConfig = require(GameData:WaitForChild("Horse"):WaitForChild("StableCleaningConfig"))
 local ToolRegistry = require(GameModules:WaitForChild("Tools"):WaitForChild("Registry"))
 
 local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName)

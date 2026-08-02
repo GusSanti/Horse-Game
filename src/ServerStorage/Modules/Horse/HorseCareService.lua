@@ -6,9 +6,9 @@ local Utility = Modules:WaitForChild("Utility")
 local ServerModules = script.Parent.Parent
 
 local CareItemCatalog = require(GameData:WaitForChild("CareItemCatalog"))
-local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
-local StableCleaningConfig = require(GameData:WaitForChild("StableCleaningConfig"))
+local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
+local StableCleaningConfig = require(GameData:WaitForChild("Horse"):WaitForChild("StableCleaningConfig"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))

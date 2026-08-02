@@ -4,6 +4,7 @@ local RunService: RunService = game:GetService("RunService")
 
 ------------------//CONSTANTS
 local localPlayer: Player = Players.LocalPlayer
+local PLAYER_BRUSH_ANIMATION_ID = "rbxassetid://99003220029388"
 local HORSE_BRUSH_ANIMATION_ID = "rbxassetid://294893849"
 
 ------------------//VARIABLES
@@ -110,6 +111,14 @@ local function stop_track(track: AnimationTrack?): ()
 	end)
 end
 
+local function destroy_animation(animation: Animation?): ()
+	if not animation then
+		return
+	end
+
+	animation:Destroy()
+end
+
 local function get_instance_pivot(instance: Instance): CFrame
 	if instance:IsA("Model") or instance:IsA("BasePart") then
 		return instance:GetPivot()
@@ -169,10 +178,10 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 		session.hideTask()
 	end
 
-	if session.animation then
-		session.animation:Destroy()
-		session.animation = nil
-	end
+	destroy_animation(session.playerAnimation)
+	destroy_animation(session.horseAnimation)
+	session.playerAnimation = nil
+	session.horseAnimation = nil
 
 	if type(session.finishInteraction) == "function" then
 		session.finishInteraction(shouldRefreshPrompts)
@@ -237,8 +246,11 @@ local function start_session(context): boolean
 		savedRootAnchored = rootPart.Anchored
 	end
 
-	local animation = Instance.new("Animation")
-	animation.AnimationId = HORSE_BRUSH_ANIMATION_ID
+	local playerAnimation = Instance.new("Animation")
+	playerAnimation.AnimationId = PLAYER_BRUSH_ANIMATION_ID
+
+	local horseAnimation = Instance.new("Animation")
+	horseAnimation.AnimationId = HORSE_BRUSH_ANIMATION_ID
 
 	local session = {
 		character = character,
@@ -252,7 +264,8 @@ local function start_session(context): boolean
 		updateTask = context.updateTask,
 		hideTask = context.hideTask,
 		taskText = context.taskText or "Brushing your horse...",
-		animation = animation,
+		playerAnimation = playerAnimation,
+		horseAnimation = horseAnimation,
 		connections = {},
 		finishing = false,
 		closed = false,
@@ -267,8 +280,8 @@ local function start_session(context): boolean
 		savedRootAnchored = savedRootAnchored,
 	}
 
-	session.playerTrack = load_animation_track(playerAnimator, animation)
-	session.horseTrack = load_animation_track(get_model_animator(context.horseVisual), animation)
+	session.playerTrack = load_animation_track(playerAnimator, playerAnimation)
+	session.horseTrack = load_animation_track(get_model_animator(context.horseVisual), horseAnimation)
 
 	activeSession = session
 

@@ -6,9 +6,9 @@ local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
-local StableCleaningConfig = require(GameData:WaitForChild("StableCleaningConfig"))
+local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
+local StableCleaningConfig = require(GameData:WaitForChild("Horse"):WaitForChild("StableCleaningConfig"))
 local TableUtility = require(Utility:WaitForChild("TableUtility"))
 
 local DEFAULT_STATUS_MAX = 100

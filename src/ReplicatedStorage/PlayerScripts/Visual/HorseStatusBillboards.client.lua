@@ -14,11 +14,12 @@ local gameData: Folder = modules:WaitForChild("GameData")
 local utility: Folder = modules:WaitForChild("Utility")
 
 local DataUtility = require(utility:WaitForChild("DataUtility"))
-local HorseStatusBillboardConfig = require(gameData:WaitForChild("HorseStatusBillboardConfig"))
-local HorseBondService = require(utility:WaitForChild("HorseBondService"))
-local horseStatusModule = utility:WaitForChild("HorseStatusService", 10)
+local HorseStatusBillboardConfig = require(gameData:WaitForChild("Horse"):WaitForChild("HorseStatusBillboardConfig"))
+local HorseBondService = require(utility:WaitForChild("Horse"):WaitForChild("HorseBondService"))
+local horseFolder = utility:WaitForChild("Horse")
+local horseStatusModule = horseFolder:WaitForChild("HorseStatusService", 10)
 if not horseStatusModule then
-	warn("HorseStatusBillboards could not find ReplicatedStorage.Modules.Utility.HorseStatusService")
+	warn("HorseStatusBillboards could not find ReplicatedStorage.Modules.Utility.Horse.HorseStatusService")
 	return
 end
 

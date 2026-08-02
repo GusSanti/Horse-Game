@@ -42,8 +42,13 @@ local function build_cache(): ()
 	cachedDefinitions = {}
 	cachedToolNameMap = {}
 
-	for _, child: Instance in script.Parent:GetChildren() do
-		if child:IsA("ModuleScript") and child ~= script then
+	local clientFolder = script.Parent:FindFirstChild("Client")
+
+	for _, child: Instance in script.Parent:GetDescendants() do
+		if child:IsA("ModuleScript")
+			and child ~= script
+			and not (clientFolder and child:IsDescendantOf(clientFolder))
+		then
 			local loadedDefinition = require(child)
 
 			if type(loadedDefinition) == "table" and loadedDefinition.id ~= nil then

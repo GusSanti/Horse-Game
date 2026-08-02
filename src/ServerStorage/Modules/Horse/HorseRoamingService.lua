@@ -8,7 +8,7 @@ local Dictionary = Modules:WaitForChild("Dictionary")
 local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
-local HorseRoamingConfig = require(GameData:WaitForChild("HorseRoamingConfig"))
+local HorseRoamingConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseRoamingConfig"))
 local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))

@@ -6,8 +6,8 @@ local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
-local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
+local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
 
 local STATUS_ORDER = {
 	"Happiness",

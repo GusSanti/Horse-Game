@@ -11,7 +11,7 @@ local Utility = Modules:WaitForChild("Utility")
 local HorseModules = script.Parent
 
 local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
-local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
+local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 local Net = require(Libraries:WaitForChild("Net"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local HorseMountAnimation = require(HorseModules:WaitForChild("HorseMountAnimation"))
@@ -54,6 +54,8 @@ local HorseMountService = {}
 local initialized = false
 local activeMountsByPlayer = {}
 local playerConnections = {}
+local begin_mount_jump
+local end_mount_jump
 
 local function capture_character_state(character, humanoid) return HorseMountCharacter.captureCharacterState(character, humanoid, MOUNT_DISABLED_STATES) end
 local function apply_character_mount_state(character, humanoid) return HorseMountCharacter.applyCharacterMountState(character, humanoid, MOUNT_DISABLED_STATES) end
@@ -74,9 +76,10 @@ local return_horse_to_stable, get_ground_offset, get_character_lowest_y, get_hor
 	HorseMountGeometry.buildSeatOffset,
 	HorseMountGeometry.resolveGroundPosition
 
-local create_mount_animation_state, play_horse_idle_animation, play_player_mount_animation, play_player_dismount_animation, destroy_mount_animation_state, update_mount_animation_state, start_mount_animations, stop_mount_animations =
+local create_mount_animation_state, play_horse_idle_animation, play_horse_jump_animation, play_player_mount_animation, play_player_dismount_animation, destroy_mount_animation_state, update_mount_animation_state, start_mount_animations, stop_mount_animations =
 	HorseMountAnimation.createMountAnimationState,
 	HorseMountAnimation.playHorseIdleAnimation,
+	HorseMountAnimation.playHorseJumpAnimation,
 	HorseMountAnimation.playPlayerMountAnimation,
 	HorseMountAnimation.playPlayerDismountAnimation,
 	HorseMountAnimation.destroyMountAnimationState,
@@ -407,6 +410,7 @@ local function build_horse_summary(horse)
 			CanterSpeed = movement.CanterSpeed or 22,
 			SprintSpeed = movement.SprintSpeed or 26,
 			TurnRate = movement.TurnRate or 0.8,
+			Jump = movement.Jump or HorseMountConfig.HorseJumpBaseStat or 0.78,
 		},
 	}
 end
@@ -922,6 +926,7 @@ local function begin_dismount_transition(player, reason)
 	mountState.InputX = 0
 	mountState.InputZ = 0
 	mountState.Sprinting = false
+	end_mount_jump(mountState)
 	play_horse_idle_animation(mountState.AnimationState)
 	play_player_dismount_animation(mountState.AnimationState)
 	set_horse_run_dust_enabled(mountState.DustEmitters, false)
@@ -964,6 +969,60 @@ local function build_mount_payload(mountState)
 		HorseName = mountState.HorseSummary.Name,
 		CatalogId = mountState.HorseSummary.CatalogId,
 	}
+end
+
+local function get_mount_jump_takeoff_velocity(mountState, chargeAlpha)
+	local movement = mountState and mountState.HorseSummary and mountState.HorseSummary.Movement or nil
+	local baseJumpStat = math.max(tonumber(HorseMountConfig.HorseJumpBaseStat) or 0.78, 0.01)
+	local jumpStat = type(movement) == "table" and tonumber(movement.Jump) or baseJumpStat
+	local jumpScale = math.clamp((jumpStat or baseJumpStat) / baseJumpStat, 0.75, 1.35)
+	local minVelocity = HorseMountConfig.HorseJumpMinVelocity or 18
+	local maxVelocity = HorseMountConfig.HorseJumpMaxVelocity or 30
+	local baseVelocity = minVelocity + ((maxVelocity - minVelocity) * math.clamp(tonumber(chargeAlpha) or 0, 0, 1))
+	return baseVelocity * jumpScale
+end
+
+local function get_mount_jump_expected_air_seconds(verticalVelocity)
+	local gravity = math.max(tonumber(HorseMountConfig.HorseJumpGravity) or 58, 0.001)
+	local maxAirSeconds = math.max(HorseMountConfig.HorseJumpMaxAirSeconds or 1.35, 0.4)
+	local estimatedAirSeconds = (math.max(tonumber(verticalVelocity) or 0, 0) * 2) / gravity
+	return math.clamp(estimatedAirSeconds, 0.05, maxAirSeconds)
+end
+
+begin_mount_jump = function(mountState, chargeAlpha)
+	if not mountState then
+		return
+	end
+
+	local now = os.clock()
+	if now < (mountState.JumpCooldownEndsAt or 0) then
+		return
+	end
+
+	local clampedChargeAlpha = math.clamp(tonumber(chargeAlpha) or 0, 0, 1)
+	local takeoffVelocity = get_mount_jump_takeoff_velocity(mountState, clampedChargeAlpha)
+	local expectedAirSeconds = get_mount_jump_expected_air_seconds(takeoffVelocity)
+
+	mountState.IsJumping = true
+	mountState.JumpCooldownEndsAt = now + math.max(HorseMountConfig.HorseJumpCooldownSeconds or 0.9, 0)
+	mountState.JumpStartedAt = now
+	mountState.JumpExpectedAirSeconds = expectedAirSeconds
+	mountState.JumpAutoClearAt = now + math.max(math.min(expectedAirSeconds + 0.2, HorseMountConfig.HorseJumpMaxAirSeconds or 1.35), 0.4)
+	mountState.LastJumpChargeAlpha = clampedChargeAlpha
+
+	play_horse_jump_animation(mountState.AnimationState, expectedAirSeconds)
+	set_horse_run_dust_enabled(mountState.DustEmitters, false)
+end
+
+end_mount_jump = function(mountState)
+	if not mountState then
+		return
+	end
+
+	mountState.IsJumping = false
+	mountState.JumpAutoClearAt = 0
+	mountState.JumpStartedAt = 0
+	mountState.JumpExpectedAirSeconds = 0
 end
 
 send_unmounted_state = function(player, reason)
@@ -1129,6 +1188,13 @@ local function validate_mount_state(mountState)
 end
 
 local function update_mount(mountState, deltaTime)
+	if mountState.IsJumping == true then
+		local autoClearAt = mountState.JumpAutoClearAt or 0
+		if autoClearAt > 0 and os.clock() >= autoClearAt then
+			end_mount_jump(mountState)
+		end
+	end
+
 	if not mountState.RiderWeld or not mountState.RiderWeld.Parent then
 		convert_seat_to_rider_weld(mountState)
 	end
@@ -1138,7 +1204,7 @@ local function update_mount(mountState, deltaTime)
 	apply_mounted_humanoid_pose(mountState)
 	update_mount_animation_state(mountState)
 	update_horse_run_dust_anchors(mountState.DustAnchors)
-	set_horse_run_dust_enabled(mountState.DustEmitters, mountState.Sprinting)
+	set_horse_run_dust_enabled(mountState.DustEmitters, mountState.Sprinting and mountState.IsJumping ~= true)
 end
 
 local function mount_player(player, payload)
@@ -1404,6 +1470,12 @@ local function mount_player(player, payload)
 		InputZ = 0,
 		Sprinting = false,
 		LastMoveDirection = spawnRotation.LookVector,
+		IsJumping = false,
+		JumpCooldownEndsAt = 0,
+		JumpAutoClearAt = 0,
+		JumpStartedAt = 0,
+		JumpExpectedAirSeconds = 0,
+		LastJumpChargeAlpha = 0,
 	}
 	mountState.DustResources, mountState.DustEmitters, mountState.DustAnchors = create_horse_run_dust(horseVisual)
 
@@ -1658,6 +1730,14 @@ function HorseMountService.Init()
 
 		if is_finite_number(payload.CameraYaw) then
 			mountState.CameraYaw = payload.CameraYaw
+		end
+
+		if payload.JumpLanded == true then
+			end_mount_jump(mountState)
+		end
+
+		if payload.JumpRequested == true then
+			begin_mount_jump(mountState, payload.JumpChargeAlpha)
 		end
 	end)
 

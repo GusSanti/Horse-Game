@@ -3,7 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 
-local HorseMountConfig = require(GameData:WaitForChild("HorseMountConfig"))
+local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 
 local HorseMountAnimation = {}
 
@@ -130,6 +130,16 @@ local function stop_track(track, fadeTime)
 	end)
 end
 
+local function adjust_track_speed(track, speed)
+	if not track then
+		return
+	end
+
+	pcall(function()
+		track:AdjustSpeed(speed or 1)
+	end)
+end
+
 local function adjust_track_weight(track, weight, fadeTime)
 	if not track then
 		return
@@ -138,6 +148,39 @@ local function adjust_track_weight(track, weight, fadeTime)
 	pcall(function()
 		track:AdjustWeight(weight or 1, fadeTime or HorseMountConfig.AnimationFadeTime or 0.12)
 	end)
+end
+
+local function get_jump_track_speed(track, airDurationSeconds)
+	local animationLength = track and tonumber(track.Length) or nil
+	if not animationLength or animationLength <= 0 then
+		return 1
+	end
+
+	local targetDuration = math.max(tonumber(airDurationSeconds) or 0, 0.05)
+	return math.clamp(animationLength / targetDuration, 0.55, 1.8)
+end
+
+local function update_jump_track_speed(track, jumpStartedAt, airDurationSeconds)
+	if not track or track.IsPlaying ~= true then
+		return
+	end
+
+	local animationLength = tonumber(track.Length)
+	if not animationLength or animationLength <= 0 then
+		return
+	end
+
+	local targetDuration = math.max(tonumber(airDurationSeconds) or 0, 0.05)
+	local startedAt = tonumber(jumpStartedAt) or 0
+	if startedAt <= 0 then
+		adjust_track_speed(track, get_jump_track_speed(track, targetDuration))
+		return
+	end
+
+	local elapsed = math.max(0, os.clock() - startedAt)
+	local remainingTrack = math.max(animationLength - track.TimePosition, 0.03)
+	local remainingAir = math.max(targetDuration - elapsed, 0.05)
+	adjust_track_speed(track, math.clamp(remainingTrack / remainingAir, 0.55, 1.8))
 end
 
 local function is_mount_moving(mountState)
@@ -231,6 +274,12 @@ function HorseMountAnimation.createMountAnimationState(humanoid, horseVisual)
 		Enum.AnimationPriority.Action,
 		true
 	)
+	animationState.HorseJumpTrack, animationState.HorseJumpAnimation = load_animation_track(
+		horseAnimator,
+		HorseMountConfig.HorseJumpAnimationId,
+		Enum.AnimationPriority.Action4,
+		false
+	)
 
 	for _, animation in ipairs({
 		animationState.PlayerHopOnAnimation,
@@ -238,6 +287,7 @@ function HorseMountAnimation.createMountAnimationState(humanoid, horseVisual)
 		animationState.HorseIdleAnimation,
 		animationState.HorseWalkAnimation,
 		animationState.HorseRunAnimation,
+		animationState.HorseJumpAnimation,
 	}) do
 		if animation then
 			animationState.Resources[#animationState.Resources + 1] = animation
@@ -291,6 +341,20 @@ function HorseMountAnimation.playHorseIdleAnimation(animationState)
 	animationState.HorseMode = "Idle"
 end
 
+function HorseMountAnimation.playHorseJumpAnimation(animationState, airDurationSeconds)
+	if not animationState or not animationState.HorseJumpTrack then
+		return
+	end
+
+	stop_track(animationState.HorseJumpTrack, 0.02)
+	play_track(
+		animationState.HorseJumpTrack,
+		HorseMountConfig.HorseJumpAnimationFadeTime or 0.06,
+		1,
+		get_jump_track_speed(animationState.HorseJumpTrack, airDurationSeconds)
+	)
+end
+
 function HorseMountAnimation.destroyMountAnimationState(animationState)
 	if not animationState then
 		return
@@ -302,6 +366,7 @@ function HorseMountAnimation.destroyMountAnimationState(animationState)
 	stop_track(animationState.HorseIdleTrack)
 	stop_track(animationState.HorseWalkTrack)
 	stop_track(animationState.HorseRunTrack)
+	stop_track(animationState.HorseJumpTrack)
 	destroy_instances(animationState.Resources)
 end
 
@@ -309,6 +374,14 @@ function HorseMountAnimation.updateMountAnimationState(mountState)
 	local animationState = mountState and mountState.AnimationState
 	if not animationState then
 		return
+	end
+
+	if mountState.IsJumping == true then
+		update_jump_track_speed(
+			animationState.HorseJumpTrack,
+			mountState.JumpStartedAt,
+			mountState.JumpExpectedAirSeconds
+		)
 	end
 
 	local moving = is_mount_moving(mountState)

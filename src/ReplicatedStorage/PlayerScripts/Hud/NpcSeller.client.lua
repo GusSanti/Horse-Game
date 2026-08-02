@@ -10,7 +10,7 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local HorseEquipmentUtility = require(Utility:WaitForChild("HorseEquipmentUtility"))
+local HorseEquipmentUtility = require(Utility:WaitForChild("Horse"):WaitForChild("HorseEquipmentUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))

@@ -9,7 +9,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local QuestCatalog = require(GameData:WaitForChild("QuestCatalog"))
 local Trove = require(Libraries:WaitForChild("Trove"))
-local QuestClient = require(ClientModules:WaitForChild("QuestClient"))
+local QuestClient = require(ClientModules:WaitForChild("Quest"):WaitForChild("QuestClient"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 
 local localPlayer = Players.LocalPlayer

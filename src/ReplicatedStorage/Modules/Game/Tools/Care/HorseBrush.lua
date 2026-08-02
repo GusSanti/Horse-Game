@@ -12,7 +12,7 @@ local HORSE_BRUSH_ITEM_ID = "horse_brush"
 ------------------//VARIABLES
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local NatureCatalog = require(GameData:WaitForChild("NatureCatalog"))
+local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
 
 local horseBrush = {
 	id = HORSE_BRUSH_ITEM_ID,

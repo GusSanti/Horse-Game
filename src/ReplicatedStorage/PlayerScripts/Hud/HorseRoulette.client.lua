@@ -18,7 +18,7 @@ local Trove = require(Libraries:WaitForChild("Trove"))
 local HorseInteractionUi = require(HudModules:WaitForChild("HorseInteractionUi"))
 local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local HorseCatalog = require(GameData:WaitForChild("HorseCatalog"))
+local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
 local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 
 local MAIN_UI_NAMES = { "MainUI" }
