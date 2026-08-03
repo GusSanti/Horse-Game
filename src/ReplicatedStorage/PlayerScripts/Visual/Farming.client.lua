@@ -499,7 +499,7 @@ local function ensure_preview_part(): Part
 	part.CanQuery = false
 	part.CanTouch = false
 	part.Material = Enum.Material.Neon
-	part.Size = Vector3.new(2.4, 0.2, 2.4)
+	part.Size = FarmingUtility.PLANT_FOOTPRINT_SIZE
 	part.Transparency = 1
 	part.Parent = Workspace
 
@@ -577,11 +577,15 @@ local function update_seed_preview()
 		return
 	end
 
-	local placement = FarmingUtility.GetSoilPlacementData(raycastResult.Position)
-	local isValid = placement ~= nil
+	local placement = FarmingUtility.GetSoilPlacementData(raycastResult.Position, localPlayer, part.Size)
+	local isOccupied = false
+	if placement then
+		isOccupied = FarmingUtility.IsPlacementOccupied(placement, localPlayer.UserId)
+	end
+	local isValid = placement ~= nil and not isOccupied
 
 	if placement then
-		currentPlacement = placement
+		currentPlacement = if isValid then placement else nil
 		part.CFrame = placement.Soil.CFrame
 			* CFrame.new(
 				placement.LocalPoint.X,

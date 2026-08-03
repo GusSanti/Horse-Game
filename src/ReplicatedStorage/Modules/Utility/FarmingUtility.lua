@@ -10,12 +10,18 @@ local FarmingUtility = {}
 FarmingUtility.WATERING_TOOL_NAME = "Regadera"
 FarmingUtility.FARMING_ZONE_NAME = "FarmingZone"
 FarmingUtility.SOIL_NAME = "Soil"
+FarmingUtility.PLOT_VALUE_NAME = "Plot"
+FarmingUtility.FENCE_MODEL_NAME = "Fence"
+FarmingUtility.GARDEN_MODEL_NAME = "Garden"
+FarmingUtility.GARDEN_SOIL_NAME = "Union"
 FarmingUtility.FARM_FOLDER_NAME = "FarmPlants"
 FarmingUtility.STAGE_FOLDER_NAME = "StagePlants"
 FarmingUtility.FARMING_ITEM_ATTRIBUTE = "FarmingItemId"
 FarmingUtility.FARMING_CROP_ATTRIBUTE = "FarmingCropId"
 FarmingUtility.FARMING_KIND_ATTRIBUTE = "FarmingToolKind"
 FarmingUtility.FARMING_RARITY_ATTRIBUTE = "FarmingRarity"
+FarmingUtility.PLANT_FOOTPRINT_SIZE = Vector3.new(2.4, 0.2, 2.4)
+FarmingUtility.PLANT_FOOTPRINT_PADDING = 0.1
 FarmingUtility.MAX_STAGE = 4
 
 local function normalize_key(value): string?
@@ -64,6 +70,25 @@ local function get_nested_child(root: Instance?, pathParts): Instance?
 	end
 
 	return current
+end
+
+local function find_ancestor_named(instance: Instance, stopAt: Instance?, ancestorName: string): Instance?
+	local current = instance.Parent
+
+	while current and current ~= stopAt do
+		if current.Name == ancestorName then
+			return current
+		end
+
+		current = current.Parent
+	end
+
+	return nil
+end
+
+local function get_number_attribute(instance: Instance, attributeName: string): number?
+	local value = instance:GetAttribute(attributeName)
+	return if type(value) == "number" then value else nil
 end
 
 local function insert_unique_instance(instances, instance: Instance?)
@@ -303,8 +328,8 @@ function FarmingUtility.GetStageTemplate(cropDefinition, stage: number): Instanc
 	return nil
 end
 
-function FarmingUtility.GetFarmingZone(): Instance
-	return workspace:WaitForChild(FarmingUtility.FARMING_ZONE_NAME)
+function FarmingUtility.GetFarmingZone(): Instance?
+	return workspace:FindFirstChild(FarmingUtility.FARMING_ZONE_NAME)
 end
 
 function FarmingUtility.GetFarmFolder(createIfMissing: boolean?): Folder?
@@ -324,10 +349,98 @@ function FarmingUtility.GetFarmFolder(createIfMissing: boolean?): Folder?
 	return newFolder
 end
 
-function FarmingUtility.GetSoilParts(): { BasePart }
-	local soils = {}
+function FarmingUtility.GetPlayerPlot(player: Player?): Instance?
+	if not player then
+		return nil
+	end
 
-	for _, descendant in ipairs(FarmingUtility.GetFarmingZone():GetDescendants()) do
+	local plotValue = player:FindFirstChild(FarmingUtility.PLOT_VALUE_NAME)
+	if not plotValue or not plotValue:IsA("ObjectValue") then
+		return nil
+	end
+
+	local plot = plotValue.Value
+	return if plot and plot.Parent then plot else nil
+end
+
+function FarmingUtility.GetRelativePath(instance: Instance, ancestor: Instance?): string?
+	if not instance or not ancestor then
+		return nil
+	end
+
+	local parts = {}
+	local current = instance
+
+	while current and current ~= ancestor do
+		table.insert(parts, 1, current.Name)
+		current = current.Parent
+	end
+
+	if current ~= ancestor then
+		return nil
+	end
+
+	return table.concat(parts, "/")
+end
+
+function FarmingUtility.GetSoilId(soil: BasePart?, plot: Instance?): string?
+	if not soil then
+		return nil
+	end
+
+	return FarmingUtility.GetRelativePath(soil, plot) or soil.Name
+end
+
+function FarmingUtility.GetGardenSoilParts(plot: Instance?): { BasePart }
+	local soils = {}
+	if not plot then
+		return soils
+	end
+
+	for _, descendant in ipairs(plot:GetDescendants()) do
+		if descendant:IsA("BasePart") and descendant.Name == FarmingUtility.GARDEN_SOIL_NAME then
+			local garden = find_ancestor_named(descendant, plot, FarmingUtility.GARDEN_MODEL_NAME)
+			local fence = garden and find_ancestor_named(garden, plot, FarmingUtility.FENCE_MODEL_NAME)
+			if garden and fence then
+				table.insert(soils, descendant)
+			end
+		end
+	end
+
+	return soils
+end
+
+function FarmingUtility.GetPlayerSoilParts(player: Player?): { BasePart }
+	return FarmingUtility.GetGardenSoilParts(FarmingUtility.GetPlayerPlot(player))
+end
+
+function FarmingUtility.GetPlayerSoilPartById(player: Player?, soilId: string?): BasePart?
+	local plot = FarmingUtility.GetPlayerPlot(player)
+	local soils = FarmingUtility.GetGardenSoilParts(plot)
+
+	if type(soilId) == "string" and soilId ~= "" then
+		for _, soil in ipairs(soils) do
+			if FarmingUtility.GetSoilId(soil, plot) == soilId then
+				return soil
+			end
+		end
+	end
+
+	return if #soils == 1 then soils[1] else nil
+end
+
+function FarmingUtility.GetSoilParts(player: Player?): { BasePart }
+	if player then
+		return FarmingUtility.GetPlayerSoilParts(player)
+	end
+
+	local soils = {}
+	local farmingZone = FarmingUtility.GetFarmingZone()
+	if not farmingZone then
+		return soils
+	end
+
+	for _, descendant in ipairs(farmingZone:GetDescendants()) do
 		if descendant:IsA("BasePart") and descendant.Name == FarmingUtility.SOIL_NAME then
 			table.insert(soils, descendant)
 		end
@@ -336,20 +449,104 @@ function FarmingUtility.GetSoilParts(): { BasePart }
 	return soils
 end
 
-function FarmingUtility.GetSoilPlacementData(worldPosition: Vector3): { Soil: BasePart, LocalPoint: Vector3, WorldTopPosition: Vector3 }?
-	for _, soil in ipairs(FarmingUtility.GetSoilParts()) do
+function FarmingUtility.IsFootprintInsideSoil(soil: BasePart, localPoint: Vector3, footprintSize: Vector3?): boolean
+	local footprint = footprintSize or FarmingUtility.PLANT_FOOTPRINT_SIZE
+	local halfFootprintX = math.max(0, footprint.X) * 0.5
+	local halfFootprintZ = math.max(0, footprint.Z) * 0.5
+
+	return math.abs(localPoint.X) + halfFootprintX <= soil.Size.X * 0.5
+		and math.abs(localPoint.Z) + halfFootprintZ <= soil.Size.Z * 0.5
+end
+
+function FarmingUtility.FootprintsOverlap(
+	localPointA: Vector3,
+	footprintA: Vector3?,
+	localPointB: Vector3,
+	footprintB: Vector3?,
+	padding: number?
+): boolean
+	local sizeA = footprintA or FarmingUtility.PLANT_FOOTPRINT_SIZE
+	local sizeB = footprintB or FarmingUtility.PLANT_FOOTPRINT_SIZE
+	local extraPadding = math.max(0, tonumber(padding) or FarmingUtility.PLANT_FOOTPRINT_PADDING)
+	local overlapX = math.abs(localPointA.X - localPointB.X) < ((sizeA.X + sizeB.X) * 0.5 + extraPadding)
+	local overlapZ = math.abs(localPointA.Z - localPointB.Z) < ((sizeA.Z + sizeB.Z) * 0.5 + extraPadding)
+
+	return overlapX and overlapZ
+end
+
+function FarmingUtility.GetSoilPlacementData(
+	worldPosition: Vector3,
+	player: Player?,
+	footprintSize: Vector3?
+): { Soil: BasePart, SoilId: string?, LocalPoint: Vector3, WorldTopPosition: Vector3, FootprintSize: Vector3 }?
+	local plot = player and FarmingUtility.GetPlayerPlot(player) or nil
+	local footprint = footprintSize or FarmingUtility.PLANT_FOOTPRINT_SIZE
+
+	for _, soil in ipairs(FarmingUtility.GetSoilParts(player)) do
 		local localPoint = soil.CFrame:PointToObjectSpace(worldPosition)
 
-		if math.abs(localPoint.X) <= soil.Size.X * 0.5 and math.abs(localPoint.Z) <= soil.Size.Z * 0.5 then
+		if FarmingUtility.IsFootprintInsideSoil(soil, localPoint, footprint) then
+			local snappedLocalPoint = Vector3.new(localPoint.X, 0, localPoint.Z)
 			return {
 				Soil = soil,
-				LocalPoint = localPoint,
-				WorldTopPosition = FarmingUtility.GetWorldTopPosition(soil, localPoint),
+				SoilId = FarmingUtility.GetSoilId(soil, plot),
+				LocalPoint = snappedLocalPoint,
+				WorldTopPosition = FarmingUtility.GetWorldTopPosition(soil, snappedLocalPoint),
+				FootprintSize = footprint,
 			}
 		end
 	end
 
 	return nil
+end
+
+function FarmingUtility.IsPlacementOccupied(placement, ownerUserId: number?, ignoredPlantId: number?): (boolean, Instance?)
+	if not placement or not placement.LocalPoint then
+		return false, nil
+	end
+
+	local farmFolder = FarmingUtility.GetFarmFolder(false)
+	if not farmFolder then
+		return false, nil
+	end
+
+	local footprint = placement.FootprintSize or FarmingUtility.PLANT_FOOTPRINT_SIZE
+	local soilId = placement.SoilId
+
+	for _, child in ipairs(farmFolder:GetChildren()) do
+		local plantId = get_number_attribute(child, "FarmPlantId")
+		if plantId and plantId ~= ignoredPlantId then
+			local candidateOwnerUserId = get_number_attribute(child, "FarmPlantOwnerUserId")
+			if ownerUserId == nil or candidateOwnerUserId == ownerUserId then
+				local candidateSoilId = child:GetAttribute("FarmPlantSoilId")
+				local sameSoil = soilId == nil
+					or type(candidateSoilId) ~= "string"
+					or candidateSoilId == soilId
+
+				if sameSoil then
+					local localX = get_number_attribute(child, "FarmPlantLocalX")
+					local localZ = get_number_attribute(child, "FarmPlantLocalZ")
+					local footprintX = get_number_attribute(child, "FarmPlantFootprintX")
+					local footprintZ = get_number_attribute(child, "FarmPlantFootprintZ")
+
+					if localX and localZ then
+						local candidatePoint = Vector3.new(localX, 0, localZ)
+						local candidateFootprint = Vector3.new(
+							footprintX or FarmingUtility.PLANT_FOOTPRINT_SIZE.X,
+							footprint.Y,
+							footprintZ or FarmingUtility.PLANT_FOOTPRINT_SIZE.Z
+						)
+
+						if FarmingUtility.FootprintsOverlap(placement.LocalPoint, footprint, candidatePoint, candidateFootprint) then
+							return true, child
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return false, nil
 end
 
 function FarmingUtility.GetWorldTopPosition(soil: BasePart, localPoint: Vector3): Vector3

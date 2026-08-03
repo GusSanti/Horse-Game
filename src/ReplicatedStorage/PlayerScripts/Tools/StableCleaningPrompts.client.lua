@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local localPlayer = Players.LocalPlayer
@@ -15,10 +16,21 @@ local stableCleaningRemotes = gameplayRemotes:WaitForChild(StableCleaningConfig.
 local cleanDirtRemote = stableCleaningRemotes:WaitForChild(StableCleaningConfig.CleanRemoteName)
 local plotValue = localPlayer:WaitForChild("Plot")
 
+local CLEAN_ANIMATION_ID = "rbxassetid://118212823724658"
+local CLEAN_ANIMATION_FADE_SECONDS = 0.1
+local CLEAN_ANIMATION_FALLBACK_DURATION_SECONDS = 1.6
+local CLEAN_MOVE_REACHED_DISTANCE = 2.75
+local CLEAN_STAND_DISTANCE = 2.25
+local CLEAN_MOVE_TIMEOUT_PADDING_SECONDS = 1.5
+local CLEAN_MOVE_TIMEOUT_MIN_SECONDS = 2
+local CLEAN_MOVE_TIMEOUT_MAX_SECONDS = 8
+local PLAYER_MODULE_WAIT_SECONDS = 3
+
 local activePrompts = {}
 local connections = {}
 local refreshQueued = false
 local requestInFlight = false
+local playerControls = nil
 local queue_refresh
 
 local function disconnect_all()
@@ -55,6 +67,52 @@ local function get_equipped_cleaning_tool(): (Tool?, string?)
 	return nil, nil
 end
 
+local function get_player_controls()
+	if playerControls then
+		return playerControls
+	end
+
+	local playerScripts = localPlayer:FindFirstChild("PlayerScripts")
+		or localPlayer:WaitForChild("PlayerScripts", PLAYER_MODULE_WAIT_SECONDS)
+	if not playerScripts then
+		return nil
+	end
+
+	local playerModule = playerScripts:FindFirstChild("PlayerModule")
+		or playerScripts:WaitForChild("PlayerModule", PLAYER_MODULE_WAIT_SECONDS)
+	if not playerModule then
+		return nil
+	end
+
+	local success, result = pcall(require, playerModule)
+	if not success or not result or type(result.GetControls) ~= "function" then
+		return nil
+	end
+
+	playerControls = result:GetControls()
+	return playerControls
+end
+
+local function set_player_controls_enabled(enabled: boolean)
+	local controls = get_player_controls()
+	if not controls then
+		return
+	end
+
+	pcall(function()
+		if enabled then
+			controls:Enable()
+		else
+			controls:Disable()
+		end
+	end)
+end
+
+local function is_tool_still_equipped(tool: Tool?): boolean
+	local character = localPlayer.Character
+	return tool ~= nil and character ~= nil and tool.Parent == character
+end
+
 local function get_prompt_parent(dirtVisual: Instance): BasePart?
 	if dirtVisual:IsA("Model") then
 		return dirtVisual.PrimaryPart or dirtVisual:FindFirstChildWhichIsA("BasePart", true)
@@ -65,6 +123,166 @@ local function get_prompt_parent(dirtVisual: Instance): BasePart?
 	end
 
 	return nil
+end
+
+local function ensure_animator(humanoid: Humanoid): Animator?
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if animator then
+		return animator
+	end
+
+	animator = Instance.new("Animator")
+	animator.Parent = humanoid
+	return animator
+end
+
+local function load_clean_animation(humanoid: Humanoid): (AnimationTrack?, Animation?)
+	local animator = ensure_animator(humanoid)
+	if not animator then
+		return nil, nil
+	end
+
+	local animation = Instance.new("Animation")
+	animation.AnimationId = CLEAN_ANIMATION_ID
+
+	pcall(function()
+		ContentProvider:PreloadAsync({ animation })
+	end)
+
+	local success, track = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+
+	if not success or not track then
+		animation:Destroy()
+		return nil, nil
+	end
+
+	pcall(function()
+		track.Priority = Enum.AnimationPriority.Action4
+		track.Looped = false
+	end)
+
+	return track, animation
+end
+
+local function get_animation_duration(track: AnimationTrack?): number
+	if not track then
+		return CLEAN_ANIMATION_FALLBACK_DURATION_SECONDS
+	end
+
+	local deadline = os.clock() + 1
+	while track.Length <= 0 and os.clock() < deadline do
+		task.wait()
+	end
+
+	return if track.Length > 0 then track.Length else CLEAN_ANIMATION_FALLBACK_DURATION_SECONDS
+end
+
+local function get_character_parts(): (Model?, Humanoid?, BasePart?)
+	local character = localPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+
+	if not character
+		or not humanoid
+		or humanoid.Health <= 0
+		or not rootPart
+		or not rootPart:IsA("BasePart")
+	then
+		return nil, nil, nil
+	end
+
+	return character, humanoid, rootPart
+end
+
+local function get_clean_stand_position(rootPart: BasePart, targetPart: BasePart): Vector3
+	local targetPosition = targetPart.Position
+	local rootPosition = rootPart.Position
+	local away = Vector3.new(rootPosition.X - targetPosition.X, 0, rootPosition.Z - targetPosition.Z)
+
+	if away.Magnitude < 0.05 then
+		away = Vector3.new(rootPart.CFrame.LookVector.X, 0, rootPart.CFrame.LookVector.Z)
+	end
+
+	if away.Magnitude < 0.05 then
+		return targetPosition
+	end
+
+	local standPosition = targetPosition + away.Unit * CLEAN_STAND_DISTANCE
+	return Vector3.new(standPosition.X, targetPosition.Y, standPosition.Z)
+end
+
+local function move_character_to_target(humanoid: Humanoid, rootPart: BasePart, targetPart: BasePart): boolean
+	local targetPosition = get_clean_stand_position(rootPart, targetPart)
+	local finished = false
+	local reached = false
+	local connection = humanoid.MoveToFinished:Connect(function(didReach)
+		reached = didReach
+		finished = true
+	end)
+
+	local distance = (rootPart.Position - targetPosition).Magnitude
+	local walkSpeed = math.max(tonumber(humanoid.WalkSpeed) or 0, 1)
+	local timeout = math.clamp(
+		(distance / walkSpeed) + CLEAN_MOVE_TIMEOUT_PADDING_SECONDS,
+		CLEAN_MOVE_TIMEOUT_MIN_SECONDS,
+		CLEAN_MOVE_TIMEOUT_MAX_SECONDS
+	)
+	local deadline = os.clock() + timeout
+
+	humanoid:MoveTo(targetPosition)
+
+	while requestInFlight and not finished and os.clock() < deadline do
+		if (rootPart.Position - targetPosition).Magnitude <= CLEAN_MOVE_REACHED_DISTANCE then
+			reached = true
+			break
+		end
+
+		task.wait()
+	end
+
+	connection:Disconnect()
+
+	pcall(function()
+		humanoid:Move(Vector3.zero, false)
+	end)
+
+	return reached or (rootPart.Position - targetPosition).Magnitude <= CLEAN_MOVE_REACHED_DISTANCE
+end
+
+local function face_root_towards(rootPart: BasePart, targetPosition: Vector3)
+	local rootPosition = rootPart.Position
+	local lookAt = Vector3.new(targetPosition.X, rootPosition.Y, targetPosition.Z)
+
+	if (lookAt - rootPosition).Magnitude <= 0.01 then
+		return
+	end
+
+	rootPart.CFrame = CFrame.lookAt(rootPosition, lookAt)
+end
+
+local function play_clean_animation(humanoid: Humanoid)
+	local track, animation = load_clean_animation(humanoid)
+	local duration = get_animation_duration(track)
+
+	if track then
+		pcall(function()
+			track:Play(CLEAN_ANIMATION_FADE_SECONDS, 1, 1)
+		end)
+	end
+
+	task.wait(duration)
+
+	if track then
+		pcall(function()
+			track:Stop(CLEAN_ANIMATION_FADE_SECONDS)
+		end)
+	end
+
+	if animation then
+		animation:Destroy()
+	end
 end
 
 local function get_dirt_visuals(plot: Instance, toolItemId: string): {Instance}
@@ -81,18 +299,71 @@ local function get_dirt_visuals(plot: Instance, toolItemId: string): {Instance}
 	return visuals
 end
 
-local function request_clean(tool: Tool, horseId: string, dirtId: string): boolean
+local function request_clean(tool: Tool, horseId: string, dirtId: string, targetPart: BasePart): boolean
 	if requestInFlight then
 		return false
 	end
 
 	requestInFlight = true
+	set_player_controls_enabled(false)
+
+	local humanoidToRestore = nil
+	local savedWalkSpeed = nil
+	local savedJumpPower = nil
+	local savedJumpHeight = nil
+	local savedAutoRotate = nil
+
+	local function finish_request(result: boolean): boolean
+		if humanoidToRestore and humanoidToRestore.Parent then
+			humanoidToRestore.WalkSpeed = savedWalkSpeed
+			humanoidToRestore.JumpPower = savedJumpPower
+			humanoidToRestore.JumpHeight = savedJumpHeight
+			humanoidToRestore.AutoRotate = savedAutoRotate
+		end
+
+		set_player_controls_enabled(true)
+		requestInFlight = false
+		return result
+	end
+
+	if not is_tool_still_equipped(tool) then
+		return finish_request(false)
+	end
+
+	local _character, humanoid, rootPart = get_character_parts()
+	if not humanoid or not rootPart or not targetPart.Parent then
+		return finish_request(false)
+	end
+
+	local reachedTarget = move_character_to_target(humanoid, rootPart, targetPart)
+	if not reachedTarget or not targetPart.Parent or not is_tool_still_equipped(tool) then
+		return finish_request(false)
+	end
+
+	face_root_towards(rootPart, targetPart.Position)
+
+	humanoidToRestore = humanoid
+	savedWalkSpeed = humanoid.WalkSpeed
+	savedJumpPower = humanoid.JumpPower
+	savedJumpHeight = humanoid.JumpHeight
+	savedAutoRotate = humanoid.AutoRotate
+
+	humanoid.WalkSpeed = 0
+	humanoid.JumpPower = 0
+	humanoid.JumpHeight = 0
+	humanoid.AutoRotate = false
+
+	play_clean_animation(humanoid)
+
+	if not is_tool_still_equipped(tool) or not targetPart.Parent then
+		return finish_request(false)
+	end
+
 	local callSucceeded, wasCleaned = pcall(function()
 		return cleanDirtRemote:InvokeServer(tool, horseId, dirtId)
 	end)
-	requestInFlight = false
 
-	return callSucceeded and wasCleaned == true
+	return finish_request(callSucceeded and wasCleaned == true)
 end
 
 function queue_refresh()
@@ -146,7 +417,7 @@ function queue_refresh()
 					end
 
 					prompt.Enabled = false
-					if not request_clean(tool, horseId, dirtId) and prompt.Parent then
+					if not request_clean(tool, horseId, dirtId, promptParent) and prompt.Parent then
 						prompt.Enabled = true
 					end
 				end)
@@ -189,6 +460,8 @@ end)
 
 localPlayer.CharacterAdded:Connect(bind_character)
 localPlayer.CharacterRemoving:Connect(function()
+	requestInFlight = false
+	set_player_controls_enabled(true)
 	disconnect_all()
 	destroy_prompts()
 end)

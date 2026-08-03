@@ -114,6 +114,8 @@ local ProfileTemplate = {
 
 	Farming = {
 		UnlockedPlots = 1,
+		NextPlantId = 0,
+		Plants = {},
 		Plots = {
 			{
 				PlotId = 1,
