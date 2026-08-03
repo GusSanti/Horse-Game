@@ -662,7 +662,9 @@ local function create_race_visual(context, entry, raceFolder, slots, folder)
 	model:PivotTo(startPivot)
 	local runTrack, runAnimation = create_run_animation(model)
 	local startRotation = extract_rotation(startPivot)
-	local progressDirection = -get_track_progress_direction(raceFolder, slots, startRotation.LookVector)
+	local directionSign = context.RaceConfig.TrackDirectionSign or -1
+	local progressDirection = get_track_progress_direction(raceFolder, slots, startRotation.ZVector)
+		* directionSign
 	local dustResources, dustEmitters, dustAnchors = create_horse_run_dust(model)
 	local raceTag = create_race_tag(model, entry)
 

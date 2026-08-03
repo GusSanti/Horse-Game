@@ -8,6 +8,8 @@ local RaceConfig = {
 	InviteDuration = 20,
 	StartCountdownDuration = 3,
 	RaceDistance = 440,
+	-- The inverted arena advances along each starting slot's positive Z axis.
+	TrackDirectionSign = 1,
 	SegmentLength = 30,
 	BaseSpeed = 24.5,
 	MinSpeed = 19,

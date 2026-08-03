@@ -103,6 +103,7 @@ local function get_horizontal_unit_direction(direction, fallback)
 end
 
 local function get_track_progress_direction(fallbackCFrame)
+	local directionSign = RaceConfig.TrackDirectionSign or -1
 	local raceFolder = Workspace:FindFirstChild("Race")
 	local positionsFolder = raceFolder and raceFolder:FindFirstChild("Positions")
 	local startSlot = positionsFolder and (positionsFolder:FindFirstChild("1") or positionsFolder:FindFirstChild("01"))
@@ -129,9 +130,11 @@ local function get_track_progress_direction(fallbackCFrame)
 		startSlot = slots[1]
 	end
 
-	local fallbackDirection = typeof(fallbackCFrame) == "CFrame" and -fallbackCFrame.RightVector or nil
+	local fallbackDirection = typeof(fallbackCFrame) == "CFrame"
+		and fallbackCFrame.RightVector * directionSign
+		or nil
 	if startSlot and startSlot:IsA("BasePart") then
-		return get_horizontal_unit_direction(-startSlot.CFrame.ZVector, fallbackDirection)
+		return get_horizontal_unit_direction(startSlot.CFrame.ZVector * directionSign, fallbackDirection)
 	end
 
 	return get_horizontal_unit_direction(fallbackDirection)

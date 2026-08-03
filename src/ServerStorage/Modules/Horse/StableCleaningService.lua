@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Dictionary = Modules:WaitForChild("Dictionary")
@@ -26,6 +27,9 @@ local lastPlotByPlayer = {}
 local GENERATED_VISUAL_ATTRIBUTE = "GeneratedStableDirtVisual"
 local HORSE_ID_ATTRIBUTE = "HorseId"
 local HORSE_POSITION_NAME = "HorsePosition"
+local DIRT_GROUND_RAY_DISTANCE = 100
+local DIRT_GROUND_MIN_HORIZONTAL_AREA = 16
+local DIRT_GROUND_MAX_RAYCAST_HITS = 32
 
 local function get_spawn_settings()
 	if RunService:IsStudio() then
@@ -380,14 +384,147 @@ local function ensure_dirt_folder(slotFolder: Instance): Folder
 	return dirtFolder
 end
 
-local function position_dirt_visual(visual: Instance, horsePosition: BasePart, dirtRecord)
-	local floorOffset = -(horsePosition.Size.Y * 0.5) + 0.05
-	local targetCFrame = horsePosition.CFrame
-		* CFrame.new(dirtRecord.OffsetX, floorOffset, dirtRecord.OffsetZ)
-		* CFrame.Angles(0, math.rad(dirtRecord.Rotation), 0)
+local function is_dirt_ground_surface(raycastResult: RaycastResult): boolean
+	if raycastResult.Normal.Y < 0.75 then
+		return false
+	end
 
-	if visual:IsA("Model") or visual:IsA("BasePart") then
-		visual:PivotTo(targetCFrame)
+	local hitInstance = raycastResult.Instance
+	if hitInstance:IsA("Terrain") then
+		return true
+	end
+
+	if not hitInstance:IsA("BasePart") then
+		return false
+	end
+
+	return (hitInstance.Size.X * hitInstance.Size.Z) >= DIRT_GROUND_MIN_HORIZONTAL_AREA
+end
+
+local function get_dirt_ground_surface(
+	horsePosition: BasePart,
+	visual: Instance,
+	horizontalPosition: Vector3
+): (Vector3, Vector3)
+	local slotFolder = horsePosition.Parent
+	local ignoredInstances: {Instance} = if slotFolder then { slotFolder } else { horsePosition, visual }
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = ignoredInstances
+	raycastParams.RespectCanCollide = true
+
+	local rayHeight = math.max(horsePosition.Size.Y * 0.5, 2) + 0.05
+	local rayOrigin = horizontalPosition + Vector3.new(0, rayHeight, 0)
+	local rayDirection = Vector3.new(0, -DIRT_GROUND_RAY_DISTANCE, 0)
+
+	for _ = 1, DIRT_GROUND_MAX_RAYCAST_HITS do
+		local rayResult = Workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+		if not rayResult then
+			break
+		end
+
+		if is_dirt_ground_surface(rayResult) then
+			return rayResult.Position, rayResult.Normal.Unit
+		end
+
+		-- Ignore small props and continue until the actual stable floor is found.
+		ignoredInstances[#ignoredInstances + 1] = rayResult.Instance
+		raycastParams.FilterDescendantsInstances = ignoredInstances
+	end
+
+	local fallbackPosition = horizontalPosition
+		- (horsePosition.CFrame.UpVector * (horsePosition.Size.Y * 0.5))
+	return fallbackPosition, horsePosition.CFrame.UpVector
+end
+
+local function get_part_lowest_surface_distance(
+	part: BasePart,
+	surfacePosition: Vector3,
+	surfaceNormal: Vector3
+): number
+	local halfSize = part.Size * 0.5
+	local lowestDistance = math.huge
+
+	for xSign = -1, 1, 2 do
+		for ySign = -1, 1, 2 do
+			for zSign = -1, 1, 2 do
+				local cornerPosition = part.CFrame:PointToWorldSpace(Vector3.new(
+					halfSize.X * xSign,
+					halfSize.Y * ySign,
+					halfSize.Z * zSign
+				))
+				local distance = (cornerPosition - surfacePosition):Dot(surfaceNormal)
+				lowestDistance = math.min(lowestDistance, distance)
+			end
+		end
+	end
+
+	return lowestDistance
+end
+
+local function get_visual_lowest_surface_distance(
+	visual: Instance,
+	surfacePosition: Vector3,
+	surfaceNormal: Vector3
+): number?
+	local lowestDistance = math.huge
+	local foundVisiblePart = false
+
+	local function include_part(part: BasePart)
+		if part.Transparency >= 1 then
+			return
+		end
+
+		foundVisiblePart = true
+		lowestDistance = math.min(
+			lowestDistance,
+			get_part_lowest_surface_distance(part, surfacePosition, surfaceNormal)
+		)
+	end
+
+	if visual:IsA("BasePart") then
+		include_part(visual)
+	end
+
+	for _, descendant in ipairs(visual:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			include_part(descendant)
+		end
+	end
+
+	return if foundVisiblePart then lowestDistance else nil
+end
+
+local function position_dirt_visual(visual: Instance, horsePosition: BasePart, dirtRecord)
+	if not visual:IsA("Model") and not visual:IsA("BasePart") then
+		return
+	end
+
+	local localOffset = Vector3.new(dirtRecord.OffsetX, 0, dirtRecord.OffsetZ)
+	local horizontalPosition = horsePosition.CFrame:PointToWorldSpace(localOffset)
+	local surfacePosition, surfaceNormal = get_dirt_ground_surface(horsePosition, visual, horizontalPosition)
+
+	local surfaceForward = horsePosition.CFrame.LookVector
+		- (surfaceNormal * horsePosition.CFrame.LookVector:Dot(surfaceNormal))
+	if surfaceForward.Magnitude < 0.001 then
+		surfaceForward = horsePosition.CFrame.RightVector
+			- (surfaceNormal * horsePosition.CFrame.RightVector:Dot(surfaceNormal))
+	end
+	surfaceForward = surfaceForward.Unit
+
+	local targetCFrame = CFrame.lookAt(
+		surfacePosition,
+		surfacePosition + surfaceForward,
+		surfaceNormal
+	) * CFrame.Angles(0, math.rad(dirtRecord.Rotation), 0)
+	visual:PivotTo(targetCFrame)
+
+	-- Templates do not necessarily share the same pivot height. Move the visible
+	-- geometry, rather than the invisible root, so its lowest point touches ground.
+	local lowestDistance = get_visual_lowest_surface_distance(visual, surfacePosition, surfaceNormal)
+	if lowestDistance then
+		visual:PivotTo(visual:GetPivot() - (surfaceNormal * lowestDistance))
 	end
 end
 
