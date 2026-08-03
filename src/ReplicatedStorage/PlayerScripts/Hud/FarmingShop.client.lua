@@ -231,6 +231,21 @@ local function find_gui_button(root: Instance?, aliases, maxDepth: number?): Gui
 	return if instance then instance :: GuiButton else nil
 end
 
+local function find_recursive_gui_button(root: Instance?, aliases): GuiButton?
+	if not root then
+		return nil
+	end
+
+	for _, alias in aliases do
+		local instance = root:FindFirstChild(alias, true)
+		if instance and instance:IsA("GuiButton") then
+			return instance :: GuiButton
+		end
+	end
+
+	return nil
+end
+
 local function find_viewport_frame(root: Instance?): ViewportFrame?
 	local imageContainer = find_shallow_named_descendant(root, IMAGE_CONTAINER_NAMES, nil, 2)
 	local viewport = find_direct_child(imageContainer, VIEWPORT_FRAME_NAMES, "ViewportFrame")
@@ -885,7 +900,7 @@ local function find_shop_panel(framesContainer: Instance?, frameName: string, ki
 	end
 
 	local closeButton = find_direct_child(shopRoot, CLOSE_BUTTON_NAMES, "GuiButton")
-		or find_gui_button(shopRoot, CLOSE_BUTTON_NAMES, 2)
+		or find_recursive_gui_button(shopRoot, CLOSE_BUTTON_NAMES)
 	local restockButton = find_direct_child(shopRoot, RESTOCK_BUTTON_NAMES, "GuiButton")
 		or find_gui_button(shopRoot, RESTOCK_BUTTON_NAMES, 2)
 
@@ -988,7 +1003,16 @@ local function bind_ui(ui: ShopUi)
 		refresh_kind("Fruit")
 	end)
 
-	show_tab(activeTab)
+	-- Binding prepares and preloads the shop; it must not open it. ZoneFrames is
+	-- responsible for opening SeedShop when the player actually enters its zone.
+	set_panel_visible(ui.SeedPanel, false, true)
+	set_panel_visible(ui.FruitPanel, false, true)
+	if ui.SeedPanel.RestockButton then
+		ui.SeedPanel.RestockButton.Visible = false
+	end
+	if ui.FruitPanel.RestockButton then
+		ui.FruitPanel.RestockButton.Visible = activeTab == "Fruit"
+	end
 
 	local primaryPanel = get_panel(ui, activeTab) or ui.SeedPanel
 	local secondaryPanel = if primaryPanel == ui.SeedPanel then ui.FruitPanel else ui.SeedPanel

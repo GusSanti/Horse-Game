@@ -26,7 +26,9 @@ local RaceService = {}
 local initialized = false
 local activeRound = nil
 local hasWarnedAboutTrack = false
-local raceStateEvent = nil
+-- This event must exist as soon as the module is required because the client
+-- connects during ClientBootup, before every server service has finished Init.
+local raceStateEvent = Net.Event.RaceState
 local raceActionFunction = nil
 
 local function get_race_state_event()
@@ -514,6 +516,7 @@ local function create_race_model(round, horseSummary)
 	end
 
 	prepare_model(model)
+	HorseService.RegisterHorseVisual(model)
 	return model
 end
 
@@ -926,6 +929,10 @@ function RaceService.SyncPlayer(player)
 		return
 	end
 
+	if type(DataUtility.server.get(player, "Progression.PendingHorseReveal")) == "table" then
+		return
+	end
+
 	local horseOptions = HorseService.GetOwnedHorseSummaries(player)
 	if #horseOptions == 0 then
 		return
@@ -1128,6 +1135,9 @@ function RaceService.Init()
 		return
 	end
 
+	-- Create both remotes before clients try to connect. Net.Event on the client
+	-- waits for a server-created instance and otherwise reports an infinite yield.
+	get_race_state_event()
 	get_race_action_function():Respond(function(player, payload)
 		return RaceService.HandleAction(player, payload)
 	end)

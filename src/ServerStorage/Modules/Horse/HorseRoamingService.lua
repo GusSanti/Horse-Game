@@ -2,6 +2,7 @@ local PathfindingService = game:GetService("PathfindingService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Dictionary = Modules:WaitForChild("Dictionary")
@@ -9,6 +10,7 @@ local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
 local HorseRoamingConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseRoamingConfig"))
+local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))
@@ -83,10 +85,19 @@ local function get_roaming_folder(player: Player): Folder?
 	return folder
 end
 
-local function get_spawn_position(player: Player, fallback: Vector3): Vector3
+local function get_player_spawn(player: Player): BasePart?
 	local plot = get_player_plot(player)
 	local playerSpawn = plot and plot:FindFirstChild(PLAYER_SPAWN_NAME)
 	if playerSpawn and playerSpawn:IsA("BasePart") then
+		return playerSpawn
+	end
+
+	return nil
+end
+
+local function get_spawn_position(player: Player, fallback: Vector3): Vector3
+	local playerSpawn = get_player_spawn(player)
+	if playerSpawn then
 		return playerSpawn.Position
 	end
 
@@ -345,6 +356,10 @@ local function move_to_point(state, targetPosition: Vector3): boolean
 	local currentYaw = get_yaw(state.Visual:GetPivot())
 
 	while is_active(state) do
+		if state.MovementDeadline and os.clock() >= state.MovementDeadline then
+			return false
+		end
+
 		local currentPosition = state.Visual:GetPivot().Position
 		local flatOffset = Vector3.new(
 			targetPosition.X - currentPosition.X,
@@ -400,6 +415,16 @@ local function get_path_points(state, targetPosition: Vector3): {Vector3}
 	return points
 end
 
+local function walk_to_position(state, targetPosition: Vector3): boolean
+	for _, pathPoint in get_path_points(state, targetPosition) do
+		if not move_to_point(state, pathPoint) then
+			return false
+		end
+	end
+
+	return is_active(state)
+end
+
 local function choose_wander_target(state): Vector3
 	local currentPosition = state.Visual:GetPivot().Position
 	local fromAnchor = Vector3.new(
@@ -437,13 +462,7 @@ local function walk_somewhere(state): boolean
 		return move_to_point(state, targetPosition)
 	end
 
-	for _, pathPoint in get_path_points(state, targetPosition) do
-		if not move_to_point(state, pathPoint) then
-			return false
-		end
-	end
-
-	return is_active(state)
+	return walk_to_position(state, targetPosition)
 end
 
 local function idle(state): boolean
@@ -489,8 +508,19 @@ local function graze(state): boolean
 end
 
 local function run_behavior(state): ()
-	-- The first action after dismounting is always a walk, so the horse visibly
-	-- transitions into roaming instead of appearing to wait in the same spot.
+	if state.WalkToPlayerSpawnFirst == true then
+		local spawnTarget = resolve_ground_position(state, state.AnchorPosition)
+		walk_to_position(state, spawnTarget)
+		state.MovementDeadline = nil
+		if not is_active(state) then
+			return
+		end
+
+		state.Visual:SetAttribute(FREE_ATTRIBUTE, HorseRoamingService.IsHorseFree(state.Player, state.HorseId))
+	end
+
+	-- After the optional exit walk, normal roaming always begins with another
+	-- visible walk rather than waiting at PlayerSpawn.
 	while is_active(state) do
 		if not walk_somewhere(state) or not idle(state) then
 			break
@@ -576,6 +606,158 @@ local function update_player_needs(player: Player, playerStates): ()
 	end
 end
 
+local function begin_movement_state(player: Player, horseId: string, visual: Instance, options)
+	local roamingFolder = get_roaming_folder(player)
+	if not roamingFolder then
+		return nil, "HorseFolderMissing"
+	end
+
+	local currentState = activeByVisual[visual]
+	if currentState then
+		stop_state(currentState)
+	end
+
+	local playerStates = activeByPlayer[player]
+	if not playerStates then
+		playerStates = {}
+		activeByPlayer[player] = playerStates
+	end
+
+	local previousState = playerStates[horseId]
+	if previousState and previousState.Visual ~= visual then
+		stop_state(previousState)
+		if previousState.Visual and previousState.Visual.Parent then
+			previousState.Visual:Destroy()
+		end
+	end
+
+	local freeHorseIds = get_free_horse_ids(player, false)
+	local isFree = freeHorseIds ~= nil and freeHorseIds[horseId] == true
+	local initialFreeAttribute = if options and options.InitialFreeAttribute ~= nil
+		then options.InitialFreeAttribute == true
+		else isFree
+
+	visual.Parent = roamingFolder
+	visual:SetAttribute(VISUAL_HORSE_ATTRIBUTE, true)
+	visual:SetAttribute(HORSE_ID_ATTRIBUTE, horseId)
+	visual:SetAttribute(MOUNTED_USER_ID_ATTRIBUTE, nil)
+	visual:SetAttribute(ROAMING_ATTRIBUTE, true)
+	visual:SetAttribute(FREE_ATTRIBUTE, initialFreeAttribute)
+	anchor_visual(visual)
+
+	local pivot = visual:GetPivot()
+	local state = {
+		Active = true,
+		Player = player,
+		HorseId = horseId,
+		Visual = visual,
+		AnchorPosition = get_spawn_position(player, pivot.Position),
+		GroundOffset = HorseMountGeometry.getGroundOffset(visual),
+		PendingHungerGain = 0,
+		NextGrazeAt = os.clock() + random_range(HorseRoamingConfig.GrazeInterval),
+		LastNeedsUpdateAt = os.clock(),
+		WalkToPlayerSpawnFirst = options and options.WalkToPlayerSpawnFirst == true,
+		MovementDeadline = options and options.MovementDeadline or nil,
+	}
+
+	activeByVisual[visual] = state
+	playerStates[horseId] = state
+	set_behavior(state, "Walking")
+	return state, "Ready"
+end
+
+local function get_visual_bounds(visual: Instance): (CFrame, Vector3)
+	if visual:IsA("BasePart") then
+		return visual.CFrame, visual.Size
+	elseif visual:IsA("Model") then
+		local succeeded, boundsCFrame, boundsSize = pcall(function()
+			return visual:GetBoundingBox()
+		end)
+		if succeeded then
+			return boundsCFrame, boundsSize
+		end
+	end
+
+	return visual:GetPivot(), Vector3.new(4, 6, 7)
+end
+
+local function has_clear_mount_overhead(state, candidatePosition: Vector3, character: Model?): boolean
+	local boundsCFrame, boundsSize = get_visual_bounds(state.Visual)
+	local pivotPosition = state.Visual:GetPivot().Position
+	local topOffset = math.max((boundsCFrame.Position.Y + boundsSize.Y * 0.5) - pivotPosition.Y, 1)
+	local clearance = math.max(HorseMountConfig.MountPreparationOverheadClearance or 7, 1)
+	local halfX = math.max(boundsSize.X * 0.3, 1)
+	local halfZ = math.max(boundsSize.Z * 0.3, 1.5)
+	local rayOriginY = candidatePosition.Y + topOffset + 0.1
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	local ignoredInstances = { state.Visual }
+	if character then
+		ignoredInstances[#ignoredInstances + 1] = character
+	end
+	raycastParams.FilterDescendantsInstances = ignoredInstances
+	raycastParams.IgnoreWater = false
+
+	for _, offset in {
+		Vector3.zero,
+		Vector3.new(halfX, 0, halfZ),
+		Vector3.new(halfX, 0, -halfZ),
+		Vector3.new(-halfX, 0, halfZ),
+		Vector3.new(-halfX, 0, -halfZ),
+	} do
+		local origin = Vector3.new(
+			candidatePosition.X + offset.X,
+			rayOriginY,
+			candidatePosition.Z + offset.Z
+		)
+		if Workspace:Raycast(origin, Vector3.new(0, clearance, 0), raycastParams) then
+			return false
+		end
+	end
+
+	return true
+end
+
+local function find_clear_mount_target(state, character: Model?): Vector3?
+	local playerSpawn = get_player_spawn(state.Player)
+	if not playerSpawn then
+		return nil
+	end
+
+	local maxRadius = math.max(HorseMountConfig.MountPreparationSearchRadius or 18, 0)
+	local ringStep = math.max(HorseMountConfig.MountPreparationRingStep or 4, 1)
+	local angleSteps = math.max(math.floor(HorseMountConfig.MountPreparationAngleSteps or 10), 4)
+	local ignoredInstances = { state.Visual }
+	if character then
+		ignoredInstances[#ignoredInstances + 1] = character
+	end
+
+	local radius = 0
+	while radius <= maxRadius do
+		local candidatesOnRing = if radius == 0 then 1 else angleSteps
+		for candidateIndex = 1, candidatesOnRing do
+			local angle = if radius == 0
+				then 0
+				else ((candidateIndex - 1) / candidatesOnRing) * math.pi * 2
+			local localOffset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+			local worldOffset = playerSpawn.CFrame:VectorToWorldSpace(localOffset)
+			local desiredPosition = playerSpawn.Position + worldOffset
+			local groundedPosition = HorseMountGeometry.resolveGroundPosition(
+				desiredPosition,
+				ignoredInstances,
+				state.GroundOffset
+			)
+			if has_clear_mount_overhead(state, groundedPosition, character) then
+				return groundedPosition
+			end
+		end
+
+		radius += ringStep
+	end
+
+	return nil
+end
+
 function HorseRoamingService.IsRoaming(visual: Instance?): boolean
 	return visual ~= nil and activeByVisual[visual] ~= nil
 end
@@ -603,47 +785,17 @@ function HorseRoamingService.Release(player: Player, horseId: string, visual: In
 		return false, "HorseUnavailable"
 	end
 
-	local roamingFolder = get_roaming_folder(player)
-	if not roamingFolder then
-		return false, "HorseFolderMissing"
+	local movementOptions = options or {}
+	if movementOptions.WalkToPlayerSpawnFirst == true then
+		movementOptions.InitialFreeAttribute = false
 	end
 
-	HorseRoamingService.TakeControl(visual)
-
-	local playerStates = activeByPlayer[player]
-	if not playerStates then
-		playerStates = {}
-		activeByPlayer[player] = playerStates
+	local state, stateReason = begin_movement_state(player, horseId, visual, movementOptions)
+	if not state then
+		return false, stateReason
 	end
-
-	local previousState = playerStates[horseId]
-	if previousState and previousState.Visual ~= visual then
-		stop_state(previousState)
-		if previousState.Visual and previousState.Visual.Parent then
-			previousState.Visual:Destroy()
-		end
-	end
-
-	visual.Parent = roamingFolder
-	visual:SetAttribute(VISUAL_HORSE_ATTRIBUTE, true)
-	visual:SetAttribute(HORSE_ID_ATTRIBUTE, horseId)
-	visual:SetAttribute(MOUNTED_USER_ID_ATTRIBUTE, nil)
-	visual:SetAttribute(ROAMING_ATTRIBUTE, true)
-	visual:SetAttribute(FREE_ATTRIBUTE, HorseRoamingService.IsHorseFree(player, horseId))
-	anchor_visual(visual)
 
 	local pivot = visual:GetPivot()
-	local state = {
-		Active = true,
-		Player = player,
-		HorseId = horseId,
-		Visual = visual,
-		AnchorPosition = get_spawn_position(player, pivot.Position),
-		GroundOffset = HorseMountGeometry.getGroundOffset(visual),
-		PendingHungerGain = 0,
-		NextGrazeAt = os.clock() + random_range(HorseRoamingConfig.GrazeInterval),
-		LastNeedsUpdateAt = os.clock(),
-	}
 
 	if options and options.ClampIfTooFar == true then
 		local currentPosition = visual:GetPivot().Position
@@ -670,12 +822,62 @@ function HorseRoamingService.Release(player: Player, horseId: string, visual: In
 		end
 	end
 
-	activeByVisual[visual] = state
-	playerStates[horseId] = state
-	set_behavior(state, "Walking")
-
 	task.spawn(run_behavior, state)
 	return true, "Released"
+end
+
+function HorseRoamingService.PrepareForMount(
+	player: Player,
+	horseId: string,
+	visual: Instance,
+	character: Model?
+): (boolean, string, boolean)
+	if player.Parent ~= Players or type(horseId) ~= "string" or horseId == "" or not visual or not visual.Parent then
+		return false, "HorseUnavailable", false
+	end
+
+	local wasRoaming = HorseRoamingService.IsRoaming(visual)
+	local state, stateReason = begin_movement_state(player, horseId, visual, {
+		MovementDeadline = os.clock() + math.max(HorseMountConfig.MountPreparationTimeoutSeconds or 24, 1),
+	})
+	if not state then
+		return false, stateReason, wasRoaming
+	end
+
+	while is_active(state) do
+		local targetPosition = find_clear_mount_target(state, character)
+		if not targetPosition then
+			stop_state(state)
+			return false, "MountAreaBlocked", wasRoaming
+		end
+
+		local reachedTarget = walk_to_position(state, targetPosition)
+		if not reachedTarget then
+			local wasCancelled = not is_active(state)
+			if state.Active then
+				stop_state(state)
+			end
+			local failureCode = if wasCancelled then "MountApproachCancelled" else "MountApproachTimedOut"
+			return false, failureCode, wasRoaming
+		end
+
+		-- Check again after arriving because doors, other horses, or moving props may
+		-- have changed the clearance while this horse was walking toward the point.
+		if has_clear_mount_overhead(state, targetPosition, character) then
+			break
+		end
+
+		RunService.Heartbeat:Wait()
+	end
+
+	state.MovementDeadline = nil
+	if not is_active(state) then
+		return false, "MountApproachCancelled", wasRoaming
+	end
+
+	set_behavior(state, "Idle")
+	stop_state(state, true)
+	return true, "MountAreaReady", wasRoaming
 end
 
 function HorseRoamingService.ReturnHorseToStable(player: Player, horseId: string): (boolean, string)
@@ -733,7 +935,9 @@ function HorseRoamingService.ToggleHorseFree(player: Player, horseId: string): (
 		return true, "ReleasedOnDismount"
 	end
 
-	local released, code = HorseRoamingService.Release(player, horseId, visual)
+	local released, code = HorseRoamingService.Release(player, horseId, visual, {
+		WalkToPlayerSpawnFirst = true,
+	})
 	if not released then
 		set_free_state(player, horseId, false)
 		visual:SetAttribute(FREE_ATTRIBUTE, nil)

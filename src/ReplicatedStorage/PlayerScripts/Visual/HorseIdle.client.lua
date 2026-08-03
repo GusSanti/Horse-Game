@@ -22,6 +22,7 @@ local MOUNTED_USER_ID_ATTRIBUTE: string = ToolDictionary.MountedUserIdAttribute
 local ROAMING_HORSE_ATTRIBUTE: string = ToolDictionary.RoamingHorseAttribute or "IsHorseRoaming"
 local ROAMING_BEHAVIOR_ATTRIBUTE: string = ToolDictionary.RoamingBehaviorAttribute or "HorseRoamingBehavior"
 local IGNORE_REFRESH_ATTRIBUTE: string = ToolDictionary.IgnoreRefreshAttribute
+local SERVER_ANIMATIONS_READY_ATTRIBUTE = "HorseServerAnimationsReady"
 
 local plotValue: ObjectValue = localPlayer:WaitForChild(PLOT_VALUE_NAME)
 
@@ -71,6 +72,11 @@ end
 local function get_model_animator(model: Instance?): Animator?
 	if not model or not model:IsA("Model") then
 		return nil
+	end
+
+	local existingAnimator = model:FindFirstChildWhichIsA("Animator", true)
+	if existingAnimator then
+		return existingAnimator
 	end
 
 	local animationController = model:FindFirstChildOfClass("AnimationController")
@@ -164,12 +170,9 @@ local function get_horse_visuals(): {Instance}
 	end
 
 	local visuals = {}
-
-	for _, slotFolder: Instance in horseFolder:GetChildren() do
-		for _, child: Instance in slotFolder:GetChildren() do
-			if child:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true then
-				visuals[#visuals + 1] = child
-			end
+	for _, descendant: Instance in horseFolder:GetDescendants() do
+		if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true then
+			visuals[#visuals + 1] = descendant
 		end
 	end
 
@@ -202,6 +205,11 @@ local function ensure_animation_track(entry, mode: string): AnimationTrack?
 	end)
 
 	if not success or not track then
+		warn(("[HorseIdle] nao foi possivel carregar %s no cavalo %s: %s"):format(
+			animationId,
+			horseVisual:GetFullName(),
+			tostring(track)
+		))
 		animation:Destroy()
 		return nil
 	end
@@ -258,6 +266,11 @@ local function play_animation_mode(entry, mode: string): ()
 end
 
 local function sync_horse_idle_animation(horseVisual: Instance): ()
+	if horseVisual:GetAttribute(SERVER_ANIMATIONS_READY_ATTRIBUTE) == true then
+		destroy_idle_animation(horseVisual)
+		return
+	end
+
 	local entry = activeAnimations[horseVisual]
 	if not entry then
 		entry = {
@@ -275,6 +288,9 @@ local function sync_horse_idle_animation(horseVisual: Instance): ()
 			sync_horse_idle_animation(horseVisual)
 		end)
 		entry.connections[#entry.connections + 1] = horseVisual:GetAttributeChangedSignal(ROAMING_BEHAVIOR_ATTRIBUTE):Connect(function()
+			sync_horse_idle_animation(horseVisual)
+		end)
+		entry.connections[#entry.connections + 1] = horseVisual:GetAttributeChangedSignal(SERVER_ANIMATIONS_READY_ATTRIBUTE):Connect(function()
 			sync_horse_idle_animation(horseVisual)
 		end)
 	end

@@ -20,6 +20,7 @@ local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 local HorseRaceVisuals = require(HudModules:WaitForChild("HorseRaceVisuals"))
 local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 local Notifications = require(HudModules:WaitForChild("Notifications"))
+local DataUtility = require(Utility:WaitForChild("DataUtility"))
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
@@ -44,6 +45,7 @@ local lastRenderedResult = nil
 local raceUiFocusActive = false
 local hiddenGuiStates = {}
 local hiddenBlurStates = {}
+local pendingHorseReveal = false
 
 local state = {
 	Phase = "Idle",
@@ -808,6 +810,10 @@ local function has_race_ready_horse()
 	return false
 end
 
+local function has_owned_horse(): boolean
+	return not pendingHorseReveal and #state.HorseOptions > 0
+end
+
 local function get_race_invite_details(): string
 	if not has_race_ready_horse() then
 		local horse = get_unavailable_race_horse()
@@ -838,6 +844,11 @@ local function get_race_invite_title(): string
 end
 
 show_race_invite_notification = function()
+	if not has_owned_horse() then
+		hide_race_invite_notification()
+		return
+	end
+
 	if state.Phase ~= "Invite" or not state.RoundId or os.clock() >= state.InviteDeadline then
 		return
 	end
@@ -1008,7 +1019,11 @@ local function handle_invite(payload)
 	sync_race_visuals()
 	update_visibility()
 	update_dynamic_text()
-	show_race_invite_notification()
+	if has_owned_horse() then
+		show_race_invite_notification()
+	else
+		hide_race_invite_notification()
+	end
 end
 
 local function handle_queue_update(payload)
@@ -1192,6 +1207,17 @@ Net.Event.RaceState:Connect(function(payload)
 		handle_result(payload)
 	elseif payload.Kind == "Reset" then
 		handle_reset(payload)
+	end
+end)
+
+DataUtility.client.ensure_remotes()
+pendingHorseReveal = type(DataUtility.client.get("Progression.PendingHorseReveal")) == "table"
+DataUtility.client.bind("Progression.PendingHorseReveal", function(pendingReveal)
+	pendingHorseReveal = type(pendingReveal) == "table"
+	if pendingHorseReveal then
+		hide_race_invite_notification()
+	elseif state.Phase == "Invite" then
+		show_race_invite_notification()
 	end
 end)
 

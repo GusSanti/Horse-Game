@@ -41,7 +41,7 @@ local RESULT_DISPLAY_SECONDS = 3
 local STUDIO_ACCESS_OVERRIDE = RunService:IsStudio()
 
 local SLOT_CAMERA_CONFIG = HorseViewportRenderer.Presets.Wheel
-local RESULT_CAMERA_CONFIG = HorseViewportRenderer.Presets.Reward
+local RESULT_CAMERA_CONFIG = SLOT_CAMERA_CONFIG
 
 local horseOptions = HorseCatalog.GetRouletteHorseOptions()
 

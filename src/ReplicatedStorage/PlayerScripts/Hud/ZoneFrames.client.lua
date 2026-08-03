@@ -284,13 +284,16 @@ local function build_zone_states(framesContainer: Instance?, zonesFolder: Instan
 		local restoredDisplayName = currentDisplayName
 
 		if previousState and previousState.IsInside then
-			restoredDisplayName = restoredDisplayName or previousState.CurrentDisplayName
-
+			-- A hidden display while the player remains in the zone means the player
+			-- closed it manually. Do not resurrect the previous panel when shop cards
+			-- are added to the UI; it may open again only after leaving and re-entering.
 			local restoredDisplay = find_display_by_name(displays, restoredDisplayName)
 			if restoredDisplay then
 				set_displays_visible(displays, false)
 				set_display_visible(restoredDisplay, true)
 				restoredDisplayName = restoredDisplay.Name
+			else
+				set_displays_visible(displays, false)
 			end
 		else
 			set_displays_visible(displays, false)

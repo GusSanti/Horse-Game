@@ -53,6 +53,11 @@ local function get_model_animator(model)
 		return nil
 	end
 
+	local existingAnimator = model:FindFirstChildWhichIsA("Animator", true)
+	if existingAnimator then
+		return existingAnimator
+	end
+
 	local animationController = model:FindFirstChildOfClass("AnimationController")
 	if not animationController then
 		animationController = model:FindFirstChildWhichIsA("AnimationController", true)
@@ -91,6 +96,10 @@ local function load_animation_track(animator, animationId, priority, looped)
 	end)
 
 	if not success or not track then
+		warn(("[HorseMountAnimation] nao foi possivel carregar %s: %s"):format(
+			normalizedAnimationId,
+			tostring(track)
+		))
 		animation:Destroy()
 		return nil, nil
 	end

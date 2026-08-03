@@ -95,6 +95,7 @@ local function bootstrap_player(player: Player): ()
 end
 
 safe_init_service("HorseSaddleAssetService", HorseSaddleAssetService)
+safe_init_service("HorseService", HorseService)
 safe_init_service("CookingService", CookingService)
 FarmingShopService.Init()
 HorseIndexService.Init()

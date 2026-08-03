@@ -79,7 +79,7 @@ local ProfileTemplate = {
 	},
 
 	Stable = {
-		Level = 1,
+		Level = StableDictionary.DefaultLevel,
 		OwnedStalls = StableDictionary.DefaultOwnedStalls,
 		HorseSlots = defaultHorseSlots,
 		HayBalesPlaced = 0,

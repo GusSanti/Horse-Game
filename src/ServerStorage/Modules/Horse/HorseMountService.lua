@@ -53,6 +53,7 @@ local HorseMountService = {}
 
 local initialized = false
 local activeMountsByPlayer = {}
+local preparingMountsByPlayer = {}
 local playerConnections = {}
 local begin_mount_jump
 local end_mount_jump
@@ -455,6 +456,7 @@ local function create_temporary_horse_visual(player, horse)
 	model:SetAttribute(VISUAL_HORSE_ATTRIBUTE, true)
 	model:SetAttribute(HORSE_ID_ATTRIBUTE, horse.Id)
 	model:SetAttribute(MOUNTED_USER_ID_ATTRIBUTE, 0)
+	HorseService.RegisterHorseVisual(model)
 
 	return model, nil
 end
@@ -1207,12 +1209,55 @@ local function update_mount(mountState, deltaTime)
 	set_horse_run_dust_enabled(mountState.DustEmitters, mountState.Sprinting and mountState.IsJumping ~= true)
 end
 
+local function restore_horse_after_failed_mount(
+	player,
+	horseId,
+	horseVisual,
+	horseState,
+	isTemporaryVisual,
+	wasRoaming
+)
+	if not horseVisual or not horseVisual.Parent then
+		return
+	end
+
+	restore_horse_state(horseVisual, horseState)
+	clear_visual_mount_marker(horseVisual)
+
+	if wasRoaming
+		and HorseRoamingService.IsHorseFree(player, horseId)
+		and player.Parent == Players
+	then
+		local released = HorseRoamingService.Release(player, horseId, horseVisual)
+		if released then
+			return
+		end
+	elseif isTemporaryVisual then
+		horseVisual:Destroy()
+		return
+	else
+		local returned = HorseRoamingService.ReturnHorseToStable(player, horseId)
+		if returned then
+			return
+		end
+	end
+
+	return_horse_to_stable(horseVisual, horseState)
+end
+
 local function mount_player(player, payload)
 	local horseId = payload and payload.HorseId
 	if type(horseId) ~= "string" or horseId == "" then
 		return {
 			Success = false,
 			Code = "HorseIdRequired",
+		}
+	end
+
+	if preparingMountsByPlayer[player] then
+		return {
+			Success = false,
+			Code = "MountPreparationBusy",
 		}
 	end
 
@@ -1293,10 +1338,79 @@ local function mount_player(player, payload)
 		}
 	end
 
-	local wasRoaming = HorseRoamingService.TakeControl(horseVisual, true)
-
 	local horseSummary = build_horse_summary(horse)
 	local horseState = capture_horse_state(horseVisual, baseParts)
+	local wasRoaming = HorseRoamingService.IsRoaming(horseVisual)
+	if mountAtHorse then
+		local preparation = {
+			HorseId = horseId,
+		}
+		preparingMountsByPlayer[player] = preparation
+
+		local callSucceeded, prepared, prepareReason, preparedWasRoaming = pcall(
+			HorseRoamingService.PrepareForMount,
+			player,
+			horseId,
+			horseVisual,
+			character
+		)
+		if preparingMountsByPlayer[player] == preparation then
+			preparingMountsByPlayer[player] = nil
+		end
+
+		if callSucceeded then
+			wasRoaming = preparedWasRoaming == true
+		else
+			warn(string.format(
+				"[HorseMountService] Failed to prepare %s for %s: %s",
+				horseId,
+				player.Name,
+				tostring(prepared)
+			))
+			prepared = false
+			prepareReason = "MountPreparationFailed"
+		end
+
+		if not prepared then
+			restore_horse_after_failed_mount(
+				player,
+				horseId,
+				horseVisual,
+				horseState,
+				isTemporaryVisual,
+				wasRoaming
+			)
+			return {
+				Success = false,
+				Code = prepareReason or "MountPreparationFailed",
+			}
+		end
+
+		local currentCharacter, currentHumanoid, currentRootPart = get_character_parts(player)
+		if currentCharacter ~= character
+			or currentHumanoid ~= humanoid
+			or currentRootPart ~= rootPart
+			or humanoid.Health <= 0
+		then
+			restore_horse_after_failed_mount(
+				player,
+				horseId,
+				horseVisual,
+				horseState,
+				isTemporaryVisual,
+				wasRoaming
+			)
+			return {
+				Success = false,
+				Code = "CharacterUnavailable",
+			}
+		end
+
+		stableHorseRootCFrame = horseVisual:GetPivot()
+	else
+		wasRoaming = HorseRoamingService.TakeControl(horseVisual, true)
+	end
+
 	local characterState = capture_character_state(character, humanoid)
 	-- The client begins the hop-on movement as soon as it receives Mounting.
 	-- Disable the horse colliders first so that movement cannot push the horse.
@@ -1377,22 +1491,14 @@ local function mount_player(player, payload)
 	if currentCharacter ~= character or currentHumanoid ~= humanoid or currentRootPart ~= rootPart or humanoid.Health <= 0 then
 		destroy_mount_animation_state(mountingAnimationState)
 		restore_character_state(character, humanoid, characterState)
-		restore_horse_state(horseVisual, horseState)
-		clear_visual_mount_marker(horseVisual)
-
-		if wasRoaming
-			and HorseRoamingService.IsHorseFree(player, horseId)
-			and player.Parent == Players
-			and horseVisual.Parent
-		then
-			HorseRoamingService.Release(player, horseId, horseVisual)
-		elseif wasRoaming and player.Parent == Players and horseVisual.Parent then
-			HorseRoamingService.ReturnHorseToStable(player, horseId)
-		elseif isTemporaryVisual and horseVisual.Parent then
-			horseVisual:Destroy()
-		else
-			return_horse_to_stable(horseVisual, horseState)
-		end
+		restore_horse_after_failed_mount(
+			player,
+			horseId,
+			horseVisual,
+			horseState,
+			isTemporaryVisual,
+			wasRoaming
+		)
 
 		return {
 			Success = false,
@@ -1414,22 +1520,14 @@ local function mount_player(player, payload)
 	if not mountRoot or not mountSeat then
 		destroy_mount_animation_state(mountingAnimationState)
 		restore_character_state(character, humanoid, characterState)
-		restore_horse_state(horseVisual, horseState)
-		clear_visual_mount_marker(horseVisual)
-
-		if wasRoaming
-			and HorseRoamingService.IsHorseFree(player, horseId)
-			and player.Parent == Players
-			and horseVisual.Parent
-		then
-			HorseRoamingService.Release(player, horseId, horseVisual)
-		elseif wasRoaming and player.Parent == Players and horseVisual.Parent then
-			HorseRoamingService.ReturnHorseToStable(player, horseId)
-		elseif isTemporaryVisual and horseVisual.Parent then
-			horseVisual:Destroy()
-		else
-			return_horse_to_stable(horseVisual, horseState)
-		end
+		restore_horse_after_failed_mount(
+			player,
+			horseId,
+			horseVisual,
+			horseState,
+			isTemporaryVisual,
+			wasRoaming
+		)
 
 		return {
 			Success = false,
@@ -1671,6 +1769,7 @@ function HorseMountService.Init()
 
 	Players.PlayerAdded:Connect(bind_player)
 	Players.PlayerRemoving:Connect(function(player)
+		preparingMountsByPlayer[player] = nil
 		clear_mount_state(player, "PlayerRemoving", {
 			SkipCharacterPlacement = true,
 			ReturnToStable = true,

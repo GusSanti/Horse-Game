@@ -18,14 +18,19 @@ local HORSE_CATALOG_ID_ATTRIBUTE = "HorseCatalogId"
 local HORSE_VISUAL_MODEL_NAME_ATTRIBUTE = "HorseVisualModelName"
 local MOUNTED_USER_ID_ATTRIBUTE = "MountedUserId"
 local ROAMING_HORSE_ATTRIBUTE = "IsHorseRoaming"
+local ROAMING_BEHAVIOR_ATTRIBUTE = "HorseRoamingBehavior"
+local SERVER_ANIMATIONS_READY_ATTRIBUTE = "HorseServerAnimationsReady"
 local STATUS_UPDATE_INTERVAL_SECONDS = 60
 local STABLE_GROUND_RAY_DISTANCE = 100
 local STABLE_GROUND_MIN_HORIZONTAL_AREA = 16
 local STABLE_GROUND_MAX_RAYCAST_HITS = 32
+local PLAYER_COLLISION_GROUP = "Players"
+local HORSE_COLLISION_GROUP = "Horses"
 
 ------------------//VARIABLES
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
+local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
 local HorseBondService = require(Utility:WaitForChild("Horse"):WaitForChild("HorseBondService"))
 local HorseEquipmentUtility = require(Utility:WaitForChild("Horse"):WaitForChild("HorseEquipmentUtility"))
@@ -38,6 +43,10 @@ local HorseSaddleVisualService = require(script.Parent:WaitForChild("HorseSaddle
 
 local HorseService = {}
 local statusDecayLoopStarted = false
+local collisionServiceInitialized = false
+local registeredCollisionVisuals = setmetatable({}, { __mode = "k" })
+local stableAnimationStates = setmetatable({}, { __mode = "k" })
+local collisionPlayerConnections = {}
 local RACE_MIN_STATUS_PERCENT = 50
 local STATUS_DISPLAY_NAMES = {
 	Happiness = "Felicidade",
@@ -48,6 +57,268 @@ local STATUS_DISPLAY_NAMES = {
 }
 
 ------------------//FUNCTIONS
+local function set_part_collision_group(part: BasePart, groupName: string): ()
+	pcall(function()
+		part.CollisionGroup = groupName
+	end)
+end
+
+local function apply_collision_group(root: Instance, groupName: string): ()
+	if root:IsA("BasePart") then
+		set_part_collision_group(root, groupName)
+	end
+
+	for _, descendant in root:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			set_part_collision_group(descendant, groupName)
+		end
+	end
+end
+
+local function bind_collision_character(player: Player, character: Model): ()
+	local record = collisionPlayerConnections[player]
+	if not record then
+		return
+	end
+
+	if record.CharacterConnection then
+		record.CharacterConnection:Disconnect()
+	end
+
+	apply_collision_group(character, PLAYER_COLLISION_GROUP)
+	record.CharacterConnection = character.DescendantAdded:Connect(function(descendant)
+		if descendant:IsA("BasePart") then
+			set_part_collision_group(descendant, PLAYER_COLLISION_GROUP)
+		end
+	end)
+end
+
+local function bind_collision_player(player: Player): ()
+	if collisionPlayerConnections[player] then
+		return
+	end
+
+	local record = {}
+	collisionPlayerConnections[player] = record
+	record.CharacterAdded = player.CharacterAdded:Connect(function(character)
+		bind_collision_character(player, character)
+	end)
+
+	if player.Character then
+		bind_collision_character(player, player.Character)
+	end
+end
+
+local function ensure_horse_animator(visual: Instance): Animator?
+	if not visual:IsA("Model") then
+		return nil
+	end
+
+	local existingAnimator = visual:FindFirstChildWhichIsA("Animator", true)
+	if existingAnimator then
+		return existingAnimator
+	end
+
+	local controller = visual:FindFirstChildOfClass("AnimationController")
+		or visual:FindFirstChildWhichIsA("AnimationController", true)
+		or visual:FindFirstChildOfClass("Humanoid")
+		or visual:FindFirstChildWhichIsA("Humanoid", true)
+
+	if not controller then
+		controller = Instance.new("AnimationController")
+		controller.Name = "HorseAnimationController"
+		controller.Parent = visual
+	end
+
+	local animator = controller:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = controller
+	end
+
+	return animator
+end
+
+local function stop_stable_animation_track(track: AnimationTrack?): ()
+	if not track then
+		return
+	end
+
+	pcall(function()
+		track:Stop(HorseMountConfig.HorseAnimationBlendTime or 0.24)
+	end)
+end
+
+local function destroy_stable_animation_state(visual: Instance): ()
+	local state = stableAnimationStates[visual]
+	if not state then
+		return
+	end
+
+	stableAnimationStates[visual] = nil
+	for _, connection in state.Connections do
+		connection:Disconnect()
+	end
+	for _, track in state.Tracks do
+		stop_stable_animation_track(track)
+		track:Destroy()
+	end
+	for _, animation in state.Animations do
+		animation:Destroy()
+	end
+end
+
+local function load_stable_animation_track(animator: Animator, animationId: string): (AnimationTrack?, Animation?)
+	local animation = Instance.new("Animation")
+	animation.AnimationId = animationId
+	local success, trackOrError = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+
+	if not success or not trackOrError then
+		warn(("[HorseService] nao foi possivel carregar a animacao %s: %s"):format(
+			animationId,
+			tostring(trackOrError)
+		))
+		animation:Destroy()
+		return nil, nil
+	end
+
+	local track = trackOrError :: AnimationTrack
+	track.Priority = Enum.AnimationPriority.Idle
+	track.Looped = true
+	return track, animation
+end
+
+local function sync_stable_animation(visual: Instance): ()
+	local state = stableAnimationStates[visual]
+	if not state then
+		return
+	end
+
+	local mountedUserId = visual:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE)
+	local mode = if type(mountedUserId) == "number" and mountedUserId > 0
+		then nil
+		elseif visual:GetAttribute(ROAMING_HORSE_ATTRIBUTE) == true
+			and visual:GetAttribute(ROAMING_BEHAVIOR_ATTRIBUTE) == "Walking"
+		then "Walk"
+		else "Idle"
+
+	if state.Mode == mode then
+		local currentTrack = mode and state.Tracks[mode] or nil
+		if not currentTrack or currentTrack.IsPlaying then
+			return
+		end
+	end
+
+	for trackMode, track in state.Tracks do
+		if trackMode == mode then
+			if not track.IsPlaying then
+				track:Play(HorseMountConfig.AnimationFadeTime or 0.12, 1, 1)
+			end
+			track:AdjustWeight(1, HorseMountConfig.HorseAnimationBlendTime or 0.24)
+			track:AdjustSpeed(1)
+		else
+			stop_stable_animation_track(track)
+		end
+	end
+
+	state.Mode = mode
+end
+
+local function register_stable_animations(visual: Instance, animator: Animator?): ()
+	if visual:GetAttribute(VISUAL_HORSE_ATTRIBUTE) ~= true or stableAnimationStates[visual] then
+		return
+	end
+	if not animator then
+		warn(("[HorseService] cavalo %s nao possui Animator valido"):format(visual:GetFullName()))
+		return
+	end
+
+	local idleTrack, idleAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseIdleAnimationId)
+	local walkTrack, walkAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseWalkAnimationId)
+	if not idleTrack or not walkTrack then
+		for _, track in { idleTrack, walkTrack } do
+			if track then
+				track:Destroy()
+			end
+		end
+		for _, animation in { idleAnimation, walkAnimation } do
+			if animation then
+				animation:Destroy()
+			end
+		end
+		visual:SetAttribute(SERVER_ANIMATIONS_READY_ATTRIBUTE, false)
+		return
+	end
+
+	local state = {
+		Mode = nil,
+		Tracks = { Idle = idleTrack, Walk = walkTrack },
+		Animations = { idleAnimation, walkAnimation },
+		Connections = {},
+	}
+	stableAnimationStates[visual] = state
+	for _, attributeName in {
+		MOUNTED_USER_ID_ATTRIBUTE,
+		ROAMING_HORSE_ATTRIBUTE,
+		ROAMING_BEHAVIOR_ATTRIBUTE,
+	} do
+		state.Connections[#state.Connections + 1] = visual:GetAttributeChangedSignal(attributeName):Connect(function()
+			sync_stable_animation(visual)
+		end)
+	end
+	state.Connections[#state.Connections + 1] = visual.AncestryChanged:Connect(function(_, parent)
+		if not parent then
+			destroy_stable_animation_state(visual)
+		end
+	end)
+
+	visual:SetAttribute(SERVER_ANIMATIONS_READY_ATTRIBUTE, true)
+	sync_stable_animation(visual)
+end
+
+function HorseService.RegisterHorseVisual(visual: Instance?): ()
+	if not visual then
+		return
+	end
+
+	local animator = ensure_horse_animator(visual)
+	register_stable_animations(visual, animator)
+	if registeredCollisionVisuals[visual] then
+		return
+	end
+
+	apply_collision_group(visual, HORSE_COLLISION_GROUP)
+	registeredCollisionVisuals[visual] = visual.DescendantAdded:Connect(function(descendant)
+		if descendant:IsA("BasePart") then
+			set_part_collision_group(descendant, HORSE_COLLISION_GROUP)
+		end
+	end)
+end
+
+function HorseService.Init(): ()
+	if collisionServiceInitialized then
+		return
+	end
+	collisionServiceInitialized = true
+
+	for _, player in Players:GetPlayers() do
+		bind_collision_player(player)
+	end
+
+	Players.PlayerAdded:Connect(bind_collision_player)
+	Players.PlayerRemoving:Connect(function(player)
+		local record = collisionPlayerConnections[player]
+		collisionPlayerConnections[player] = nil
+		if record then
+			for _, connection in record do
+				connection:Disconnect()
+			end
+		end
+	end)
+end
+
 local function get_display_name(horse)
 	local nickname = horse.Nickname or ""
 	if nickname ~= "" then
@@ -610,6 +881,7 @@ local function apply_visual_horse_metadata(visualHorse: Instance, horse): ()
 	visualHorse:SetAttribute(HORSE_ID_ATTRIBUTE, horse.Id)
 	visualHorse:SetAttribute(HORSE_CATALOG_ID_ATTRIBUTE, horse.CatalogId)
 	visualHorse:SetAttribute(HORSE_VISUAL_MODEL_NAME_ATTRIBUTE, get_horse_visual_model_name(horse))
+	HorseService.RegisterHorseVisual(visualHorse)
 end
 
 local function has_matching_visual_horse_identity(visualHorse: Instance, horse): boolean
@@ -746,8 +1018,10 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 	end
 
 	local visualHorse = horseModel:Clone()
-	apply_visual_horse_metadata(visualHorse, horse)
 	visualHorse.Parent = slotFolder
+	-- Animator:LoadAnimation requires the rig to be inside Workspace. Parent the
+	-- clone before metadata registers its collision and animation controllers.
+	apply_visual_horse_metadata(visualHorse, horse)
 
 	if visualHorse:IsA("Model") or visualHorse:IsA("BasePart") then
 		HorseService.PositionVisualHorseInStable(visualHorse, horsePosition)

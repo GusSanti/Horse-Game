@@ -5,16 +5,25 @@ local ServerStorage: ServerStorage = game:GetService("ServerStorage")
 
 ------------------//CONSTANTS
 local STABLES_FOLDER_NAME = "Stables"
+local STABLE_PLOT_NAME = "Stable"
+local STABLE_PLOT_NAME_PREFIX = "Stable"
 local PLAYER_SPAWN_NAME = "PlayerSpawn"
 local PLOT_VALUE_NAME = "Plot"
 local PLOT_NUMBER_ATTRIBUTE = "PlotNumber"
 local PLOT_NUMBER_LOWER_ATTRIBUTE = "plotnumber"
 local OWNER_USER_ID_ATTRIBUTE = "OwnerUserId"
 local OWNER_NAME_ATTRIBUTE = "OwnerName"
+local STABLE_LEVEL_ATTRIBUTE = "StableLevel"
+local HAS_HAY_BALE_FOLDER_ATTRIBUTE = "HasHayBaleFolder"
+local HAS_HORSE_WATER_ATTRIBUTE = "HasHorseWater"
 local HORSE_FOLDER_NAME = "HorseFolder"
+local HAY_BALE_FOLDER_NAME = "HayBaleFolder"
+local HORSE_WATER_FOLDER_NAME = "HorseWater"
 local SLOT_PROMPT_PART_NAME = "Proximity"
+local SLOT_PROMPT_NAME = "BuyStableSlotPrompt"
 local SLOT_PROMPT_ACTION_TEXT = "Buy"
 local SLOT_PROMPT_HOLD_DURATION = 0
+local SLOT_PROMPT_MAX_ACTIVATION_DISTANCE = 10
 local TELEPORT_TO_STABLE_EVENT_NAME = "TeleportToStable"
 
 type PlotData = {
@@ -39,6 +48,9 @@ local stablesFolder: Instance = workspace:WaitForChild(STABLES_FOLDER_NAME)
 local assignedPlotByPlayer: {[Player]: PlotData} = {}
 local plotOwnerByInstance: {[Instance]: Player} = {}
 local playerTroves: {[Player]: any} = {}
+local plotTroves: {[Player]: any} = {}
+local activeLevelByPlayer: {[Player]: number} = {}
+local changingLevelByPlayer: {[Player]: boolean} = {}
 local disable_plot_slot_prompts
 
 ------------------//FUNCTIONS
@@ -71,6 +83,7 @@ local function clear_plot_metadata(player: Player): ()
 	end
 
 	set_plot_number_attributes(player, nil)
+	player:SetAttribute(STABLE_LEVEL_ATTRIBUTE, nil)
 end
 
 local function set_plot_metadata(player: Player, plot: Instance, plotNumber: number): ()
@@ -107,18 +120,88 @@ local function get_player_spawn(plot: Instance): BasePart?
 	return nil
 end
 
+local function get_level_from_template_name(templateName: string): number?
+	local levelText = string.match(string.lower(templateName), "^%s*level%s*(%d+)%s*$")
+	return levelText and tonumber(levelText) or nil
+end
+
+local function ensure_horse_folder_layout(plot: Instance): Instance?
+	local horseFolder = plot:FindFirstChild(HORSE_FOLDER_NAME)
+	local directSlots: {Instance} = {}
+
+	for _, slotName: string in StableDictionary.HorseSlotOrder do
+		local directSlot = plot:FindFirstChild(slotName)
+		if directSlot then
+			directSlots[#directSlots + 1] = directSlot
+		end
+	end
+
+	if not horseFolder and #directSlots > 0 then
+		horseFolder = Instance.new("Folder")
+		horseFolder.Name = HORSE_FOLDER_NAME
+		horseFolder.Parent = plot
+	end
+
+	if horseFolder then
+		for _, directSlot in directSlots do
+			directSlot.Parent = horseFolder
+		end
+	end
+
+	return horseFolder
+end
+
 local function get_ordered_plots(): {PlotData}
 	local plots: {PlotData} = {}
 
 	for _, plot: Instance in stablesFolder:GetChildren() do
-		local plotNumber = get_plot_number(plot)
-		local playerSpawn = get_player_spawn(plot)
+		local isLevelTemplate = get_level_from_template_name(plot.Name) ~= nil
+		local plotNumber = if isLevelTemplate then nil else get_plot_number(plot)
+		local playerSpawn = if isLevelTemplate then nil else get_player_spawn(plot)
 
 		if plotNumber and playerSpawn then
 			table.insert(plots, {
 				instance = plot,
 				number = plotNumber,
 			})
+		end
+	end
+
+	-- In the level-based layout, Workspace.Stables contains the LevelX templates
+	-- and the physical plots live in Workspace as Stable, Stable2, Stable3, etc.
+	-- Numbered children of Stables remain supported for older maps.
+	if #plots == 0 then
+		local stableContainer = workspace:FindFirstChild(STABLE_PLOT_NAME)
+		if stableContainer and not get_player_spawn(stableContainer) then
+			for _, plot: Instance in stableContainer:GetChildren() do
+				local plotNumber = get_plot_number(plot)
+				local playerSpawn = get_player_spawn(plot)
+				if plotNumber and playerSpawn then
+					table.insert(plots, {
+						instance = plot,
+						number = plotNumber,
+					})
+				end
+			end
+		end
+	end
+
+	if #plots == 0 then
+		for _, plot: Instance in workspace:GetChildren() do
+			local stableSuffix = string.match(plot.Name, "^" .. STABLE_PLOT_NAME_PREFIX .. "(%d*)$")
+			local playerSpawn = get_player_spawn(plot)
+			if stableSuffix ~= nil and playerSpawn then
+				local fallbackNumber = if plot.Name == STABLE_PLOT_NAME
+					then 1
+					else tonumber(stableSuffix)
+				local plotNumber = get_plot_number(plot) or fallbackNumber
+				if plotNumber then
+					table.insert(plots, {
+						instance = plot,
+						number = plotNumber,
+					})
+				end
+			end
 		end
 	end
 
@@ -138,6 +221,7 @@ local function assign_plot(player: Player): PlotData?
 
 	for _, plotData: PlotData in get_ordered_plots() do
 		if not plotOwnerByInstance[plotData.instance] then
+			ensure_horse_folder_layout(plotData.instance)
 			assignedPlotByPlayer[player] = plotData
 			plotOwnerByInstance[plotData.instance] = player
 
@@ -172,10 +256,18 @@ local function release_plot(player: Player): ()
 	end
 
 	assignedPlotByPlayer[player] = nil
+	activeLevelByPlayer[player] = nil
+	changingLevelByPlayer[player] = nil
 	clear_plot_metadata(player)
 end
 
 local function cleanup_player(player: Player): ()
+	local plotTrove = plotTroves[player]
+	if plotTrove then
+		plotTrove:Destroy()
+		plotTroves[player] = nil
+	end
+
 	local playerTrove = playerTroves[player]
 	if not playerTrove then
 		return
@@ -183,6 +275,115 @@ local function cleanup_player(player: Player): ()
 
 	playerTrove:Destroy()
 	playerTroves[player] = nil
+end
+
+local function get_plot_template_from_level(levelTemplate: Instance, plotNumber: number): Instance?
+	-- Also support a single plot model directly named LevelX.
+	if get_player_spawn(levelTemplate) then
+		return levelTemplate
+	end
+
+	for _, candidate: Instance in levelTemplate:GetChildren() do
+		if get_plot_number(candidate) == plotNumber and get_player_spawn(candidate) then
+			return candidate
+		end
+	end
+
+	return nil
+end
+
+local function get_level_plot_template(level: number, plotNumber: number): Instance?
+	local visitedLevelTemplates: {[Instance]: boolean} = {}
+
+	local function test_level_template(levelTemplate: Instance): Instance?
+		if visitedLevelTemplates[levelTemplate]
+			or get_level_from_template_name(levelTemplate.Name) ~= level
+		then
+			return nil
+		end
+		visitedLevelTemplates[levelTemplate] = true
+		return get_plot_template_from_level(levelTemplate, plotNumber)
+	end
+
+	for _, child in stablesFolder:GetChildren() do
+		local plotTemplate = test_level_template(child)
+		if plotTemplate then
+			return plotTemplate
+		end
+	end
+
+	-- Roblox permits duplicate/nested Stables folders. Search every LevelX and
+	-- select the numbered sub-plot that matches the player's assigned plot.
+	for _, root: Instance in { workspace, ServerStorage, ReplicatedStorage } do
+		for _, descendant in root:GetDescendants() do
+			local plotTemplate = test_level_template(descendant)
+			if plotTemplate then
+				return plotTemplate
+			end
+		end
+	end
+
+	return nil
+end
+
+local function align_level_clone_to_spawn(levelClone: Instance, targetSpawn: BasePart): (boolean, string)
+	local levelSpawn = get_player_spawn(levelClone)
+	if not levelSpawn then
+		return false, PLAYER_SPAWN_NAME .. "Missing"
+	end
+
+	local offset = targetSpawn.CFrame * levelSpawn.CFrame:Inverse()
+	if levelClone:IsA("Model") then
+		levelClone:PivotTo(offset * levelClone:GetPivot())
+	else
+		if levelClone:IsA("BasePart") then
+			levelClone.CFrame = offset * levelClone.CFrame
+		end
+
+		for _, descendant in levelClone:GetDescendants() do
+			if descendant:IsA("BasePart") then
+				descendant.CFrame = offset * descendant.CFrame
+			end
+		end
+	end
+
+	return true, "Aligned"
+end
+
+local function replace_plot_contents(plot: Instance, template: Instance): (boolean, string)
+	local targetSpawn = get_player_spawn(plot)
+	if not targetSpawn then
+		return false, "TargetPlayerSpawnMissing"
+	end
+
+	local cloneSucceeded, levelClone = pcall(function()
+		return template:Clone()
+	end)
+	if not cloneSucceeded or not levelClone then
+		return false, "TemplateCloneFailed"
+	end
+
+	local aligned, alignReason = align_level_clone_to_spawn(levelClone, targetSpawn)
+	if not aligned then
+		levelClone:Destroy()
+		return false, alignReason
+	end
+
+	local clonedSpawn = get_player_spawn(levelClone)
+	for _, child in plot:GetChildren() do
+		if child ~= targetSpawn then
+			child:Destroy()
+		end
+	end
+
+	for _, child in levelClone:GetChildren() do
+		if child ~= clonedSpawn then
+			child.Parent = plot
+		end
+	end
+
+	levelClone:Destroy()
+	return true, "Replaced"
 end
 
 local function sync_plot_horses(player: Player): ()
@@ -210,6 +411,9 @@ local function get_slot_prompt(plot: Instance, slotName: string): ProximityPromp
 	if not proximityPart then
 		return nil
 	end
+	if proximityPart:IsA("ProximityPrompt") then
+		return proximityPart
+	end
 
 	for _, child in ipairs(proximityPart:GetChildren()) do
 		if child:IsA("ProximityPrompt") then
@@ -217,7 +421,18 @@ local function get_slot_prompt(plot: Instance, slotName: string): ProximityPromp
 		end
 	end
 
-	return nil
+	if not proximityPart:IsA("BasePart") and not proximityPart:IsA("Attachment") then
+		return nil
+	end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = SLOT_PROMPT_NAME
+	prompt.HoldDuration = SLOT_PROMPT_HOLD_DURATION
+	prompt.MaxActivationDistance = SLOT_PROMPT_MAX_ACTIVATION_DISTANCE
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = proximityPart
+
+	return prompt
 end
 
 local function get_slot_folder(plot: Instance, slotName: string): Instance?
@@ -427,6 +642,127 @@ local function bind_plot_slot_prompts(player: Player, playerTrove, plot: Instanc
 	refresh_free_horse_prompts(player)
 end
 
+local function rebind_plot_slot_prompts(player: Player, plot: Instance): ()
+	local previousTrove = plotTroves[player]
+	if previousTrove then
+		previousTrove:Destroy()
+	end
+
+	local plotTrove = Trove.new()
+	plotTroves[player] = plotTrove
+	bind_plot_slot_prompts(player, plotTrove, plot)
+end
+
+local function set_player_plot_level(player: Player, requestedLevel): (boolean, string)
+	if player.Parent ~= Players then
+		return false, "PlayerUnavailable"
+	end
+
+	if changingLevelByPlayer[player] then
+		return false, "LevelChangeBusy"
+	end
+
+	local numericLevel = tonumber(requestedLevel)
+	if not numericLevel or numericLevel % 1 ~= 0 then
+		return false, "InvalidLevel"
+	end
+
+	local level = math.floor(numericLevel)
+	if level < StableDictionary.DefaultLevel or level > StableDictionary.MaxLevel then
+		return false, "InvalidLevel"
+	end
+
+	local plotData = assignedPlotByPlayer[player] or assign_plot(player)
+	if not plotData then
+		return false, "PlotMissing"
+	end
+
+	local template = get_level_plot_template(level, plotData.number)
+	if not template then
+		return false, "LevelPlotTemplateMissing"
+	end
+
+	local stable = DataUtility.server.get(player, "Stable")
+	if player.Parent ~= Players then
+		return false, "PlayerUnavailable"
+	elseif type(stable) ~= "table" then
+		return false, "StableDataMissing"
+	end
+
+	changingLevelByPlayer[player] = true
+	HorseRoamingService.ReturnPlayerHorsesToStable(player)
+	HorseService.ClearPlotHorses(plotData.instance)
+	disable_plot_slot_prompts(plotData.instance)
+
+	local replaced, replaceReason = replace_plot_contents(plotData.instance, template)
+	if not replaced then
+		changingLevelByPlayer[player] = nil
+		rebind_plot_slot_prompts(player, plotData.instance)
+		sync_plot_horses(player)
+		warn(("[PlotAssignment] Falha ao aplicar %s para %s: %s"):format(
+			template.Name,
+			player.Name,
+			replaceReason
+		))
+		return false, replaceReason
+	end
+
+	ensure_horse_folder_layout(plotData.instance)
+	activeLevelByPlayer[player] = level
+	plotData.instance:SetAttribute(STABLE_LEVEL_ATTRIBUTE, level)
+	plotData.instance:SetAttribute(
+		HAS_HAY_BALE_FOLDER_ATTRIBUTE,
+		plotData.instance:FindFirstChild(HAY_BALE_FOLDER_NAME) ~= nil
+	)
+	plotData.instance:SetAttribute(
+		HAS_HORSE_WATER_ATTRIBUTE,
+		plotData.instance:FindFirstChild(HORSE_WATER_FOLDER_NAME) ~= nil
+	)
+	player:SetAttribute(STABLE_LEVEL_ATTRIBUTE, level)
+	rebind_plot_slot_prompts(player, plotData.instance)
+
+	-- OwnedStalls and HorseSlots intentionally stay untouched: bought slots are
+	-- player-wide and immediately become available in every level that contains
+	-- their matching Slot folder.
+	stable.Level = level
+	DataUtility.server.set(player, "Stable", stable)
+	sync_plot_horses(player)
+	refresh_plot_slot_prompts(player)
+	refresh_free_horse_prompts(player)
+	changingLevelByPlayer[player] = nil
+
+	return true, StableDictionary.get_level_template_name(level)
+end
+
+local function restore_saved_plot_level(player: Player): ()
+	local stable = DataUtility.server.get(player, "Stable")
+	if type(stable) ~= "table" or player.Parent ~= Players then
+		return
+	end
+
+	local savedLevel = StableDictionary.get_normalized_level(stable.Level)
+	local changed, reason = set_player_plot_level(player, savedLevel)
+	if not changed and reason == "LevelPlotTemplateMissing" and savedLevel ~= StableDictionary.DefaultLevel then
+		set_player_plot_level(player, StableDictionary.DefaultLevel)
+	end
+end
+
+local function handle_chat_command(player: Player, message: string): ()
+	local requestedLevel = string.match(string.lower(message), "^%s*!level(%d+)%s*$")
+	if not requestedLevel then
+		return
+	end
+
+	local changed, reason = set_player_plot_level(player, requestedLevel)
+	if not changed then
+		warn(("[PlotAssignment] %s nao conseguiu usar !level%s: %s"):format(
+			player.Name,
+			requestedLevel,
+			reason
+		))
+	end
+end
+
 local function teleport_character_to_plot(player: Player, character: Model): ()
 	local plotData = assignedPlotByPlayer[player] or assign_plot(player)
 	if not plotData then
@@ -477,7 +813,7 @@ local function on_player_added(player: Player): ()
 
 	local plotData = assignedPlotByPlayer[player]
 	if plotData then
-		bind_plot_slot_prompts(player, playerTrove, plotData.instance)
+		rebind_plot_slot_prompts(player, plotData.instance)
 	end
 
 	local horsesConnection = DataUtility.server.bind(player, "Horses", function()
@@ -489,10 +825,17 @@ local function on_player_added(player: Player): ()
 		playerTrove:Add(horsesConnection)
 	end
 
-	local stableConnection = DataUtility.server.bind(player, "Stable", function()
+	local stableConnection = DataUtility.server.bind(player, "Stable", function(stable)
 		sync_plot_horses(player)
 		refresh_plot_slot_prompts(player)
 		refresh_free_horse_prompts(player)
+
+		if type(stable) == "table" then
+			local savedLevel = StableDictionary.get_normalized_level(stable.Level)
+			if activeLevelByPlayer[player] ~= savedLevel and not changingLevelByPlayer[player] then
+				task.defer(set_player_plot_level, player, savedLevel)
+			end
+		end
 	end)
 
 	if stableConnection then
@@ -504,6 +847,11 @@ local function on_player_added(player: Player): ()
 	playerTrove:Connect(player.CharacterAdded, function(character: Model)
 		on_character_added(player, character)
 	end)
+	playerTrove:Connect(player.Chatted, function(message: string)
+		task.spawn(handle_chat_command, player, message)
+	end)
+
+	task.spawn(restore_saved_plot_level, player)
 
 	local currentCharacter = player.Character
 	if currentCharacter then

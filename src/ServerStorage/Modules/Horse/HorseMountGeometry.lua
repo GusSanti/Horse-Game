@@ -204,14 +204,24 @@ function HorseMountGeometry.resolveGroundPosition(position, ignoreList, groundOf
 	raycastParams.FilterDescendantsInstances = ignoreList
 	raycastParams.IgnoreWater = false
 
-	local origin = position + Vector3.new(0, HorseMountConfig.GroundProbeHeight, 0)
-	local direction = Vector3.new(0, -(HorseMountConfig.GroundProbeDistance + HorseMountConfig.GroundProbeHeight), 0)
+	-- Start immediately above the expected hoof height. Starting above the whole
+	-- horse can put the ray over a stable roof, making that roof look like ground
+	-- and teleporting the horse onto it while it walks.
+	local resolvedGroundOffset = math.max(0, tonumber(groundOffset) or 0)
+	local probeAboveHooves = math.max(0.5, tonumber(HorseMountConfig.GroundProbeAboveHooves) or 3)
+	local expectedGroundY = position.Y - resolvedGroundOffset
+	local origin = Vector3.new(position.X, expectedGroundY + probeAboveHooves, position.Z)
+	local direction = Vector3.new(
+		0,
+		-(math.max(1, tonumber(HorseMountConfig.GroundProbeDistance) or 64) + probeAboveHooves),
+		0
+	)
 	local result = Workspace:Raycast(origin, direction, raycastParams)
 
 	if result then
 		return Vector3.new(
 			position.X,
-			result.Position.Y + groundOffset + HorseMountConfig.GroundClearance,
+			result.Position.Y + resolvedGroundOffset + HorseMountConfig.GroundClearance,
 			position.Z
 		)
 	end
