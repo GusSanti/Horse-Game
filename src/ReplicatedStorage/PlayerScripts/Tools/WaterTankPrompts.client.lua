@@ -205,7 +205,7 @@ function queue_refresh()
 		prompt.HoldDuration = PROMPT_HOLD_DURATION
 		prompt.MaxActivationDistance = 10
 		prompt.RequiresLineOfSight = false
-		prompt.Style = Enum.ProximityPromptStyle.Default
+		prompt.Style = Enum.ProximityPromptStyle.Custom
 		prompt.Parent = promptParent
 		create_placement_outlines(waterTankModel)
 

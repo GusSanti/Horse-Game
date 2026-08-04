@@ -12,6 +12,7 @@ local Close = require(script.Close)
 local Fade = require(script.Fade)
 local Stagger = require(script.Stagger)
 local Punch = require(script.Punch)
+local HoverShine = require(script.HoverShine)
 local UIRouter = require(
 	ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("UIRouter")
 )
@@ -1423,6 +1424,9 @@ bind_instance = function(instance)
 			bind_auto_open_button(instance, state)
 		end
 		bind_button_animation(instance, state)
+		if hasButtonAnimation then
+			HoverShine.bind(instance)
+		end
 	end
 
 	bind_open_animation(instance, state)
@@ -1487,6 +1491,10 @@ function HudAnim.punch(instance, options)
 	Punch.play(instance, options)
 end
 
+function HudAnim.play_shine(instance)
+	HoverShine.play(instance)
+end
+
 function HudAnim.get_ui_scale(instance, name)
 	return Utils.get_ui_scale(instance, name)
 end
@@ -1504,6 +1512,7 @@ function HudAnim.unbind(instance)
 		return
 	end
 
+	HoverShine.unbind(instance)
 	local state = states[instance]
 	if not state then
 		return

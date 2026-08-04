@@ -10,7 +10,9 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local HotbarDrag = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("HotbarDrag"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
+local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
@@ -42,6 +44,7 @@ local NAME_LABEL_NAMES = { "NameItem", "NameTX", "ItemName", "ItemNameTX" }
 local BIND_INDICATOR_NAMES = { "Bind", "BindTX", "KeyBind", "KeyTX", "HotkeyTX" }
 local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
 local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
+local UPDATE_LOADOUT_REMOTE_NAME = "UpdateInventoryLoadout"
 
 local VIEWPORT = {
 	FieldOfView = 30,
@@ -162,6 +165,9 @@ local itemHandOriginals = nil
 local itemHandTargetKey = nil
 local lastMoneyAmount = nil
 local moneyChangeEffects = {}
+local hotbarDrag = nil
+local loadoutUpdateBusy = false
+local queue_refresh
 
 local rootTrove = Trove.new()
 local backpackTrove = Trove.new()
@@ -1288,6 +1294,8 @@ local function resolve_tool_metadata(tool: Tool)
 			local imageOnly = is_fruit_item_definition(farmingDefinition)
 			return {
 				Key = farmingDefinition.ItemId,
+				LoadoutKind = "item",
+				LoadoutValue = farmingDefinition.ItemId,
 				DisplayName = farmingDefinition.DisplayName or tool.Name,
 				SortCategory = categoryOrderLookup[farmingDefinition.ToolCategory] or math.huge,
 				SortOrder = farmingDefinition.SortOrder or math.huge,
@@ -1314,6 +1322,8 @@ local function resolve_tool_metadata(tool: Tool)
 		local imageOnly = is_fruit_item_definition(toolDefinition)
 		return {
 			Key = toolDefinition.ItemId,
+			LoadoutKind = "item",
+			LoadoutValue = toolDefinition.ItemId,
 			DisplayName = toolDefinition.DisplayName or tool.Name,
 			SortCategory = categoryOrderLookup[toolDefinition.ToolCategory] or math.huge,
 			SortOrder = toolDefinition.SortOrder or math.huge,
@@ -1335,6 +1345,8 @@ local function resolve_tool_metadata(tool: Tool)
 
 	return {
 		Key = get_tool_key(tool),
+		LoadoutKind = "generic",
+		LoadoutValue = tool.Name,
 		DisplayName = genericDefinition and genericDefinition.DisplayName or tool.Name,
 		SortCategory = math.huge,
 		SortOrder = genericDefinition and genericDefinition.SortOrder or math.huge,
@@ -1684,6 +1696,8 @@ local function build_groups()
 		if not existingGroup then
 			existingGroup = {
 				Key = itemKey,
+				LoadoutKind = metadata.LoadoutKind,
+				LoadoutValue = metadata.LoadoutValue,
 				DisplayName = metadata.DisplayName,
 				SortCategory = metadata.SortCategory,
 				SortOrder = metadata.SortOrder,
@@ -1766,12 +1780,11 @@ local function get_loadout_order_lookup()
 		order += 1
 	end
 
-	for _, itemId in ipairs(DataUtility.client.get(InventoryLoadout.HOTBAR_ITEM_IDS_PATH) or {}) do
-		push(itemId)
-	end
-
-	for _, toolName in ipairs(DataUtility.client.get(InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH) or {}) do
-		push(toolName)
+	local itemIds = DataUtility.client.get(InventoryLoadout.HOTBAR_ITEM_IDS_PATH) or {}
+	local toolNames = DataUtility.client.get(InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH) or {}
+	local preferredEntries = DataUtility.client.get(InventoryLoadout.HOTBAR_ORDER_PATH)
+	for _, entry in ipairs(InventoryLoadout.GetOrderedEntries(itemIds, toolNames, preferredEntries)) do
+		push(entry.Value)
 	end
 
 	return lookup
@@ -2033,6 +2046,91 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 	set_slot_selected(slot, stickySelectionKey == group.Key)
 end
 
+local function resolve_drag_target(position: Vector2, sourceKey: string): (string?, GuiObject?)
+	for _, itemKey in ipairs(orderedItemKeys) do
+		if itemKey ~= sourceKey then
+			local slot = slotInstances[itemKey]
+			if slot and slot.Parent and slot.Visible then
+				local minimum = slot.AbsolutePosition
+				local maximum = minimum + slot.AbsoluteSize
+				if position.X >= minimum.X
+					and position.X <= maximum.X
+					and position.Y >= minimum.Y
+					and position.Y <= maximum.Y
+				then
+					return itemKey, slot
+				end
+			end
+		end
+	end
+
+	return nil, nil
+end
+
+local function apply_visual_order(itemKeys: { string }): ()
+	table.clear(orderedItemKeys)
+	for index, itemKey in ipairs(itemKeys) do
+		orderedItemKeys[index] = itemKey
+		local slot = slotInstances[itemKey]
+		if slot then
+			slot.LayoutOrder = index
+			set_bind_indicator(slot, index)
+		end
+	end
+end
+
+local function build_order_payload(itemKeys: { string }): { any }
+	local entries = {}
+	for _, itemKey in ipairs(itemKeys) do
+		local group = currentGroups[itemKey]
+		if group and group.LoadoutKind and group.LoadoutValue then
+			entries[#entries + 1] = {
+				Kind = group.LoadoutKind,
+				Value = group.LoadoutValue,
+			}
+		end
+	end
+	return entries
+end
+
+local function swap_hotbar_slots(sourceKey: string, targetKey: string): ()
+	if loadoutUpdateBusy then
+		return
+	end
+
+	local sourceIndex = table.find(orderedItemKeys, sourceKey)
+	local targetIndex = table.find(orderedItemKeys, targetKey)
+	local sourceGroup = currentGroups[sourceKey]
+	if not sourceIndex or not targetIndex or not sourceGroup
+		or not sourceGroup.LoadoutKind or not sourceGroup.LoadoutValue
+	then
+		return
+	end
+
+	local previousOrder = table.clone(orderedItemKeys)
+	local nextOrder = table.clone(orderedItemKeys)
+	nextOrder[sourceIndex], nextOrder[targetIndex] = nextOrder[targetIndex], nextOrder[sourceIndex]
+	apply_visual_order(nextOrder)
+	loadoutUpdateBusy = true
+
+	local callSucceeded, updated = pcall(function()
+		return Net.Function[UPDATE_LOADOUT_REMOTE_NAME]:Call({
+			Kind = sourceGroup.LoadoutKind,
+			Value = sourceGroup.LoadoutValue,
+			Equipped = true,
+			HotbarEntries = build_order_payload(nextOrder),
+		})
+	end)
+	loadoutUpdateBusy = false
+
+	if not callSucceeded or updated == false then
+		apply_visual_order(previousOrder)
+		return
+	end
+
+	queue_refresh()
+end
+
 local function create_slot(group)
 	local slot = hotbarTemplateSource:Clone()
 	local slotTrove = Trove.new()
@@ -2047,9 +2145,9 @@ local function create_slot(group)
 	slotTrove:Add(slot)
 
 	local clickTarget = create_click_target(slot)
-	slotTrove:Connect(clickTarget.Activated, function()
+	slotTrove:Add(hotbarDrag:Bind(clickTarget, slot, group.Key, function()
 		toggle_group(group.Key)
-	end)
+	end))
 
 	return slot
 end
@@ -2113,7 +2211,7 @@ local function rebuild_hotbar()
 
 end
 
-local function queue_refresh()
+queue_refresh = function()
 	if refreshQueued then
 		return
 	end
@@ -2256,6 +2354,18 @@ local function bind_ui_watchers()
 	end)
 end
 
+hotbarDrag = HotbarDrag.new({
+	PlayerGui = playerGui,
+	CanStart = function(): boolean
+		return not loadoutUpdateBusy
+	end,
+	ResolveTarget = resolve_drag_target,
+	OnDrop = swap_hotbar_slots,
+})
+rootTrove:Add(function()
+	hotbarDrag:Destroy()
+end)
+
 rootTrove:Connect(UserInputService.InputBegan, function(input: InputObject, gameProcessed: boolean)
 	if gameProcessed then
 		return
@@ -2300,6 +2410,7 @@ rootTrove:Add(DataUtility.client.bind("Inventory.Consumables.Misc", queue_refres
 rootTrove:Add(DataUtility.client.bind("Inventory.Consumables.Medical", queue_refresh))
 rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_ITEM_IDS_PATH, queue_refresh))
 rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH, queue_refresh))
+rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_ORDER_PATH, queue_refresh))
 rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_INITIALIZED_PATH, queue_refresh))
 
 if localPlayer.Character then

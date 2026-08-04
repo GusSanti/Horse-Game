@@ -483,7 +483,7 @@ function queue_refresh(): ()
 				prompt.HoldDuration = 0
 				prompt.MaxActivationDistance = promptConfig.maxActivationDistance or 10
 				prompt.RequiresLineOfSight = promptConfig.requiresLineOfSight == true
-				prompt.Style = Enum.ProximityPromptStyle.Default
+				prompt.Style = Enum.ProximityPromptStyle.Custom
 				prompt.Parent = promptParent
 
 				local clientHandler = get_client_handler(definition)

@@ -6,6 +6,7 @@ local Players: Players = game:GetService("Players")
 local Modules: Folder = ReplicatedStorage:WaitForChild("Modules") :: Folder
 local Trove: any = require(Modules:WaitForChild("Libraries"):WaitForChild("Trove"))
 local HudAnim: any = require(Modules:WaitForChild("Libraries"):WaitForChild("HudAnim"))
+local OutlinedText: any = require(script.Parent:WaitForChild("OutlinedText"))
 
 local UIRouter: any = require(
 	Modules
@@ -34,11 +35,18 @@ local function HasTrueAttribute(InstanceValue: Instance, AttributeName: string):
 end
 
 local function SetupInterface(InstanceValue: Instance): ()
+	local IsScreenGui: boolean = InstanceValue:IsA("ScreenGui")
+	if IsScreenGui then
+		OutlinedText.bind_all(InstanceValue)
+	else
+		OutlinedText.bind(InstanceValue)
+	end
+
 	if HasTrueAttribute(InstanceValue, IGNORE_HUD_ANIM_ATTRIBUTE) then
 		return
 	end
 
-	if InstanceValue:IsA("ScreenGui") then
+	if IsScreenGui then
 		HudAnim.apply_defaults_to_buttons(InstanceValue)
 		HudAnim.bind_all(InstanceValue)
 		return
@@ -83,6 +91,7 @@ function UIRuntime:Destroy(): ()
 	self.PlayerGui = nil
 	if PlayerGui then
 		HudAnim.unbind_all(PlayerGui)
+		OutlinedText.unbind_all(PlayerGui)
 	end
 
 	if self.Trove then

@@ -320,10 +320,7 @@ local function CreatePrompt(Prompt : ProximityPrompt, InputType : Enum.Proximity
 	return function()
 		ButtonHeldDown.Value = false
 		PromptTransparency.Value = 1
-
-		task.delay(2, function()
-			PromptScope:Destroy()
-		end)
+		PromptScope:Destroy()
 	end
 end
 
@@ -347,18 +344,8 @@ function ExpressivePrompts.Init()
 
 	-- When a prompt is shown, create the prompt UI
 	ProximityPromptService.PromptShown:Connect(function(Prompt : ProximityPrompt, InputType : Enum.ProximityPromptInputType)
-		-- We refresh proximity prompts with default style so that we don't show overlapping UI
 		if Prompt.Style == Enum.ProximityPromptStyle.Default then
-			local LastParent = Prompt.Parent
-
 			Prompt.Style = Enum.ProximityPromptStyle.Custom
-			Prompt.Parent = nil
-
-			task.defer(function()
-				Prompt.Parent = LastParent
-			end)
-
-			return
 		end
 
 		-- If it's a custom prompt style, create the prompt UI and hook it up

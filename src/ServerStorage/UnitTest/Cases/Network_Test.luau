@@ -41,6 +41,7 @@ local EXPECTED_FUNCTIONS: { string } = {
 	"RestoreEquippedHorseNeeds",
 	"RollHorseRoulette",
 	"SellFruit",
+	"StableSlotAction",
 	"TeleportToArea",
 	"UpdateInventoryLoadout",
 	"UpdatePlayerSetting",
