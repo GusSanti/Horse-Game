@@ -79,6 +79,7 @@ local ProfileTemplate = {
 		GenericCounts = {},
 		HotbarItemIds = {},
 		HotbarGenericToolNames = {},
+		HotbarOrder = {},
 		HotbarLoadoutInitialized = false,
 	},
 

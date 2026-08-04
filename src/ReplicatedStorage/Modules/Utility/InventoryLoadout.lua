@@ -9,6 +9,7 @@ local InventoryLoadout = {}
 InventoryLoadout.MAX_HOTBAR_SLOTS = 9
 InventoryLoadout.HOTBAR_ITEM_IDS_PATH = "SavedTools.HotbarItemIds"
 InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH = "SavedTools.HotbarGenericToolNames"
+InventoryLoadout.HOTBAR_ORDER_PATH = "SavedTools.HotbarOrder"
 InventoryLoadout.HOTBAR_INITIALIZED_PATH = "SavedTools.HotbarLoadoutInitialized"
 
 InventoryLoadout.DEFAULT_GENERIC_TOOL_DEFINITIONS = {
@@ -71,6 +72,114 @@ local function copy_normalized_values(values, normalizer)
 	end
 
 	return nextValues
+end
+
+local function get_entry_normalizer(kind)
+	if kind == "item" then
+		return normalize_item_id
+	end
+
+	if kind == "generic" then
+		return normalize_generic_tool_name
+	end
+
+	return nil
+end
+
+function InventoryLoadout.GetEntryKey(kind, value): string?
+	local normalizer = get_entry_normalizer(kind)
+	local normalizedValue = normalizer and normalizer(value) or nil
+	return if normalizedValue then ("%s:%s"):format(kind, normalizedValue) else nil
+end
+
+function InventoryLoadout.GetOrderedEntries(itemIds, genericToolNames, preferredEntries)
+	local sourceItemIds = if type(itemIds) == "table" then itemIds else {}
+	local sourceToolNames = if type(genericToolNames) == "table" then genericToolNames else {}
+	local sourcePreferredEntries = if type(preferredEntries) == "table" then preferredEntries else {}
+	local allowed = {}
+	local result = {}
+	local seen = {}
+
+	local function allow(kind, value)
+		local key = InventoryLoadout.GetEntryKey(kind, value)
+		if key then
+			allowed[key] = value
+		end
+	end
+
+	local function push(kind, value)
+		local key = InventoryLoadout.GetEntryKey(kind, value)
+		local allowedValue = key and allowed[key] or nil
+		if not key or allowedValue == nil or seen[key] then
+			return
+		end
+
+		seen[key] = true
+		result[#result + 1] = {
+			Kind = kind,
+			Value = allowedValue,
+		}
+	end
+
+	for _, itemId in ipairs(sourceItemIds) do
+		allow("item", itemId)
+	end
+	for _, toolName in ipairs(sourceToolNames) do
+		allow("generic", toolName)
+	end
+
+	for _, entry in ipairs(sourcePreferredEntries) do
+		if type(entry) == "table" then
+			push(entry.Kind, entry.Value)
+		end
+	end
+
+	for _, itemId in ipairs(sourceItemIds) do
+		push("item", itemId)
+	end
+	for _, toolName in ipairs(sourceToolNames) do
+		push("generic", toolName)
+	end
+
+	return result
+end
+
+function InventoryLoadout.SplitEntries(entries)
+	local sourceEntries = if type(entries) == "table" then entries else {}
+	local itemIds = {}
+	local genericToolNames = {}
+
+	for _, entry in ipairs(sourceEntries) do
+		if type(entry) == "table" and entry.Kind == "item" then
+			itemIds[#itemIds + 1] = entry.Value
+		elseif type(entry) == "table" and entry.Kind == "generic" then
+			genericToolNames[#genericToolNames + 1] = entry.Value
+		end
+	end
+
+	return itemIds, genericToolNames
+end
+
+function InventoryLoadout.AreEntriesEqual(firstEntries, secondEntries): boolean
+	if type(firstEntries) ~= "table" or type(secondEntries) ~= "table" then
+		return false
+	end
+
+	if #firstEntries ~= #secondEntries then
+		return false
+	end
+
+	for index, firstEntry in ipairs(firstEntries) do
+		local secondEntry = secondEntries[index]
+		if type(secondEntry) ~= "table"
+			or InventoryLoadout.GetEntryKey(firstEntry.Kind, firstEntry.Value)
+				~= InventoryLoadout.GetEntryKey(secondEntry.Kind, secondEntry.Value)
+		then
+			return false
+		end
+	end
+
+	return true
 end
 
 local function set_value_equipped(values, targetValue, isEquipped, normalizer)
