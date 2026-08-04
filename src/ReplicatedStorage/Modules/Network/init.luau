@@ -10,6 +10,7 @@ local Events = table.freeze({
 	DataChanged = Net.Event.DataUtilityChanged,
 	HorseIndexStateChanged = Net.Event.HorseIndexStateChanged,
 	HorseBrushAnimation = Net.Event.HorseBrushAnimation,
+	HorseFeedAnimation = Net.Event.HorseFeedAnimation,
 	HorseMountInput = Net.Event.HorseMountInput,
 	HorseMountState = Net.Event.HorseMountState,
 	HorseRevealAcknowledged = Net.Event.AcknowledgeReveal,
@@ -64,6 +65,7 @@ local Network = {
 	Horse = table.freeze({
 		AcknowledgeReveal = Events.HorseRevealAcknowledged,
 		BrushAnimation = Events.HorseBrushAnimation,
+		FeedAnimation = Events.HorseFeedAnimation,
 		CleanStableDirt = Functions.CleanStableDirt,
 		UseTool = Functions.UseHorseTool,
 	}),

@@ -2,10 +2,12 @@
 local Players: Players = game:GetService("Players")
 local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService: RunService = game:GetService("RunService")
+local TweenService: TweenService = game:GetService("TweenService")
 
 ------------------//CONSTANTS
 local localPlayer: Player = Players.LocalPlayer
 local PLAYER_BRUSH_ANIMATION_ID = "rbxassetid://99003220029388"
+local PLAYER_POSITION_TWEEN_DURATION = 0.35
 local Network = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"))
 
 ------------------//VARIABLES
@@ -88,12 +90,93 @@ local function destroy_animation(animation: Animation?): ()
 	animation:Destroy()
 end
 
+local function get_animation_duration(track: AnimationTrack?, fallbackDuration: number): number
+	if not track then
+		return fallbackDuration
+	end
+
+	local deadline = os.clock() + 3
+	while track.Length <= 0 and os.clock() < deadline do
+		task.wait()
+	end
+
+	return if track.Length > 0 then track.Length else fallbackDuration
+end
+
 local function get_instance_pivot(instance: Instance): CFrame
 	if instance:IsA("Model") or instance:IsA("BasePart") then
 		return instance:GetPivot()
 	end
 
 	return CFrame.new()
+end
+
+local function find_right_hand(character: Model): BasePart?
+	for _, partName in ipairs({ "RightHand", "Right Arm", "RightLowerArm", "RightUpperArm" }) do
+		local part = character:FindFirstChild(partName)
+		if part and part:IsA("BasePart") then
+			return part
+		end
+	end
+
+	local rightHand = character:FindFirstChild("RightHand", true)
+	return if rightHand and rightHand:IsA("BasePart") then rightHand else nil
+end
+
+local function find_tool_handle(tool: Tool): BasePart?
+	local handle = tool:FindFirstChild("Handle")
+	if handle and handle:IsA("BasePart") then
+		return handle
+	end
+
+	return tool:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function attach_tool_to_hand(character: Model, tool: Tool): Motor6D?
+	local rightHand = find_right_hand(character)
+	local handle = find_tool_handle(tool)
+	if not rightHand or not handle then
+		return nil
+	end
+
+	for _, joint in ipairs(rightHand:GetChildren()) do
+		if joint:IsA("Motor6D") and joint.Part0 == rightHand and joint.Part1 == handle then
+			return nil
+		end
+	end
+
+	local grip = Instance.new("Motor6D")
+	grip.Name = "HorseBrushGrip"
+	grip.Part0 = rightHand
+	grip.Part1 = handle
+	grip.C0 = tool.Grip
+	grip.Parent = rightHand
+
+	return grip
+end
+
+local function get_root_cframe_at_pivot(character: Model, rootPart: BasePart, pivot: CFrame): CFrame
+	return pivot * character:GetPivot():ToObjectSpace(rootPart.CFrame)
+end
+
+local function tween_root_to(session, targetCFrame: CFrame): Tween?
+	local rootPart = session.rootPart
+	if not rootPart or not rootPart.Parent then
+		return nil
+	end
+
+	if session.positionTween then
+		session.positionTween:Cancel()
+	end
+
+	local tween = TweenService:Create(
+		rootPart,
+		TweenInfo.new(PLAYER_POSITION_TWEEN_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ CFrame = targetCFrame }
+	)
+	session.positionTween = tween
+	tween:Play()
+	return tween
 end
 
 local function restore_character(session): ()
@@ -140,9 +223,19 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 
 	disconnect_all(session.connections)
 	stop_track(session.playerTrack)
+	if session.toolGrip then
+		session.toolGrip:Destroy()
+		session.toolGrip = nil
+	end
 	pcall(function()
-		Network.Horse.BrushAnimation:Fire(session.horseId, false)
+		session.horseAnimationEvent:Fire(session.tool, session.horseId, false)
 	end)
+	if session.tweenCharacterPosition and session.savedRootCFrame then
+		local returnTween = tween_root_to(session, session.savedRootCFrame)
+		if returnTween then
+			returnTween.Completed:Wait()
+		end
+	end
 	restore_character(session)
 
 	if type(session.hideTask) == "function" then
@@ -216,7 +309,7 @@ local function start_session(context): boolean
 	end
 
 	local playerAnimation = Instance.new("Animation")
-	playerAnimation.AnimationId = PLAYER_BRUSH_ANIMATION_ID
+	playerAnimation.AnimationId = context.playerAnimationId or PLAYER_BRUSH_ANIMATION_ID
 
 	local session = {
 		character = character,
@@ -237,8 +330,11 @@ local function start_session(context): boolean
 		closed = false,
 		startedAt = os.clock(),
 		actionDuration = math.max(context.actionDuration or 10, 0.05),
+		horseAnimationEvent = context.horseAnimationEvent or Network.Horse.BrushAnimation,
+		tweenCharacterPosition = context.tweenCharacterPosition == true,
 		rootPart = resolvedRootPart,
 		savedCharacterPivot = character:GetPivot(),
+		savedRootCFrame = resolvedRootPart and resolvedRootPart.CFrame or nil,
 		savedWalkSpeed = humanoid.WalkSpeed,
 		savedJumpPower = humanoid.JumpPower,
 		savedJumpHeight = humanoid.JumpHeight,
@@ -247,6 +343,11 @@ local function start_session(context): boolean
 	}
 
 	session.playerTrack = load_animation_track(playerAnimator, playerAnimation)
+	if context.matchPlayerAnimationDuration then
+		session.actionDuration = math.max(get_animation_duration(session.playerTrack, session.actionDuration), 0.05)
+	end
+	session.startedAt = os.clock()
+	session.toolGrip = attach_tool_to_hand(character, context.tool)
 
 	activeSession = session
 
@@ -254,7 +355,7 @@ local function start_session(context): boolean
 		context.beginInteraction()
 	end
 	pcall(function()
-		Network.Horse.BrushAnimation:Fire(context.tool, context.horseId, true)
+		session.horseAnimationEvent:Fire(context.tool, context.horseId, true, session.actionDuration)
 	end)
 
 	humanoid.WalkSpeed = 0
@@ -262,10 +363,15 @@ local function start_session(context): boolean
 	humanoid.JumpHeight = 0
 	humanoid.AutoRotate = false
 
-	character:PivotTo(get_instance_pivot(context.horseVisual))
-
 	if session.rootPart then
 		session.rootPart.Anchored = true
+	end
+
+	local horsePivot = get_instance_pivot(context.horseVisual)
+	if session.tweenCharacterPosition and session.rootPart then
+		tween_root_to(session, get_root_cframe_at_pivot(character, session.rootPart, horsePivot))
+	else
+		character:PivotTo(horsePivot)
 	end
 
 	play_track(session.playerTrack)
