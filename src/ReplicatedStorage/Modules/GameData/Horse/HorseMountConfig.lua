@@ -94,6 +94,7 @@ local HorseMountConfig = {
 	HorseWalkAnimationId = "rbxassetid://130838555732117",
 	HorseRunAnimationId = "rbxassetid://93307503888569",
 	HorseBrushAnimationId = "rbxassetid://294893849",
+	HorseEatDrinkAnimationId = "rbxassetid://120683562864703",
 	HorseJumpAnimationId = "rbxassetid://111392003997902",
 	HorseJumpAnimationFadeTime = 0.06,
 	HorseJumpChargeMinSeconds = 0.12,

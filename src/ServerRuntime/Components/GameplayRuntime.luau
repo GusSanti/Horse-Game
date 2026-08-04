@@ -22,6 +22,7 @@ local ShopModules: Folder = ServerModules:WaitForChild("Shop") :: Folder
 local ConsumableToolService: any = require(InventoryModules:WaitForChild("ConsumableToolService"))
 local FarmingService: any = require(FarmingModules:WaitForChild("FarmingService"))
 local FarmingShopService: any = require(FarmingModules:WaitForChild("FarmingShopService"))
+local HorseAutoCareService: any = require(HorseModules:WaitForChild("HorseAutoCareService"))
 local HayBaleService: any = require(HorseModules:WaitForChild("HayBaleService"))
 local HorseIndexService: any = require(HorseModules:WaitForChild("HorseIndexService"))
 local HorseMountService: any = require(HorseModules:WaitForChild("HorseMountService"))
@@ -83,6 +84,7 @@ local SERVICES: { ServiceDefinition } = {
 	{ Name = "HorseMountService", Service = HorseMountService },
 	{ Name = "HayBaleService", Service = HayBaleService },
 	{ Name = "WaterTankService", Service = WaterTankService },
+	{ Name = "HorseAutoCareService", Service = HorseAutoCareService },
 	{ Name = "WellWaterService", Service = WellWaterService },
 	{ Name = "StableCleaningService", Service = StableCleaningService },
 }

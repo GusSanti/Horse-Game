@@ -48,6 +48,10 @@ local registeredCollisionVisuals = setmetatable({}, { __mode = "k" })
 local stableAnimationStates = setmetatable({}, { __mode = "k" })
 local collisionPlayerConnections = {}
 local RACE_MIN_STATUS_PERCENT = 50
+local ACTION_BEHAVIOR_TO_MODE = {
+	Eating = "EatDrink",
+	Drinking = "EatDrink",
+}
 local STATUS_DISPLAY_NAMES = {
 	Happiness = "Felicidade",
 	Hunger = "Hunger",
@@ -204,10 +208,13 @@ local function sync_stable_animation(visual: Instance): ()
 	end
 
 	local mountedUserId = visual:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE)
+	local roamingBehavior = visual:GetAttribute(ROAMING_BEHAVIOR_ATTRIBUTE)
 	local mode = if type(mountedUserId) == "number" and mountedUserId > 0
 		then nil
+		elseif ACTION_BEHAVIOR_TO_MODE[roamingBehavior] ~= nil
+			then ACTION_BEHAVIOR_TO_MODE[roamingBehavior]
 		elseif visual:GetAttribute(ROAMING_HORSE_ATTRIBUTE) == true
-			and visual:GetAttribute(ROAMING_BEHAVIOR_ATTRIBUTE) == "Walking"
+			and roamingBehavior == "Walking"
 		then "Walk"
 		else "Idle"
 
@@ -244,13 +251,14 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 
 	local idleTrack, idleAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseIdleAnimationId)
 	local walkTrack, walkAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseWalkAnimationId)
+	local eatDrinkTrack, eatDrinkAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseEatDrinkAnimationId)
 	if not idleTrack or not walkTrack then
-		for _, track in { idleTrack, walkTrack } do
+		for _, track in { idleTrack, walkTrack, eatDrinkTrack } do
 			if track then
 				track:Destroy()
 			end
 		end
-		for _, animation in { idleAnimation, walkAnimation } do
+		for _, animation in { idleAnimation, walkAnimation, eatDrinkAnimation } do
 			if animation then
 				animation:Destroy()
 			end
@@ -263,13 +271,17 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 		brushTrack.Priority = Enum.AnimationPriority.Action
 		brushTrack.Looped = true
 	end
+	if eatDrinkTrack then
+		eatDrinkTrack.Priority = Enum.AnimationPriority.Action
+		eatDrinkTrack.Looped = true
+	end
 
 	local state = {
 		Mode = nil,
-		Tracks = { Idle = idleTrack, Walk = walkTrack },
+		Tracks = { Idle = idleTrack, Walk = walkTrack, EatDrink = eatDrinkTrack },
 		BrushTrack = brushTrack,
 		BrushActive = false,
-		Animations = { idleAnimation, walkAnimation, brushAnimation },
+		Animations = { idleAnimation, walkAnimation, brushAnimation, eatDrinkAnimation },
 		Connections = {},
 	}
 	stableAnimationStates[visual] = state

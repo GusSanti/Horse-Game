@@ -425,6 +425,45 @@ local function walk_to_position(state, targetPosition: Vector3): boolean
 	return is_active(state)
 end
 
+local function face_position(state, targetPosition: Vector3): boolean
+	local currentPosition = state.Visual:GetPivot().Position
+	local flatOffset = Vector3.new(
+		targetPosition.X - currentPosition.X,
+		0,
+		targetPosition.Z - currentPosition.Z
+	)
+	if flatOffset.Magnitude <= 0.05 then
+		return is_active(state)
+	end
+
+	return turn_to(state, math.atan2(-flatOffset.X, -flatOffset.Z))
+end
+
+local function perform_repeated_behavior(state, behavior: string, options): boolean
+	local repeatCount = math.max(1, math.floor(tonumber(options.RepeatCount) or 1))
+	local repeatDuration = tonumber(options.RepeatDuration)
+	if repeatDuration and repeatDuration > 0 then
+		for repeatIndex = 1, repeatCount do
+			if repeatIndex > 1 then
+				set_behavior(state, "Idle")
+				if not wait_while_active(state, 0.05) then
+					return false
+				end
+			end
+
+			set_behavior(state, behavior)
+			if not wait_while_active(state, repeatDuration) then
+				return false
+			end
+		end
+
+		return is_active(state)
+	end
+
+	set_behavior(state, behavior)
+	return wait_while_active(state, math.max(tonumber(options.Duration) or 0, 0))
+end
+
 local function choose_wander_target(state): Vector3
 	local currentPosition = state.Visual:GetPivot().Position
 	local fromAnchor = Vector3.new(
@@ -767,6 +806,14 @@ function HorseRoamingService.IsHorseFree(player: Player, horseId: string): boole
 	return horseIds ~= nil and horseIds[horseId] == true
 end
 
+function HorseRoamingService.GetLiveVisual(player: Player, horseId: string): Instance?
+	if player.Parent ~= Players or type(horseId) ~= "string" or horseId == "" then
+		return nil
+	end
+
+	return find_live_horse_visual(player, horseId)
+end
+
 function HorseRoamingService.TakeControl(visual: Instance?, preserveVisualState: boolean?): boolean
 	local state = visual and activeByVisual[visual] or nil
 	if not state then
@@ -919,6 +966,73 @@ function HorseRoamingService.PrepareForMount(
 	set_behavior(state, "Idle")
 	stop_state(state, true)
 	return true, "MountAreaReady", wasRoaming
+end
+
+function HorseRoamingService.PerformStableAction(
+	player: Player,
+	horseId: string,
+	visual: Instance,
+	options
+): (boolean, string)
+	if player.Parent ~= Players or type(horseId) ~= "string" or horseId == "" or not visual or not visual.Parent then
+		return false, "HorseUnavailable"
+	end
+	if is_visual_mounted(visual) then
+		return false, "HorseMounted"
+	end
+
+	local actionOptions = options or {}
+	local targetPosition = actionOptions.TargetPosition
+	if typeof(targetPosition) ~= "Vector3" then
+		return false, "TargetMissing"
+	end
+
+	local wasFree = HorseRoamingService.IsHorseFree(player, horseId)
+	local state, stateReason = begin_movement_state(player, horseId, visual, {
+		InitialFreeAttribute = wasFree,
+		MovementDeadline = os.clock() + math.max(tonumber(actionOptions.MoveTimeout) or 24, 1),
+	})
+	if not state then
+		return false, stateReason
+	end
+
+	local actionSucceeded = false
+	local reason = "TargetUnreachable"
+	local groundedTarget = resolve_ground_position(state, clamp_to_roaming_range(state, targetPosition))
+	if walk_to_position(state, groundedTarget) then
+		local faceTarget = actionOptions.FacePosition
+		if typeof(faceTarget) == "Vector3" then
+			face_position(state, faceTarget)
+		end
+
+		if is_active(state) then
+			local behavior = if type(actionOptions.Behavior) == "string" and actionOptions.Behavior ~= ""
+				then actionOptions.Behavior
+				else "Idle"
+			actionSucceeded = perform_repeated_behavior(state, behavior, actionOptions)
+			reason = if actionSucceeded then "Completed" else "ActionCancelled"
+		else
+			reason = "ActionCancelled"
+		end
+	elseif not is_active(state) then
+		reason = "ActionCancelled"
+	end
+
+	if state.Active then
+		stop_state(state, true)
+	end
+
+	if visual.Parent and not is_visual_mounted(visual) then
+		if wasFree and actionOptions.ReturnToStable ~= true then
+			HorseRoamingService.Release(player, horseId, visual, {
+				InitialFreeAttribute = true,
+			})
+		else
+			move_visual_to_stable(player, horseId, visual)
+		end
+	end
+
+	return actionSucceeded, reason
 end
 
 function HorseRoamingService.ReturnHorseToStable(player: Player, horseId: string): (boolean, string)
