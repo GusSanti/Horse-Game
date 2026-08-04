@@ -14,7 +14,7 @@ local SHINE_NAME: string = "HoverShine"
 local SHINE_TRANSPARENCY_ATTRIBUTE: string = "ShineTransparency"
 local SHINE_WIDTH_ATTRIBUTE: string = "ShineWidth"
 local DEFAULT_SHINE_WIDTH: number = 0.14
-local DEFAULT_SHINE_HEIGHT: number = 1.16
+local DEFAULT_SHINE_HEIGHT: number = 1
 local DEFAULT_SHINE_ANGLE: number = 12
 local DEFAULT_SHINE_DURATION: number = 0.55
 
@@ -124,7 +124,11 @@ local function ApplyVisual(Button: GuiButton, State: ShineState): ()
 	State.Overlay.ZIndex = Button.ZIndex + 2
 	State.Shine.BackgroundTransparency =
 		math.clamp(GetNumberAttribute(Button, SHINE_TRANSPARENCY_ATTRIBUTE, 0.72), 0, 1)
-	State.Shine.Rotation = GetNumberAttribute(Button, SHINE_ANGLE_ATTRIBUTE, DEFAULT_SHINE_ANGLE)
+	local Gradient: UIGradient? = State.Shine:FindFirstChildWhichIsA("UIGradient")
+	State.Shine.Rotation = 0
+	if Gradient then
+		Gradient.Rotation = GetNumberAttribute(Button, SHINE_ANGLE_ATTRIBUTE, DEFAULT_SHINE_ANGLE)
+	end
 	State.Shine.Size = UDim2.fromScale(Width, DEFAULT_SHINE_HEIGHT)
 	State.Shine.ZIndex = State.Overlay.ZIndex
 end
