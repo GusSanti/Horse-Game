@@ -39,6 +39,9 @@ local EQUIP_SHADOW_TEXT_NAMES = { "EquipShadowTX" }
 local UNEQUIP_TEXT_NAMES = { "UnequipTX", "DeleteTX" }
 local UNEQUIP_SHADOW_TEXT_NAMES = { "UnequipShadowTX", "DeleteShadowTX" }
 local CLOSE_BUTTON_NAMES = { "ExitBT", "CloseBT" }
+local CARD_STAGGER_DELAY = 0.025
+local CARD_STAGGER_TIME = 0.24
+local CARD_STAGGER_SCALE = 0.86
 
 local DEFAULT_RARITY_COLORS = {
     Diamond = Color3.fromRGB(73, 191, 255),
@@ -91,6 +94,7 @@ local DETAILS_VIEWPORT_CONFIG = {
 
 -- VARIABLES
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
@@ -1217,6 +1221,9 @@ local function render_inventory()
         return
     end
 
+    local wasRenderDirty = renderDirty
+    local categoryChanged = lastRenderedCategoryId ~= activeCategoryId
+
     renderDirty = false
     renderGeneration += 1
     local generation = renderGeneration
@@ -1265,6 +1272,13 @@ local function render_inventory()
     lastRenderedCategoryId = activeCategoryId
     apply_selection()
     update_grid_layout()
+    if categoryChanged or wasRenderDirty then
+        HudAnim.stagger_children(currentUi.GridContainer, {
+            Delay = CARD_STAGGER_DELAY,
+            Duration = CARD_STAGGER_TIME,
+            StartScale = CARD_STAGGER_SCALE,
+        })
+    end
 
     viewportPopulationInProgress = #pendingViewports > 0
 

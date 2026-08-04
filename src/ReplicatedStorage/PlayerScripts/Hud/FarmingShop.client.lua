@@ -24,6 +24,9 @@ local SHOP_UI_DISCOVERY_INTERVAL = 0.5
 local SHOP_UI_WARNING_INTERVAL = 20
 local CARD_BUILD_INTERVAL_SECONDS = 0.03
 local SECONDARY_TAB_PRELOAD_DELAY_SECONDS = 0.2
+local CARD_STAGGER_DELAY = 0.028
+local CARD_STAGGER_TIME = 0.24
+local CARD_STAGGER_SCALE = 0.88
 
 local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAME = "MainframeFR"
@@ -669,6 +672,20 @@ local function set_panel_visible(panel: ShopPanel, isVisible: boolean, skipAnima
 	end
 
 	panel.Root.Visible = isVisible
+
+	if not isVisible or skipAnimation or wasVisible or not panel.ScrollingFrame then
+		return
+	end
+
+	task.defer(function()
+		if panel.Root.Visible then
+			HudAnim.stagger_children(panel.ScrollingFrame, {
+				Delay = CARD_STAGGER_DELAY,
+				Duration = CARD_STAGGER_TIME,
+				StartScale = CARD_STAGGER_SCALE,
+			})
+		end
+	end)
 end
 
 local function create_card_entry(panel: ShopPanel, itemDefinition): ShopCardEntry

@@ -10,6 +10,7 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
@@ -42,17 +43,25 @@ local BIND_INDICATOR_NAMES = { "Bind", "BindTX", "KeyBind", "KeyTX", "HotkeyTX" 
 local VIEWPORT_FRAME_NAMES = { "ViewportFrame", "ViewPortFrame", "Viewport" }
 local IGNORE_AUTO_FRAME_BUTTON_ATTRIBUTE = "IgnoreAutoFrameButton"
 
-local VIEWPORT_FIELD_OF_VIEW = 30
-local VIEWPORT_RADIUS_SCALE = 0.42
-local VIEWPORT_DISTANCE_MULTIPLIER = 1.55
-local VIEWPORT_MIN_DISTANCE = 1.75
-local VIEWPORT_FOCUS_Y_SCALE = 0.02
-local VIEWPORT_CAMERA_OFFSET_SCALE = Vector3.new(0.08, 0.05, 1.15)
-local SEED_VIEWPORT_RADIUS_SCALE = 0.78
-local SEED_VIEWPORT_DISTANCE_MULTIPLIER = 1.05
-local SEED_VIEWPORT_MIN_DISTANCE = 0.55
-local SEED_VIEWPORT_FOCUS_Y_SCALE = 0.04
-local SEED_VIEWPORT_CAMERA_OFFSET_SCALE = Vector3.new(0.06, 0.08, 1.05)
+local VIEWPORT = {
+	FieldOfView = 30,
+	Item = {
+		RadiusScale = 0.42,
+		DistanceMultiplier = 1.55,
+		MinDistance = 1.75,
+		FocusYScale = 0.02,
+		CameraOffsetScale = Vector3.new(0.08, 0.05, 1.15),
+		MinDimension = 1,
+	},
+	Seed = {
+		RadiusScale = 0.78,
+		DistanceMultiplier = 1.05,
+		MinDistance = 0.55,
+		FocusYScale = 0.04,
+		CameraOffsetScale = Vector3.new(0.06, 0.08, 1.05),
+		MinDimension = 0.2,
+	},
+}
 local SEED_PREVIEW_CACHE_VERSION = "seed-preview-v2"
 local SEED_PACKET_COLOR = Color3.fromRGB(227, 197, 148)
 local SEED_PACKET_EDGE_COLOR = Color3.fromRGB(117, 83, 52)
@@ -88,6 +97,16 @@ local SELECTED_POP_SCALE = 1.22
 local SELECTED_POP_TIME = 0.09
 local SELECTED_SETTLE_TIME = 0.14
 local DESELECT_TIME = 0.1
+local SLOT_FX = {
+	EntranceStartScale = 0.55,
+	EntranceTime = 0.28,
+	EntranceStagger = 0.035,
+	RemoveTime = 0.14,
+	StrokeTime = 0.16,
+	AmountPunchScale = 1.22,
+	MoneyPunchScale = 1.1,
+	ItemHandSlidePx = 10,
+}
 local ITEM_HAND_FADE_TIME = 0.12
 local MONEY_CHANGE_LABEL_NAME = "MoneyChangeFX"
 local MONEY_CHANGE_IN_TIME = 0.12
@@ -136,6 +155,7 @@ local refreshQueued = false
 local stickySelectionKey = nil
 local slotSelectionTweens = {}
 local slotSelectionTokens = {}
+local strokeTweens = setmetatable({}, { __mode = "k" })
 local itemHandTweens = {}
 local itemHandToken = 0
 local itemHandOriginals = nil
@@ -616,9 +636,24 @@ local function get_item_hand_originals(label: TextLabel)
 		BackgroundTransparency = label.BackgroundTransparency,
 		TextTransparency = label.TextTransparency,
 		TextStrokeTransparency = label.TextStrokeTransparency,
+		Position = label.Position,
 	}
 
 	return itemHandOriginals
+end
+
+local function get_item_hand_hidden_properties(originals)
+	return {
+		BackgroundTransparency = 1,
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+		Position = UDim2.new(
+			originals.Position.X.Scale,
+			originals.Position.X.Offset,
+			originals.Position.Y.Scale,
+			originals.Position.Y.Offset + SLOT_FX.ItemHandSlidePx
+		),
+	}
 end
 
 local function set_item_hand_properties(label: TextLabel, properties)
@@ -626,6 +661,10 @@ local function set_item_hand_properties(label: TextLabel, properties)
 		label.BackgroundTransparency = properties.BackgroundTransparency
 		label.TextTransparency = properties.TextTransparency
 		label.TextStrokeTransparency = properties.TextStrokeTransparency
+
+		if properties.Position then
+			label.Position = properties.Position
+		end
 	end)
 end
 
@@ -647,28 +686,25 @@ local function update_item_hand_display(itemKey: string?, displayName: string?)
 	local originals = get_item_hand_originals(label)
 	cancel_item_hand_tweens()
 
+	local hiddenProperties = get_item_hand_hidden_properties(originals)
+
 	if shouldShow then
 		label.Text = displayName
 		label.Visible = true
-		set_item_hand_properties(label, {
-			BackgroundTransparency = 1,
-			TextTransparency = 1,
-			TextStrokeTransparency = 1,
-		})
+		set_item_hand_properties(label, hiddenProperties)
 	end
 
 	local targetProperties = if shouldShow then {
 			BackgroundTransparency = originals.BackgroundTransparency,
 			TextTransparency = originals.TextTransparency,
 			TextStrokeTransparency = originals.TextStrokeTransparency,
-		} else {
-			BackgroundTransparency = 1,
-			TextTransparency = 1,
-			TextStrokeTransparency = 1,
-		}
+			Position = originals.Position,
+		} else hiddenProperties
+	local easingStyle = if shouldShow then Enum.EasingStyle.Back else Enum.EasingStyle.Quad
+	local easingDirection = if shouldShow then Enum.EasingDirection.Out else Enum.EasingDirection.In
 	local tween = TweenService:Create(
 		label,
-		TweenInfo.new(ITEM_HAND_FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(ITEM_HAND_FADE_TIME, easingStyle, easingDirection),
 		targetProperties
 	)
 
@@ -687,11 +723,7 @@ local function update_item_hand_display(itemKey: string?, displayName: string?)
 			return
 		end
 
-		set_item_hand_properties(label, {
-			BackgroundTransparency = 1,
-			TextTransparency = 1,
-			TextStrokeTransparency = 1,
-		})
+		set_item_hand_properties(label, hiddenProperties)
 		label.Text = ""
 		label.Visible = false
 	end)
@@ -716,6 +748,8 @@ local function update_money_display(value, animateChange: boolean?)
 		return
 	end
 
+	HudAnim.punch(moneyLabel, { Scale = SLOT_FX.MoneyPunchScale })
+	HudAnim.punch(moneyShadowLabel, { Scale = SLOT_FX.MoneyPunchScale })
 	show_money_change_effect(amount - previousAmount)
 end
 
@@ -917,7 +951,7 @@ local function destroy_hotbar_template_source()
 	end
 end
 
-local function destroy_slot(itemKey: string)
+local function destroy_slot(itemKey: string, animated: boolean?)
 	local slot = slotInstances[itemKey]
 	if slot then
 		local tween = slotSelectionTweens[slot]
@@ -930,12 +964,29 @@ local function destroy_slot(itemKey: string)
 	end
 
 	local slotTrove = slotTroves[itemKey]
-	if slotTrove then
-		slotTrove:Destroy()
-		slotTroves[itemKey] = nil
+	slotInstances[itemKey] = nil
+	slotTroves[itemKey] = nil
+
+	if not slotTrove then
+		return
 	end
 
-	slotInstances[itemKey] = nil
+	local slotScale = slot and slot.Parent and slot:FindFirstChild(SELECTION_SCALE_NAME)
+	if not animated or not slotScale or not slotScale:IsA("UIScale") then
+		slotTrove:Destroy()
+		return
+	end
+
+	local removeTween = TweenService:Create(
+		slotScale,
+		TweenInfo.new(SLOT_FX.RemoveTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+		{ Scale = 0.01 }
+	)
+	removeTween:Play()
+
+	task.delay(SLOT_FX.RemoveTime, function()
+		slotTrove:Destroy()
+	end)
 end
 
 local function clear_slots()
@@ -951,10 +1002,39 @@ local function clear_slots()
 	table.clear(orderedItemKeys)
 end
 
-local function set_stroke_selected(stroke: UIStroke, isSelected: boolean)
-	stroke.Color = isSelected and Color3.fromRGB(255, 230, 154) or Color3.fromRGB(255, 255, 255)
-	stroke.Thickness = isSelected and 2.5 or 1
-	stroke.Transparency = isSelected and 0 or 0.15
+local function set_stroke_selected(stroke: UIStroke, isSelected: boolean, animated: boolean?)
+	local targetProperties = {
+		Color = isSelected and Color3.fromRGB(255, 230, 154) or Color3.fromRGB(255, 255, 255),
+		Thickness = isSelected and 2.5 or 1,
+		Transparency = isSelected and 0 or 0.15,
+	}
+
+	local currentTween = strokeTweens[stroke]
+	if currentTween then
+		currentTween:Cancel()
+		strokeTweens[stroke] = nil
+	end
+
+	if not animated then
+		stroke.Color = targetProperties.Color
+		stroke.Thickness = targetProperties.Thickness
+		stroke.Transparency = targetProperties.Transparency
+		return
+	end
+
+	local tween = TweenService:Create(
+		stroke,
+		TweenInfo.new(SLOT_FX.StrokeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		targetProperties
+	)
+
+	strokeTweens[stroke] = tween
+	tween.Completed:Connect(function()
+		if strokeTweens[stroke] == tween then
+			strokeTweens[stroke] = nil
+		end
+	end)
+	tween:Play()
 end
 
 local function get_selection_scale(slot: GuiObject): UIScale
@@ -1040,6 +1120,23 @@ local function animate_slot_selection(slot: GuiObject, isSelected: boolean)
 		end
 
 		play_scale_tween(slot, SELECTED_SCALE, SELECTED_SETTLE_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	end)
+end
+
+local function animate_slot_entrance(slot: GuiObject, orderIndex: number)
+	local scale = get_selection_scale(slot)
+	local targetScale = slot:GetAttribute("HotbarSelected") == true and SELECTED_SCALE or 1
+
+	slotSelectionTokens[slot] = (slotSelectionTokens[slot] or 0) + 1
+	local token = slotSelectionTokens[slot]
+	scale.Scale = SLOT_FX.EntranceStartScale
+
+	task.delay(SLOT_FX.EntranceStagger * math.max(0, orderIndex - 1), function()
+		if slotSelectionTokens[slot] ~= token or not slot.Parent then
+			return
+		end
+
+		play_scale_tween(slot, targetScale, SLOT_FX.EntranceTime, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 	end)
 end
 
@@ -1440,19 +1537,16 @@ local function get_preview_snapshot(itemKey: string, source: Instance?, displayN
 
 	local previewModel = create_preview_model(source, displayName, isSeed, itemKey)
 	local boundingBoxCFrame, boundingBoxSize = previewModel:GetBoundingBox()
-	local maxDimension = math.max(boundingBoxSize.X, boundingBoxSize.Y, boundingBoxSize.Z, if isSeed then 0.2 else 1)
-	local focusYOffsetScale = if isSeed then SEED_VIEWPORT_FOCUS_Y_SCALE else VIEWPORT_FOCUS_Y_SCALE
-	local radiusScale = if isSeed then SEED_VIEWPORT_RADIUS_SCALE else VIEWPORT_RADIUS_SCALE
-	local distanceMultiplier = if isSeed then SEED_VIEWPORT_DISTANCE_MULTIPLIER else VIEWPORT_DISTANCE_MULTIPLIER
-	local minDistance = if isSeed then SEED_VIEWPORT_MIN_DISTANCE else VIEWPORT_MIN_DISTANCE
-	local cameraOffsetScale = if isSeed then SEED_VIEWPORT_CAMERA_OFFSET_SCALE else VIEWPORT_CAMERA_OFFSET_SCALE
-	local focusPosition = boundingBoxCFrame.Position + Vector3.new(0, boundingBoxSize.Y * focusYOffsetScale, 0)
-	local radius = maxDimension * radiusScale
+	local viewportConfig = if isSeed then VIEWPORT.Seed else VIEWPORT.Item
+	local maxDimension = math.max(boundingBoxSize.X, boundingBoxSize.Y, boundingBoxSize.Z, viewportConfig.MinDimension)
+	local focusPosition = boundingBoxCFrame.Position + Vector3.new(0, boundingBoxSize.Y * viewportConfig.FocusYScale, 0)
+	local radius = maxDimension * viewportConfig.RadiusScale
 	local distance = math.max(
-		minDistance,
-		(radius / math.tan(math.rad(VIEWPORT_FIELD_OF_VIEW * 0.5))) * distanceMultiplier
+		viewportConfig.MinDistance,
+		(radius / math.tan(math.rad(VIEWPORT.FieldOfView * 0.5))) * viewportConfig.DistanceMultiplier
 	)
 
+	local cameraOffsetScale = viewportConfig.CameraOffsetScale
 	local cameraOffset = Vector3.new(
 		distance * cameraOffsetScale.X,
 		distance * cameraOffsetScale.Y,
@@ -1461,7 +1555,7 @@ local function get_preview_snapshot(itemKey: string, source: Instance?, displayN
 
 	cachedPreview = {
 		ModelTemplate = previewModel,
-		FieldOfView = VIEWPORT_FIELD_OF_VIEW,
+		FieldOfView = VIEWPORT.FieldOfView,
 		CameraCFrame = CFrame.lookAt(focusPosition + cameraOffset, focusPosition),
 	}
 
@@ -1550,9 +1644,10 @@ local function create_click_target(slot: GuiObject): GuiButton
 end
 
 local function set_slot_selected(slot: GuiObject, isSelected: boolean)
+	local wasSelected = slot:GetAttribute("HotbarSelected") == true
 	local stroke = slot:FindFirstChildWhichIsA("UIStroke", true)
 	if stroke then
-		set_stroke_selected(stroke, isSelected)
+		set_stroke_selected(stroke, isSelected, wasSelected ~= isSelected)
 	end
 
 	animate_slot_selection(slot, isSelected)
@@ -1901,6 +1996,13 @@ local function update_slot(slot: GuiObject, group, slotIndex: number)
 		amountShadowLabel.Visible = showsQuantity
 	end
 
+	local previousAmountText = slot:GetAttribute("HotbarAmountText")
+	if showsQuantity and type(previousAmountText) == "string" and previousAmountText ~= "" and previousAmountText ~= amountText then
+		HudAnim.punch(amountLabel, { Scale = SLOT_FX.AmountPunchScale })
+		HudAnim.punch(amountShadowLabel, { Scale = SLOT_FX.AmountPunchScale })
+	end
+	slot:SetAttribute("HotbarAmountText", amountText)
+
 	local rarityIcon = find_named_instance(slot, { "rarity" }, "ImageLabel", true)
 	if rarityIcon and rarityIcon:IsA("ImageLabel") then
 		local rarityKey = normalize_key(group.FarmingDefinition and group.FarmingDefinition.Rarity)
@@ -1984,12 +2086,18 @@ local function rebuild_hotbar()
 		orderedItemKeys[index] = group.Key
 
 		local slot = slotInstances[group.Key]
+		local isNewSlot = false
 		if not slot or not slot.Parent then
 			slot = create_slot(group)
+			isNewSlot = true
 		end
 
 		restore_template_gui_state(hotbarTemplateSource, slot)
 		update_slot(slot, group, index)
+
+		if isNewSlot then
+			animate_slot_entrance(slot, index)
+		end
 	end
 
 	local removedKeys = {}
@@ -2000,7 +2108,7 @@ local function rebuild_hotbar()
 	end
 
 	for _, itemKey in ipairs(removedKeys) do
-		destroy_slot(itemKey)
+		destroy_slot(itemKey, true)
 	end
 
 end

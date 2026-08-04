@@ -11,10 +11,18 @@ function Hover.get_target(inst, state, defaults, utils)
 		"hover_scale",
 		defaults and defaults.hover_scale or 0.04
 	)
+	local hoverLift = utils.get_number_attribute(
+		inst,
+		"hover_lift_px",
+		defaults and defaults.hover_lift_px or 0
+	)
 	local scale = state.Hovered and (1 + math.max(0, hoverScale)) or 1
+	local targetPosition = if state.Hovered and hoverLift ~= 0
+		then utils.offset_udim2(basePosition, 0, -hoverLift)
+		else basePosition
 	local properties = {
 		Size = utils.scale_udim2(baseSize, scale),
-		Position = basePosition,
+		Position = targetPosition,
 		Rotation = Rotate.get_hover_rotation(inst, state, defaults),
 	}
 

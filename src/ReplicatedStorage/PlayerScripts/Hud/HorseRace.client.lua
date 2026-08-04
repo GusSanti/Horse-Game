@@ -177,7 +177,7 @@ local function lock_controls(shouldLock)
 				return Enum.ContextActionResult.Sink
 			end,
 			false,
-			3000,
+			3100,
 			Enum.PlayerActions.CharacterForward,
 			Enum.PlayerActions.CharacterBackward,
 			Enum.PlayerActions.CharacterLeft,

@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local FoodHoverTooltip = {}
@@ -9,6 +10,12 @@ local TOOLTIP_WIDTH = 238
 local TOOLTIP_PADDING = 10
 local TOOLTIP_OFFSET = Vector2.new(16, 18)
 local TOOLTIP_ZINDEX = 10000
+local TOOLTIP_BG_TRANSPARENCY = 0.08
+local TOOLTIP_STROKE_TRANSPARENCY = 0.28
+local TOOLTIP_SCALE_NAME = "TooltipScale"
+local TOOLTIP_SHOW_TIME = 0.14
+local TOOLTIP_HIDE_TIME = 0.1
+local TOOLTIP_START_SCALE = 0.9
 
 local localPlayer = Players.LocalPlayer
 local tooltipGui = nil
@@ -17,6 +24,8 @@ local titleLabel = nil
 local bodyLabel = nil
 local activeTarget = nil
 local positionConnection = nil
+local tooltipToken = 0
+local tooltipTweens = {}
 
 local function format_number(value)
 	local numberValue = tonumber(value) or 0
@@ -69,7 +78,7 @@ local function ensure_tooltip()
 		tooltipFrame = Instance.new("Frame")
 		tooltipFrame.Name = "Tooltip"
 		tooltipFrame.BackgroundColor3 = Color3.fromRGB(24, 22, 20)
-		tooltipFrame.BackgroundTransparency = 0.08
+		tooltipFrame.BackgroundTransparency = TOOLTIP_BG_TRANSPARENCY
 		tooltipFrame.BorderSizePixel = 0
 		tooltipFrame.AutomaticSize = Enum.AutomaticSize.Y
 		tooltipFrame.Size = UDim2.fromOffset(TOOLTIP_WIDTH, 0)
@@ -83,9 +92,14 @@ local function ensure_tooltip()
 
 		local stroke = Instance.new("UIStroke")
 		stroke.Color = Color3.fromRGB(255, 225, 170)
-		stroke.Transparency = 0.28
+		stroke.Transparency = TOOLTIP_STROKE_TRANSPARENCY
 		stroke.Thickness = 1
 		stroke.Parent = tooltipFrame
+
+		local scale = Instance.new("UIScale")
+		scale.Name = TOOLTIP_SCALE_NAME
+		scale.Scale = 1
+		scale.Parent = tooltipFrame
 
 		local padding = Instance.new("UIPadding")
 		padding.PaddingLeft = UDim.new(0, TOOLTIP_PADDING)
@@ -135,6 +149,79 @@ local function ensure_tooltip()
 	end
 
 	return tooltipFrame
+end
+
+local function cancel_tooltip_tweens()
+	for _, tween in ipairs(tooltipTweens) do
+		pcall(function()
+			tween:Cancel()
+		end)
+	end
+
+	table.clear(tooltipTweens)
+end
+
+local function play_tooltip_transition(isShowing)
+	if not tooltipFrame then
+		return
+	end
+
+	cancel_tooltip_tweens()
+
+	tooltipToken += 1
+	local token = tooltipToken
+
+	local scale = tooltipFrame:FindFirstChild(TOOLTIP_SCALE_NAME)
+	local stroke = tooltipFrame:FindFirstChildWhichIsA("UIStroke")
+	local duration = if isShowing then TOOLTIP_SHOW_TIME else TOOLTIP_HIDE_TIME
+	local easingStyle = if isShowing then Enum.EasingStyle.Back else Enum.EasingStyle.Quad
+	local easingDirection = if isShowing then Enum.EasingDirection.Out else Enum.EasingDirection.In
+	local tweenInfo = TweenInfo.new(duration, easingStyle, easingDirection)
+
+	local targets = {
+		{ tooltipFrame, "BackgroundTransparency", if isShowing then TOOLTIP_BG_TRANSPARENCY else 1 },
+		{ stroke, "Transparency", if isShowing then TOOLTIP_STROKE_TRANSPARENCY else 1 },
+		{ titleLabel, "TextTransparency", if isShowing then 0 else 1 },
+		{ bodyLabel, "TextTransparency", if isShowing then 0 else 1 },
+		{ scale, "Scale", if isShowing then 1 else TOOLTIP_START_SCALE },
+	}
+
+	if isShowing then
+		tooltipFrame.BackgroundTransparency = 1
+		if stroke then
+			stroke.Transparency = 1
+		end
+		if titleLabel then
+			titleLabel.TextTransparency = 1
+		end
+		if bodyLabel then
+			bodyLabel.TextTransparency = 1
+		end
+		if scale then
+			scale.Scale = TOOLTIP_START_SCALE
+		end
+	end
+
+	for _, target in ipairs(targets) do
+		local instance, propertyName, value = target[1], target[2], target[3]
+		if instance then
+			local tween = TweenService:Create(instance, tweenInfo, { [propertyName] = value })
+			tooltipTweens[#tooltipTweens + 1] = tween
+			tween:Play()
+		end
+	end
+
+	if isShowing then
+		return
+	end
+
+	task.delay(duration, function()
+		if tooltipToken ~= token or not tooltipFrame then
+			return
+		end
+
+		tooltipFrame.Visible = false
+	end)
 end
 
 local function get_viewport_size()
@@ -323,6 +410,7 @@ function FoodHoverTooltip.Show(source, target)
 	bodyLabel.Text = table.concat(build_effect_lines(itemDefinition), "\n")
 	frame.Visible = true
 	update_position()
+	play_tooltip_transition(true)
 	start_position_updates()
 end
 
@@ -332,8 +420,8 @@ function FoodHoverTooltip.Hide(target)
 	end
 
 	activeTarget = nil
-	if tooltipFrame then
-		tooltipFrame.Visible = false
+	if tooltipFrame and tooltipFrame.Visible then
+		play_tooltip_transition(false)
 	end
 
 	stop_position_updates()

@@ -8,6 +8,9 @@ local Hover = require(script.Hover)
 local Click = require(script.Click)
 local Open = require(script.Open)
 local Close = require(script.Close)
+local Fade = require(script.Fade)
+local Stagger = require(script.Stagger)
+local Punch = require(script.Punch)
 
 local HudAnim = {}
 
@@ -43,18 +46,24 @@ local DEFAULT_HUD_EXCLUSIONS_BY_FRAME = {
 }
 
 local DEFAULTS = {
-	hover_scale = 0.04,
+	hover_scale = 0.05,
 	click_scale = 0.06,
-	hover_t = 0.14,
-	click_t = 0.09,
+	hover_t = 0.16,
+	click_t = 0.08,
+	hover_lift_px = 2,
+	click_sink_px = 1,
 	rotate_hover_deg = 0,
 	pulse = false,
-	open_t = 0.24,
+	open_t = 0.26,
 	open_offset_px = 36,
-	open_pop_scale = 0.92,
+	open_pop_scale = 0.9,
 	blur = 12,
 	blur_t = 0.22,
 	hud_fade_t = 0.14,
+	open_stagger = 0,
+	stagger_t = 0.26,
+	stagger_delay = 0.035,
+	stagger_scale = 0.86,
 }
 
 local states = setmetatable({}, { __mode = "k" })
@@ -286,6 +295,11 @@ local function restore_instance(instance, state)
 			instance.GroupTransparency = state.BaseGroupTransparency
 		end
 	end)
+
+	if state.FadeRecords then
+		Fade.restore(state.FadeRecords)
+		state.FadeRecords = nil
+	end
 end
 
 local function is_visible_in_hierarchy(instance)
@@ -325,12 +339,19 @@ local function update_button_visual(button, state, duration)
 	local properties = Hover.get_target(button, state, DEFAULTS, Utils)
 	Click.apply_target(button, state, DEFAULTS, Utils, properties)
 
+	local easingStyle = Enum.EasingStyle.Quad
+	if state.Pressed then
+		easingStyle = Enum.EasingStyle.Sine
+	elseif state.Hovered then
+		easingStyle = Enum.EasingStyle.Back
+	end
+
 	play_state_tween(
 		button,
 		state,
 		properties,
 		duration or get_number_attribute(button, "hover_t", DEFAULTS.hover_t),
-		Enum.EasingStyle.Quad,
+		Utils.get_easing_style(button, "hover_ease", easingStyle),
 		Enum.EasingDirection.Out,
 		function(playbackState)
 			if playbackState == Enum.PlaybackState.Completed
@@ -499,16 +520,82 @@ local function reset_transition(instance, state)
 	end
 end
 
-local function apply_open_start(instance, state, openKind, offset, popScale)
-	Open.apply_start(instance, state, Utils, openKind, offset, popScale)
+local function apply_open_start(instance, state, openKind, offset, popScale, rotateDeg)
+	Open.apply_start(instance, state, Utils, openKind, offset, popScale, rotateDeg)
 end
 
 local function build_open_target_properties(instance, state)
 	return Open.get_target(instance, state)
 end
 
-local function build_close_target_properties(instance, state, openKind, offset)
-	return Close.get_target(instance, state, Utils, openKind, offset)
+local function build_close_target_properties(instance, state, openKind, offset, rotateDeg)
+	return Close.get_target(instance, state, Utils, openKind, offset, rotateDeg)
+end
+
+local function should_fade_contents(instance, openKind)
+	if instance:IsA("CanvasGroup") then
+		return false
+	end
+
+	local configuredFade = instance:GetAttribute("open_fade")
+	if configuredFade ~= nil then
+		return configuredFade == true
+	end
+
+	return Open.wants_fade(openKind)
+end
+
+local function play_content_fade(instance, state, duration, isOpening)
+	local records = state.FadeRecords
+	if not records then
+		records = Fade.collect(instance)
+		state.FadeRecords = records
+	end
+
+	if #records == 0 then
+		return
+	end
+
+	if isOpening then
+		Fade.set_hidden(records)
+	end
+
+	local fadeDuration = math.max(0.01, duration)
+	local easingDirection = if isOpening then Enum.EasingDirection.Out else Enum.EasingDirection.In
+
+	for _, record in ipairs(records) do
+		local targetValue = if isOpening then record.Base else 1
+		play_state_tween(
+			record.Instance,
+			state,
+			{ [record.Property] = targetValue },
+			fadeDuration,
+			Enum.EasingStyle.Sine,
+			easingDirection
+		)
+	end
+end
+
+local function play_open_stagger(instance)
+	local stepDelay = get_number_attribute(instance, "open_stagger", DEFAULTS.open_stagger)
+	if not stepDelay or stepDelay <= 0 then
+		return
+	end
+
+	local container = instance
+	local targetName = instance:GetAttribute("stagger_target")
+	if type(targetName) == "string" and targetName ~= "" then
+		local found = instance:FindFirstChild(targetName, true)
+		if found and found:IsA("GuiObject") then
+			container = found
+		end
+	end
+
+	Stagger.play(container, {
+		Delay = stepDelay,
+		Duration = get_number_attribute(instance, "stagger_t", DEFAULTS.stagger_t),
+		StartScale = get_number_attribute(instance, "stagger_scale", DEFAULTS.stagger_scale),
+	})
 end
 
 local function play_open(instance, state, force)
@@ -535,6 +622,7 @@ local function play_open(instance, state, force)
 	local openKind = instance:GetAttribute("open_anim") or "pop"
 	local offset = get_number_attribute(instance, "open_offset_px", DEFAULTS.open_offset_px)
 	local popScale = math.clamp(get_number_attribute(instance, "open_pop_scale", DEFAULTS.open_pop_scale), 0.001, 1)
+	local rotateDeg = get_number_attribute(instance, "open_rotate_deg", Open.get_default_rotation(openKind))
 	local blurAmount = get_optional_number_attribute(instance, "blur")
 	local fovAmount = get_optional_number_attribute(instance, "fov")
 
@@ -547,7 +635,11 @@ local function play_open(instance, state, force)
 		return
 	end
 
-	apply_open_start(instance, state, openKind, offset, popScale)
+	apply_open_start(instance, state, openKind, offset, popScale, rotateDeg)
+
+	if should_fade_contents(instance, openKind) then
+		play_content_fade(instance, state, duration * 0.85, true)
+	end
 
 	if blurAmount and blurAmount > 0 then
 		tween_blur(blurAmount, get_number_attribute(instance, "blur_t", duration))
@@ -558,12 +650,13 @@ local function play_open(instance, state, force)
 	end
 
 	safe_play_sound(instance, "sfx_open")
+	play_open_stagger(instance)
 	play_state_tween(
 		instance,
 		state,
 		build_open_target_properties(instance, state),
 		duration,
-		openKind == "pop" and Enum.EasingStyle.Back or Enum.EasingStyle.Quad,
+		Utils.get_easing_style(instance, "open_ease", Open.get_default_easing(openKind)),
 		Enum.EasingDirection.Out,
 		function()
 			finish_open(instance, state, token)
@@ -600,6 +693,7 @@ local function request_close(instance, state, force)
 	local duration = math.max(0, get_number_attribute(instance, "open_t", DEFAULTS.open_t) * 0.75)
 	local openKind = instance:GetAttribute("open_anim") or "pop"
 	local offset = get_number_attribute(instance, "open_offset_px", DEFAULTS.open_offset_px) * 1.15
+	local rotateDeg = get_number_attribute(instance, "open_rotate_deg", Open.get_default_rotation(openKind))
 	local blurAmount = get_optional_number_attribute(instance, "blur")
 
 	if sync_hud_visibility_for_frame then
@@ -623,12 +717,16 @@ local function request_close(instance, state, force)
 		return
 	end
 
+	if should_fade_contents(instance, openKind) then
+		play_content_fade(instance, state, duration, false)
+	end
+
 	play_state_tween(
 		instance,
 		state,
-		build_close_target_properties(instance, state, openKind, offset),
+		build_close_target_properties(instance, state, openKind, offset, rotateDeg),
 		duration,
-		Enum.EasingStyle.Quad,
+		Utils.get_easing_style(instance, "close_ease", Enum.EasingStyle.Quint),
 		Enum.EasingDirection.In,
 		function()
 			finish_close(instance, state, token)
@@ -898,6 +996,23 @@ local function push_fade_record(records, fadeState, instance, propertyName, targ
 	}
 end
 
+local function get_hud_fade_targets(hudRoot, fadeState, shouldHide)
+	if shouldHide or not fadeState.Targets then
+		fadeState.Targets = Fade.collect(hudRoot)
+		return fadeState.Targets
+	end
+
+	local validTargets = {}
+	for _, target in ipairs(fadeState.Targets) do
+		if target.Instance and target.Instance.Parent then
+			validTargets[#validTargets + 1] = target
+		end
+	end
+
+	fadeState.Targets = validTargets
+	return validTargets
+end
+
 local function collect_hud_fade_records(hudRoot, fadeState, shouldHide, excludedNames)
 	local records = {}
 
@@ -907,6 +1022,15 @@ local function collect_hud_fade_records(hudRoot, fadeState, shouldHide, excluded
 
 	if hudRoot:IsA("CanvasGroup") then
 		push_fade_record(records, fadeState, hudRoot, "GroupTransparency", if shouldHide then 1 else nil)
+	else
+		for _, target in ipairs(get_hud_fade_targets(hudRoot, fadeState, shouldHide)) do
+			records[#records + 1] = {
+				Instance = target.Instance,
+				PropertyName = target.Property,
+				OriginalValue = target.Base,
+				TargetValue = if shouldHide then 1 else target.Base,
+			}
+		end
 	end
 
 	for _, record in ipairs(records) do
@@ -1272,6 +1396,22 @@ function HudAnim.apply_defaults_to_buttons(root, extra)
 	for _, descendant in ipairs(root:GetDescendants()) do
 		apply_to_button(descendant)
 	end
+end
+
+function HudAnim.stagger_children(container, options)
+	Stagger.play(container, options)
+end
+
+function HudAnim.cancel_stagger(container)
+	Stagger.cancel(container)
+end
+
+function HudAnim.punch(instance, options)
+	Punch.play(instance, options)
+end
+
+function HudAnim.get_ui_scale(instance, name)
+	return Utils.get_ui_scale(instance, name)
 end
 
 function HudAnim.sync_hud_visibility_for_frame(instance, duration, forcedOpenFrame)

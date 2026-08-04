@@ -36,10 +36,20 @@ local DETAILS_LABEL_NAMES = { "DetailsTX" }
 local GENERATED_ATTRIBUTE_NAME = "GeneratedSettingControl"
 local GENERATED_FILL_NAME = "GeneratedSliderFill"
 local UPDATE_REMOTE_NAME = "UpdatePlayerSetting"
-local TOGGLE_TWEEN_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TOGGLE_TWEEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local SLIDER_TWEEN_INFO = TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local FILL_TWEEN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local THUMB_TWEEN_INFO = TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local TRACK_PADDING_PX = 4
 local SLIDER_FILL_COLOR = Color3.fromRGB(112, 71, 42)
+local TOGGLE_ON_FILL_COLOR = Color3.fromRGB(128, 186, 96)
+local TOGGLE_OFF_FILL_COLOR = Color3.fromRGB(112, 71, 42)
 local SLIDER_FILL_TRANSPARENCY = 0
+local DRAG_THUMB_SCALE = 1.14
+local TOGGLE_PUNCH_SCALE = 1.18
+local ROW_STAGGER_DELAY = 0.045
+local ROW_STAGGER_TIME = 0.28
+local ROW_STAGGER_SCALE = 0.88
 
 local DEFAULT_SETTINGS = {
 	Music = true,
@@ -295,10 +305,6 @@ local function disable_control_animations(root)
 end
 
 local function ensure_slider_fill(record)
-	if record.Descriptor.Kind ~= "Slider" then
-		return nil
-	end
-
 	local existingFill = record.Bar:FindFirstChild(GENERATED_FILL_NAME)
 	if existingFill and existingFill:IsA("Frame") then
 		return existingFill
@@ -306,7 +312,7 @@ local function ensure_slider_fill(record)
 
 	local fill = Instance.new("Frame")
 	fill.Name = GENERATED_FILL_NAME
-	fill.BackgroundColor3 = SLIDER_FILL_COLOR
+	fill.BackgroundColor3 = if record.Descriptor.Kind == "Toggle" then TOGGLE_OFF_FILL_COLOR else SLIDER_FILL_COLOR
 	fill.BackgroundTransparency = SLIDER_FILL_TRANSPARENCY
 	fill.BorderSizePixel = 0
 	fill.AnchorPoint = Vector2.new(0, 0.5)
@@ -344,7 +350,7 @@ local function get_track_metrics(record)
 	}
 end
 
-local function set_slider_fill(record, centerX)
+local function set_slider_fill(record, centerX, animated)
 	if not record.Fill then
 		return
 	end
@@ -353,10 +359,72 @@ local function set_slider_fill(record, centerX)
 	local fillStartX = metrics.TrackPadding
 	local fillEndX = math.max(fillStartX, centerX - metrics.ThumbHalfWidth)
 	local fillWidth = math.max(0, fillEndX - fillStartX)
+	local targetSize = UDim2.new(0, math.floor(fillWidth + 0.5), 0, metrics.FillHeight)
+
+	if record.FillTween then
+		record.FillTween:Cancel()
+		record.FillTween = nil
+	end
 
 	record.Fill.Position = UDim2.new(0, fillStartX, 0.5, 0)
-	record.Fill.Size = UDim2.new(0, math.floor(fillWidth + 0.5), 0, metrics.FillHeight)
-	record.Fill.Visible = fillWidth > 0.5
+
+	if not animated then
+		record.Fill.Size = targetSize
+		record.Fill.Visible = fillWidth > 0.5
+		return
+	end
+
+	record.Fill.Visible = true
+	record.FillTween = TweenService:Create(record.Fill, FILL_TWEEN_INFO, { Size = targetSize })
+	record.FillTween:Play()
+
+	task.delay(FILL_TWEEN_INFO.Time, function()
+		if record.Fill and record.Fill.Parent then
+			record.Fill.Visible = record.Fill.Size.X.Offset > 0.5
+		end
+	end)
+end
+
+local function set_fill_color(record, isOn, animated)
+	if not record.Fill or record.Descriptor.Kind ~= "Toggle" then
+		return
+	end
+
+	local targetColor = if isOn then TOGGLE_ON_FILL_COLOR else TOGGLE_OFF_FILL_COLOR
+
+	if record.FillColorTween then
+		record.FillColorTween:Cancel()
+		record.FillColorTween = nil
+	end
+
+	if not animated then
+		record.Fill.BackgroundColor3 = targetColor
+		return
+	end
+
+	record.FillColorTween = TweenService:Create(record.Fill, FILL_TWEEN_INFO, { BackgroundColor3 = targetColor })
+	record.FillColorTween:Play()
+end
+
+local function set_thumb_scale(record, multiplier)
+	local scale = HudAnim.get_ui_scale(record.Toggle, "SettingsThumbScale")
+	if not scale then
+		return
+	end
+
+	if not record.ThumbBaseScale then
+		record.ThumbBaseScale = if scale.Scale > 0 then scale.Scale else 1
+	end
+
+	if record.ThumbTween then
+		record.ThumbTween:Cancel()
+		record.ThumbTween = nil
+	end
+
+	record.ThumbTween = TweenService:Create(scale, THUMB_TWEEN_INFO, {
+		Scale = record.ThumbBaseScale * multiplier,
+	})
+	record.ThumbTween:Play()
 end
 
 local function set_control_alpha(record, alpha, animated)
@@ -375,7 +443,8 @@ local function set_control_alpha(record, alpha, animated)
 	end
 
 	if animated then
-		record.ToggleTween = TweenService:Create(record.Toggle, TOGGLE_TWEEN_INFO, {
+		local tweenInfo = if record.Descriptor.Kind == "Toggle" then TOGGLE_TWEEN_INFO else SLIDER_TWEEN_INFO
+		record.ToggleTween = TweenService:Create(record.Toggle, tweenInfo, {
 			Position = targetPosition,
 		})
 		record.ToggleTween:Play()
@@ -383,7 +452,8 @@ local function set_control_alpha(record, alpha, animated)
 		record.Toggle.Position = targetPosition
 	end
 
-	set_slider_fill(record, centerX)
+	set_slider_fill(record, centerX, animated)
+	set_fill_color(record, alpha >= 0.5, animated)
 end
 
 local function refresh_control(record, animated)
@@ -453,6 +523,8 @@ local function finish_slider_drag(shouldCommit)
 		currentUi.List.ScrollingEnabled = dragState.PreviousScrollingEnabled
 	end
 
+	set_thumb_scale(dragState.Record, 1)
+
 	if shouldCommit then
 		local value = dragState.Record.Descriptor.ReadValue()
 		commit_setting(dragState.Record.Descriptor, value)
@@ -479,6 +551,7 @@ local function start_slider_drag(record, input)
 		PreviousScrollingEnabled = previousScrollingEnabled,
 	}
 
+	set_thumb_scale(record, DRAG_THUMB_SCALE)
 	update_slider_value(record, input.Position.X)
 end
 
@@ -531,6 +604,9 @@ local function build_control_record(root, descriptor)
 		Descriptor = descriptor,
 		LastAlpha = 0,
 		ToggleTween = nil,
+		FillTween = nil,
+		FillColorTween = nil,
+		ThumbTween = nil,
 	}
 end
 
@@ -664,6 +740,10 @@ local function bind_ui(ui)
 					local nextValue = not descriptor.ReadValue()
 					descriptor.Preview(nextValue)
 					refresh_control(record, true)
+					HudAnim.punch(record.Toggle, {
+						Scale = TOGGLE_PUNCH_SCALE,
+						BaseScale = record.ThumbBaseScale,
+					})
 					commit_setting(descriptor, nextValue)
 				end
 
@@ -683,6 +763,28 @@ local function bind_ui(ui)
 				refresh_control(record, false)
 			end)
 		end
+	end
+
+	local function play_row_stagger()
+		if currentUi ~= ui or not ui.Root.Parent or not ui.Root.Visible then
+			return
+		end
+
+		HudAnim.stagger_children(ui.List, {
+			Delay = ROW_STAGGER_DELAY,
+			Duration = ROW_STAGGER_TIME,
+			StartScale = ROW_STAGGER_SCALE,
+		})
+	end
+
+	uiTrove:Add(ui.Root:GetPropertyChangedSignal("Visible"):Connect(function()
+		if ui.Root.Visible then
+			task.defer(play_row_stagger)
+		end
+	end))
+
+	if ui.Root.Visible then
+		task.defer(play_row_stagger)
 	end
 
 	if ui.ListLayout then

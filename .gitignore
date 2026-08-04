@@ -1,0 +1,15 @@
+# Project place file
+/HorseGame.rbxlx
+/build-validation.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+.mcp.json
+
+CLAUDE.md
+
+sourcemap.json
+config.luaurc
+GAMEBASE

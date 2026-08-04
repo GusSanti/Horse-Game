@@ -1,4 +1,3 @@
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local HorseMountCamera = {}
@@ -9,7 +8,6 @@ local CAMERA_R15_HEAD_OFFSET = Vector3.new(0, 1.5, 0)
 local CAMERA_R15_HEAD_OFFSET_NO_SCALING = Vector3.new(0, 2, 0)
 local CAMERA_HUMANOID_ROOT_PART_SIZE = Vector3.new(2, 2, 1)
 local CAMERA_SEAT_OFFSET = Vector3.new(0, 5, 0)
-local FIRST_PERSON_DISTANCE_THRESHOLD = 1
 
 local function build_angle_y(cframe)
 	local lookVector = cframe.LookVector
@@ -75,21 +73,10 @@ function HorseMountCamera.new(localPlayer, horseMountConfig)
 		config = horseMountConfig,
 		previousCameraType = nil,
 		previousCameraSubject = nil,
-		previousMouseBehavior = nil,
-		previousMouseIconEnabled = nil,
 		previousFieldOfView = nil,
+		previousCameraMinZoomDistance = nil,
 		cachedPlayerCameras = nil,
 		cameraReleaseToken = 0,
-		cameraRestoreState = {
-			Active = false,
-			Elapsed = 0,
-			Duration = 0,
-			StartCFrame = nil,
-			StartFieldOfView = nil,
-			TargetFieldOfView = nil,
-			TargetCameraType = nil,
-			TargetCameraSubject = nil,
-		},
 		cameraTransitionState = {
 			Active = false,
 			Mode = nil,
@@ -199,25 +186,11 @@ function HorseMountCamera:forceReleaseCameraControls(targetCameraType, targetCam
 		if releaseCamera then
 			self:seedDefaultCameraController(releaseCamera, resolvedCameraSubject)
 		end
-
-		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-		UserInputService.MouseIconEnabled = true
 	end
 
 	apply_release_state()
 	task.defer(apply_release_state)
 	task.delay(0.05, apply_release_state)
-end
-
-function HorseMountCamera:cancelCameraRestore()
-	self.cameraRestoreState.Active = false
-	self.cameraRestoreState.Elapsed = 0
-	self.cameraRestoreState.Duration = 0
-	self.cameraRestoreState.StartCFrame = nil
-	self.cameraRestoreState.StartFieldOfView = nil
-	self.cameraRestoreState.TargetFieldOfView = nil
-	self.cameraRestoreState.TargetCameraType = nil
-	self.cameraRestoreState.TargetCameraSubject = nil
 end
 
 function HorseMountCamera:cancelCameraTransition()
@@ -256,23 +229,6 @@ function HorseMountCamera:buildCameraTargetCFrameFromRootCFrame(rootCFrame, yaw,
 	local centeredLookAt = focus + (yawCFrame.LookVector * lookAhead)
 	local centeredCFrame = CFrame.lookAt(centeredPosition, centeredLookAt)
 	return centeredCFrame + (yawCFrame.RightVector * sideOffset)
-end
-
-function HorseMountCamera:buildCameraTargetCFrame(getCharacterRootPart, yaw, focusHeightOffset, backOffset, heightOffset, lookAhead, sideOffset)
-	local rootPart = getCharacterRootPart()
-	if not rootPart then
-		return nil
-	end
-
-	return self:buildCameraTargetCFrameFromRootCFrame(
-		rootPart.CFrame,
-		yaw,
-		focusHeightOffset,
-		backOffset,
-		heightOffset,
-		lookAhead,
-		sideOffset
-	)
 end
 
 function HorseMountCamera:getTransitionRootCFrame(mountedState, getCharacterRootPart)
@@ -342,70 +298,6 @@ function HorseMountCamera:startCameraTransition(mode, duration)
 	self.cameraTransitionState.StartCFrame = camera.CFrame
 	self.cameraTransitionState.StartFieldOfView = camera.FieldOfView
 	camera.CameraType = Enum.CameraType.Scriptable
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	UserInputService.MouseIconEnabled = false
-end
-
-function HorseMountCamera:getCameraRestoreCFrame(getCharacterRootPart)
-	local character = self.localPlayer.Character
-	local rootPart = getCharacterRootPart()
-	if not character or not rootPart then
-		return nil
-	end
-
-	local head = character:FindFirstChild("Head")
-	local focusPart = head and head:IsA("BasePart") and head or rootPart
-	local focus = focusPart.Position + Vector3.new(0, self.config.CameraRestoreFocusHeightOffset or 1.6, 0)
-	local yawCFrame = CFrame.Angles(0, build_angle_y(rootPart.CFrame), 0)
-	local desiredPosition = focus
-		- (yawCFrame.LookVector * (self.config.CameraRestoreBackOffset or 10))
-		+ Vector3.new(0, self.config.CameraRestoreHeightOffset or 3.75, 0)
-		+ (yawCFrame.RightVector * (self.config.CameraRestoreSideOffset or 0))
-
-	return CFrame.lookAt(desiredPosition, focus)
-end
-
-function HorseMountCamera:updateCameraRestore(deltaTime, getCharacterRootPart)
-	if not self.cameraRestoreState.Active then
-		return
-	end
-
-	local camera = Workspace.CurrentCamera
-	if not camera then
-		self:cancelCameraRestore()
-		return
-	end
-
-	self.cameraRestoreState.Elapsed += deltaTime
-	local duration = math.max(self.cameraRestoreState.Duration or 0, 0.05)
-	local alpha = math.clamp(self.cameraRestoreState.Elapsed / duration, 0, 1)
-	local easedAlpha = build_eased_alpha(alpha)
-	local targetCFrame = self:getCameraRestoreCFrame(getCharacterRootPart)
-
-	if targetCFrame and self.cameraRestoreState.StartCFrame then
-		camera.CameraType = Enum.CameraType.Scriptable
-		camera.CFrame = self.cameraRestoreState.StartCFrame:Lerp(targetCFrame, easedAlpha)
-	end
-
-	if self.cameraRestoreState.StartFieldOfView ~= nil and self.cameraRestoreState.TargetFieldOfView ~= nil then
-		camera.FieldOfView = self.cameraRestoreState.StartFieldOfView
-			+ ((self.cameraRestoreState.TargetFieldOfView - self.cameraRestoreState.StartFieldOfView) * easedAlpha)
-	end
-
-	if alpha < 1 then
-		return
-	end
-
-	local targetCameraType = self.cameraRestoreState.TargetCameraType
-	local targetCameraSubject = self.cameraRestoreState.TargetCameraSubject
-	local targetFieldOfView = self.cameraRestoreState.TargetFieldOfView
-	self:cancelCameraRestore()
-
-	if targetFieldOfView ~= nil then
-		camera.FieldOfView = targetFieldOfView
-	end
-
-	self:forceReleaseCameraControls(targetCameraType, targetCameraSubject)
 end
 
 function HorseMountCamera:updateCameraTransition(deltaTime, mountedState, getCharacterRootPart)
@@ -443,67 +335,34 @@ function HorseMountCamera:updateCameraTransition(deltaTime, mountedState, getCha
 	end
 end
 
-function HorseMountCamera:restoreCamera(getCharacterRootPart)
-	local camera = Workspace.CurrentCamera
-	self:cancelCameraTransition()
-	local targetCameraType = self.previousCameraType
-	if targetCameraType == nil or targetCameraType == Enum.CameraType.Scriptable then
-		targetCameraType = Enum.CameraType.Custom
+function HorseMountCamera:restoreZoomLimits()
+	if self.previousCameraMinZoomDistance == nil then
+		return
 	end
 
-	local targetCameraSubject = self.previousCameraSubject
-	if not targetCameraSubject or not targetCameraSubject.Parent then
-		targetCameraSubject = self:getDefaultCameraSubject()
+	pcall(function()
+		self.localPlayer.CameraMinZoomDistance = self.previousCameraMinZoomDistance
+	end)
+
+	self.previousCameraMinZoomDistance = nil
+end
+
+function HorseMountCamera:applyZoomLimits()
+	local minZoomDistance = tonumber(self.config.MountedMinZoomDistance) or 0
+	if minZoomDistance <= 0 or self.previousCameraMinZoomDistance ~= nil then
+		return
 	end
 
-	local targetFieldOfView = self.previousFieldOfView
-	if targetFieldOfView == nil and camera then
-		targetFieldOfView = camera.FieldOfView
-	end
-
-	if camera then
-		local targetCFrame = self:getCameraRestoreCFrame(getCharacterRootPart)
-		if targetCFrame then
-			self.cameraRestoreState.Active = true
-			self.cameraRestoreState.Elapsed = 0
-			self.cameraRestoreState.Duration = math.max(self.config.CameraRestoreDuration or 0.45, 0.05)
-			self.cameraRestoreState.StartCFrame = camera.CFrame
-			self.cameraRestoreState.StartFieldOfView = camera.FieldOfView
-			self.cameraRestoreState.TargetFieldOfView = targetFieldOfView
-			self.cameraRestoreState.TargetCameraType = targetCameraType
-			self.cameraRestoreState.TargetCameraSubject = targetCameraSubject
-			camera.CameraType = Enum.CameraType.Scriptable
-		else
-			self:cancelCameraRestore()
-			camera.CameraType = targetCameraType
-			if targetCameraSubject then
-				camera.CameraSubject = targetCameraSubject
-			end
-			if targetFieldOfView ~= nil then
-				camera.FieldOfView = targetFieldOfView
-			end
-		end
-	end
-
-	local targetMouseBehavior = self.previousMouseBehavior
-	if targetMouseBehavior == nil or targetMouseBehavior == Enum.MouseBehavior.LockCenter then
-		targetMouseBehavior = Enum.MouseBehavior.Default
-	end
-
-	UserInputService.MouseBehavior = targetMouseBehavior
-	UserInputService.MouseIconEnabled = self.previousMouseIconEnabled ~= false
-
-	self.previousCameraType = nil
-	self.previousCameraSubject = nil
-	self.previousMouseBehavior = nil
-	self.previousMouseIconEnabled = nil
-	self.previousFieldOfView = nil
+	self.previousCameraMinZoomDistance = self.localPlayer.CameraMinZoomDistance
+	pcall(function()
+		self.localPlayer.CameraMinZoomDistance = math.min(minZoomDistance, self.localPlayer.CameraMaxZoomDistance)
+	end)
 end
 
 function HorseMountCamera:releaseCameraAfterDismount()
 	local camera = Workspace.CurrentCamera
 	self:cancelCameraTransition()
-	self:cancelCameraRestore()
+	self:restoreZoomLimits()
 
 	local targetCameraType = self.previousCameraType
 	if targetCameraType == nil or targetCameraType == Enum.CameraType.Scriptable then
@@ -523,45 +382,7 @@ function HorseMountCamera:releaseCameraAfterDismount()
 
 	self.previousCameraType = nil
 	self.previousCameraSubject = nil
-	self.previousMouseBehavior = nil
-	self.previousMouseIconEnabled = nil
 	self.previousFieldOfView = nil
-end
-
-function HorseMountCamera:leaveFirstPersonForMount(camera)
-	local cameras = self:getPlayerCameras()
-	local activeCameraController = cameras and cameras.activeCameraController
-	local isFirstPerson = self.localPlayer.CameraMode == Enum.CameraMode.LockFirstPerson
-
-	if not isFirstPerson and activeCameraController then
-		local success, subjectDistance = pcall(function()
-			return activeCameraController:GetCameraToSubjectDistance()
-		end)
-		isFirstPerson = success and type(subjectDistance) == "number"
-			and subjectDistance <= FIRST_PERSON_DISTANCE_THRESHOLD
-	end
-
-	if not isFirstPerson then
-		return
-	end
-
-	self.localPlayer.CameraMode = Enum.CameraMode.Classic
-
-	local thirdPersonDistance = math.max(
-		self.localPlayer.CameraMinZoomDistance,
-		self.config.CameraRestoreBackOffset or 10
-	)
-	if activeCameraController then
-		pcall(function()
-			activeCameraController:SetCameraToSubjectDistance(thirdPersonDistance)
-		end)
-	end
-
-	local subjectPosition = get_camera_subject_position(camera.CameraSubject)
-	if subjectPosition then
-		local lookVector = camera.CFrame.LookVector
-		camera.CFrame = CFrame.lookAt(subjectPosition - (lookVector * thirdPersonDistance), subjectPosition)
-	end
 end
 
 function HorseMountCamera:prepareCameraForMount()
@@ -570,19 +391,18 @@ function HorseMountCamera:prepareCameraForMount()
 		return
 	end
 
-	self:cancelCameraRestore()
-	self:leaveFirstPersonForMount(camera)
 	if self.previousCameraType == nil then
 		self.previousCameraType = camera.CameraType
 		self.previousCameraSubject = camera.CameraSubject
-		self.previousMouseBehavior = UserInputService.MouseBehavior
-		self.previousMouseIconEnabled = UserInputService.MouseIconEnabled
 		self.previousFieldOfView = camera.FieldOfView
 	end
 
-	camera.CameraType = Enum.CameraType.Scriptable
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	UserInputService.MouseIconEnabled = false
+	self:applyZoomLimits()
+end
+
+function HorseMountCamera:handOverToDefaultCamera()
+	self:cancelCameraTransition()
+	self:forceReleaseCameraControls(Enum.CameraType.Custom, self:getDefaultCameraSubject())
 end
 
 function HorseMountCamera:updateCameraFov(deltaTime, mountedState, localPrediction, getPredictionMovement, isSprintInputActive)
@@ -606,21 +426,6 @@ function HorseMountCamera:updateCameraFov(deltaTime, mountedState, localPredicti
 
 	local blendAlpha = 1 - math.exp(-(self.config.MountedFovSmoothness or 8) * deltaTime)
 	camera.FieldOfView = camera.FieldOfView + ((targetFov - camera.FieldOfView) * blendAlpha)
-end
-
-function HorseMountCamera:getRunningSensitivityMultiplier(mountedState, localPrediction, getPredictionMovement)
-	local movement = localPrediction.Movement or getPredictionMovement(mountedState.HorseId)
-	local currentSpeed = localPrediction.CurrentSpeed or 0
-	local runThreshold = math.max(
-		movement.TrotSpeed or movement.WalkSpeed or 14,
-		movement.CanterSpeed or movement.SprintSpeed or 22
-	)
-
-	if currentSpeed >= (runThreshold * 0.95) then
-		return self.config.RunMouseSensitivityMultiplier or 0.2
-	end
-
-	return 1
 end
 
 return HorseMountCamera

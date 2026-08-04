@@ -39,7 +39,7 @@ local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
 local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
 local MOUNT_ANTIGRAVITY_ATTACHMENT_NAME = "HorseMountAntiGravityAttachment"
 local MOUNT_ANTIGRAVITY_FORCE_NAME = "HorseMountAntiGravityForce"
-local MOUNT_DEBUG_ENABLED = true
+local MOUNT_DEBUG_ENABLED = false
 
 local MOUNT_DISABLED_STATES = {
 	Enum.HumanoidStateType.Freefall,
@@ -1189,7 +1189,107 @@ local function validate_mount_state(mountState)
 	return true
 end
 
+local function update_observed_mount_speed(mountState, deltaTime)
+	local mountRoot = mountState.MountRoot
+	if not mountRoot or deltaTime <= 0 then
+		return
+	end
+
+	local position = mountRoot.Position
+	local lastPosition = mountState.LastPosition
+	mountState.LastPosition = position
+	mountState.SpeedSampleReady = false
+
+	if not lastPosition then
+		mountState.SpeedWindowDistance = 0
+		mountState.SpeedWindowSeconds = 0
+		return
+	end
+
+	local delta = position - lastPosition
+	mountState.SpeedWindowDistance = (mountState.SpeedWindowDistance or 0)
+		+ Vector3.new(delta.X, 0, delta.Z).Magnitude
+	mountState.SpeedWindowSeconds = (mountState.SpeedWindowSeconds or 0) + deltaTime
+
+	local windowSeconds = math.max(tonumber(HorseMountConfig.SpeedSampleWindowSeconds) or 0.5, 0.05)
+	if mountState.SpeedWindowSeconds < windowSeconds then
+		return
+	end
+
+	mountState.WindowSpeed = mountState.SpeedWindowDistance / mountState.SpeedWindowSeconds
+	mountState.SpeedWindowDistance = 0
+	mountState.SpeedWindowSeconds = 0
+	mountState.SpeedSampleReady = true
+end
+
+local function get_mount_speed_ceiling(mountState)
+	local movement = mountState.HorseSummary and mountState.HorseSummary.Movement or nil
+	local gallopSpeed = type(movement) == "table" and tonumber(movement.SprintSpeed) or 26
+	local tolerance = math.max(tonumber(HorseMountConfig.SpeedToleranceMultiplier) or 1.35, 1)
+	local ceiling = gallopSpeed * tolerance
+
+	if mountState.IsJumping == true then
+		ceiling += tonumber(HorseMountConfig.HorseJumpMaxVelocity) or 30
+	end
+
+	return ceiling
+end
+
+local function enforce_mount_speed_limit(mountState, deltaTime)
+	local mountRoot = mountState.MountRoot
+	if not mountRoot or deltaTime <= 0 then
+		return true
+	end
+
+	if mountState.SpeedSampleReady ~= true then
+		return true
+	end
+
+	local ceiling = get_mount_speed_ceiling(mountState)
+	if (mountState.WindowSpeed or 0) <= ceiling then
+		local decayWindows = math.max(tonumber(HorseMountConfig.SpeedViolationDecayWindows) or 4, 1)
+		mountState.CleanSpeedWindows = (mountState.CleanSpeedWindows or 0) + 1
+
+		if mountState.CleanSpeedWindows >= decayWindows then
+			mountState.CleanSpeedWindows = 0
+			mountState.SpeedViolations = math.max((mountState.SpeedViolations or 0) - 1, 0)
+		end
+
+		mountState.LastValidCFrame = mountRoot.CFrame
+		return true
+	end
+
+	mountState.CleanSpeedWindows = 0
+
+	if mountState.LastValidCFrame then
+		mountRoot.AssemblyLinearVelocity = Vector3.zero
+		mountRoot.AssemblyAngularVelocity = Vector3.zero
+		mountRoot:PivotTo(mountState.LastValidCFrame)
+		mountState.LastPosition = mountState.LastValidCFrame.Position
+	end
+
+	mountState.SpeedViolations = (mountState.SpeedViolations or 0) + 1
+
+	local maxViolations = math.max(tonumber(HorseMountConfig.MaxSpeedViolations) or 5, 1)
+	if mountState.SpeedViolations >= maxViolations then
+		warn(string.format(
+			"[HorseMount] Forced dismount for %s after %d speed violations",
+			tostring(mountState.Player),
+			mountState.SpeedViolations
+		))
+		return false
+	end
+
+	return true
+end
+
 local function update_mount(mountState, deltaTime)
+	update_observed_mount_speed(mountState, deltaTime)
+
+	if not enforce_mount_speed_limit(mountState, deltaTime) then
+		return false
+	end
+
 	if mountState.IsJumping == true then
 		local autoClearAt = mountState.JumpAutoClearAt or 0
 		if autoClearAt > 0 and os.clock() >= autoClearAt then
@@ -1207,6 +1307,7 @@ local function update_mount(mountState, deltaTime)
 	update_mount_animation_state(mountState)
 	update_horse_run_dust_anchors(mountState.DustAnchors)
 	set_horse_run_dust_enabled(mountState.DustEmitters, mountState.Sprinting and mountState.IsJumping ~= true)
+	return true
 end
 
 local function restore_horse_after_failed_mount(
@@ -1848,8 +1949,8 @@ function HorseMountService.Init()
 				playersToUnmount[#playersToUnmount + 1] = player
 			elseif mountState.Humanoid.Health <= 0 then
 				playersToUnmount[#playersToUnmount + 1] = player
-			else
-				update_mount(mountState, deltaTime)
+			elseif not update_mount(mountState, deltaTime) then
+				playersToUnmount[#playersToUnmount + 1] = player
 			end
 		end
 

@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local localPlayer = Players.LocalPlayer
 local SoundUtility = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utility"):WaitForChild("SoundUtility"))
+local HudAnim = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Libraries"):WaitForChild("HudAnim"))
 
 local Notifications = {}
 
@@ -17,6 +18,10 @@ local TITLE_SHADOW_NAMES = { "DialogueNameShadowTX" }
 local DETAILS_NAMES = { "DetailsTX" }
 local ACCEPT_BUTTON_NAMES = { "Accept" }
 local DENY_BUTTON_NAMES = { "Deny" }
+
+local DIALOGUE_OPEN_ANIM = "drop"
+local DIALOGUE_OPEN_TIME = 0.28
+local DIALOGUE_OPEN_OFFSET = 52
 
 local activeNotificationId = nil
 local buttonConnections = {}
@@ -88,6 +93,20 @@ local function get_dialogue_references()
 		AcceptButton = find_named_instance(dialogue, ACCEPT_BUTTON_NAMES, "GuiButton") :: GuiButton?,
 		DenyButton = find_named_instance(dialogue, DENY_BUTTON_NAMES, "GuiButton") :: GuiButton?,
 	}
+end
+
+local function ensure_dialogue_animation(dialogue: GuiObject): ()
+	if dialogue:GetAttribute("open_anim") == nil then
+		dialogue:SetAttribute("open_anim", DIALOGUE_OPEN_ANIM)
+	end
+
+	if dialogue:GetAttribute("open_t") == nil then
+		dialogue:SetAttribute("open_t", DIALOGUE_OPEN_TIME)
+	end
+
+	if dialogue:GetAttribute("open_offset_px") == nil then
+		dialogue:SetAttribute("open_offset_px", DIALOGUE_OPEN_OFFSET)
+	end
 end
 
 local function disconnect_buttons(): ()
@@ -164,7 +183,8 @@ function Notifications.ShowDialogue(config): boolean
 	end
 
 	activeNotificationId = config.id
-	refs.Dialogue.Visible = true
+	ensure_dialogue_animation(refs.Dialogue)
+	HudAnim.play_open(refs.Dialogue)
 	SoundUtility.PlayGameSFX("Popup")
 	set_text_pair(refs.Title, refs.TitleShadow, config.title or "Notification")
 	set_text_pair(refs.Details, nil, config.details or "")
@@ -220,7 +240,11 @@ function Notifications.HideDialogue(id): boolean
 	hide_confirmation_root()
 
 	if refs then
-		refs.Dialogue.Visible = false
+		if refs.Dialogue.Visible then
+			HudAnim.play_close(refs.Dialogue)
+		else
+			refs.Dialogue.Visible = false
+		end
 	end
 
 	activeNotificationId = nil

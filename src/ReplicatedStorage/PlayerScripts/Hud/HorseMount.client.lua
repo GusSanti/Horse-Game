@@ -40,6 +40,7 @@ local MOUNT_MOVEMENT_VOLUME = 0.45
 local LOCAL_MOUNT_SMOOTHNESS = 26
 local DISMOUNT_ACTION_NAME = "HorseMountDismount"
 local JUMP_ACTION_NAME = "HorseMountJumpCharge"
+local SPRINT_ACTION_NAME = "HorseMountSprint"
 local STABLE_MOUNT_PROMPT_ATTACHMENT_NAME = "StableMountPromptAttachment"
 
 local HORSE_FOLDER_NAME = ToolDictionary.HorseFolderName
@@ -62,6 +63,8 @@ local localPrediction = {
 	CurrentYaw = 0,
 	CurrentSpeed = 0,
 	ForwardHeldTime = 0,
+	TerrainPitch = 0,
+	TerrainRoll = 0,
 	LastMoveDirection = nil,
 	GroundOffset = 0,
 	Position = nil,
@@ -118,6 +121,8 @@ local localHorseAnimationState = {
 }
 local cameraController = HorseMountCamera.new(localPlayer, HorseMountConfig)
 
+local sprintButtonActive = false
+
 local function bind_dismount_action()
 	ContextActionService:BindActionAtPriority(
 		DISMOUNT_ACTION_NAME,
@@ -128,16 +133,42 @@ local function bind_dismount_action()
 
 			return Enum.ContextActionResult.Sink
 		end,
-		false,
+		true,
 		3000,
 		Enum.KeyCode.LeftControl,
 		Enum.KeyCode.RightControl,
-		Enum.KeyCode.P
+		Enum.KeyCode.P,
+		Enum.KeyCode.ButtonB
 	)
+	ContextActionService:SetTitle(DISMOUNT_ACTION_NAME, "Dismount")
 end
 
 local function unbind_dismount_action()
 	ContextActionService:UnbindAction(DISMOUNT_ACTION_NAME)
+end
+
+local function bind_sprint_action()
+	sprintButtonActive = false
+	ContextActionService:BindAction(
+		SPRINT_ACTION_NAME,
+		function(_, inputState)
+			if inputState == Enum.UserInputState.Begin then
+				sprintButtonActive = true
+			elseif inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
+				sprintButtonActive = false
+			end
+
+			return Enum.ContextActionResult.Pass
+		end,
+		true,
+		Enum.KeyCode.ButtonL3
+	)
+	ContextActionService:SetTitle(SPRINT_ACTION_NAME, "Sprint")
+end
+
+local function unbind_sprint_action()
+	sprintButtonActive = false
+	ContextActionService:UnbindAction(SPRINT_ACTION_NAME)
 end
 
 local function get_default_camera_subject() return localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid") or nil end
@@ -598,7 +629,38 @@ local function build_character_pivot_from_root(character, rootPart, desiredRootC
 	return desiredRootCFrame * relativePivotOffset
 end
 
-local function get_move_vector()
+local cachedPlayerControls = nil
+
+local function get_player_controls()
+	if cachedPlayerControls then
+		return cachedPlayerControls
+	end
+
+	local playerScripts = localPlayer:FindFirstChild("PlayerScripts")
+	local playerModule = playerScripts and playerScripts:FindFirstChild("PlayerModule")
+	if not playerModule then
+		return nil
+	end
+
+	local requireSuccess, requiredPlayerModule = pcall(function()
+		return require(playerModule)
+	end)
+	if not requireSuccess or type(requiredPlayerModule) ~= "table" then
+		return nil
+	end
+
+	local controlsSuccess, controls = pcall(function()
+		return requiredPlayerModule:GetControls()
+	end)
+	if not controlsSuccess or type(controls) ~= "table" then
+		return nil
+	end
+
+	cachedPlayerControls = controls
+	return cachedPlayerControls
+end
+
+local function get_keyboard_move_vector()
 	local moveX = 0
 	local moveZ = 0
 
@@ -616,6 +678,55 @@ local function get_move_vector()
 
 	if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down) then
 		moveZ += 1
+	end
+
+	return moveX, moveZ
+end
+
+local function get_gamepad_move_vector()
+	local gamepadSuccess, gamepadStates = pcall(function()
+		return UserInputService:GetGamepadState(Enum.UserInputType.Gamepad1)
+	end)
+	if not gamepadSuccess or type(gamepadStates) ~= "table" then
+		return 0, 0
+	end
+
+	local deadzone = tonumber(HorseMountConfig.GamepadThumbstickDeadzone) or 0.15
+	for _, inputObject in ipairs(gamepadStates) do
+		if inputObject.KeyCode == Enum.KeyCode.Thumbstick1 then
+			local position = inputObject.Position
+			if math.sqrt((position.X * position.X) + (position.Y * position.Y)) > deadzone then
+				return position.X, -position.Y
+			end
+
+			return 0, 0
+		end
+	end
+
+	return 0, 0
+end
+
+local function get_move_vector()
+	local moveX = 0
+	local moveZ = 0
+	local controls = get_player_controls()
+
+	if controls then
+		local moveSuccess, moveVector = pcall(function()
+			return controls:GetMoveVector()
+		end)
+		if moveSuccess and typeof(moveVector) == "Vector3" then
+			moveX = moveVector.X
+			moveZ = moveVector.Z
+		end
+	end
+
+	if math.abs(moveX) < 0.05 and math.abs(moveZ) < 0.05 then
+		moveX, moveZ = get_keyboard_move_vector()
+	end
+
+	if math.abs(moveX) < 0.05 and math.abs(moveZ) < 0.05 then
+		moveX, moveZ = get_gamepad_move_vector()
 	end
 
 	local magnitude = math.sqrt((moveX * moveX) + (moveZ * moveZ))
@@ -965,6 +1076,61 @@ local function resolve_ground_position(position, ignoreList, groundOffset)
 	return position
 end
 
+local function sample_ground_height(position, ignoreList)
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = ignoreList
+	raycastParams.IgnoreWater = false
+
+	local origin = position + Vector3.new(0, HorseMountConfig.GroundProbeHeight, 0)
+	local direction = Vector3.new(0, -(HorseMountConfig.GroundProbeDistance + HorseMountConfig.GroundProbeHeight), 0)
+	local result = Workspace:Raycast(origin, direction, raycastParams)
+	return result and result.Position.Y or nil
+end
+
+local function resolve_ground_tilt(position, ignoreList, yaw)
+	local spacing = math.max(tonumber(HorseMountConfig.TerrainProbeSpacing) or 3, 0.5)
+	local yawCFrame = CFrame.Angles(0, yaw, 0)
+	local forward = yawCFrame.LookVector
+	local right = yawCFrame.RightVector
+
+	local frontHeight = sample_ground_height(position + (forward * spacing), ignoreList)
+	local backHeight = sample_ground_height(position - (forward * spacing), ignoreList)
+	local rightHeight = sample_ground_height(position + (right * spacing), ignoreList)
+	local leftHeight = sample_ground_height(position - (right * spacing), ignoreList)
+
+	local maxPitch = math.rad(math.max(tonumber(HorseMountConfig.MaxTerrainPitchDegrees) or 22, 0))
+	local maxRoll = math.rad(math.max(tonumber(HorseMountConfig.MaxTerrainRollDegrees) or 12, 0))
+	local span = spacing * 2
+
+	local pitchAngle = 0
+	if frontHeight and backHeight then
+		pitchAngle = math.clamp(math.atan2(frontHeight - backHeight, span), -maxPitch, maxPitch)
+	end
+
+	local rollAngle = 0
+	if rightHeight and leftHeight then
+		rollAngle = math.clamp(math.atan2(rightHeight - leftHeight, span), -maxRoll, maxRoll)
+	end
+
+	return pitchAngle, rollAngle
+end
+
+local function build_terrain_tilt(deltaTime, position, ignoreList, yaw)
+	local targetPitch = 0
+	local targetRoll = 0
+
+	if localPrediction.JumpAirborne ~= true and HorseMountConfig.StickMountedHorseToGround == true then
+		targetPitch, targetRoll = resolve_ground_tilt(position, ignoreList, yaw)
+	end
+
+	local blendAlpha = 1 - math.exp(-(HorseMountConfig.TerrainTiltResponsiveness or 8) * deltaTime)
+	localPrediction.TerrainPitch += (targetPitch - (localPrediction.TerrainPitch or 0)) * blendAlpha
+	localPrediction.TerrainRoll += (targetRoll - (localPrediction.TerrainRoll or 0)) * blendAlpha
+
+	return CFrame.Angles(localPrediction.TerrainPitch, 0, localPrediction.TerrainRoll)
+end
+
 local function find_local_horse_visual(horseId)
 	local plot = plotValue.Value
 	if not plot or type(horseId) ~= "string" or horseId == "" then
@@ -1235,7 +1401,8 @@ end
 
 local function is_sprint_input_active()
 	return mountedState.Active and (
-		UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+		sprintButtonActive
+		or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
 	) or false
 end
@@ -1377,11 +1544,12 @@ local function bind_jump_action()
 
 			return Enum.ContextActionResult.Sink
 		end,
-		false,
+		true,
 		3000,
 		Enum.PlayerActions.CharacterJump,
 		Enum.KeyCode.Space
 	)
+	ContextActionService:SetTitle(JUMP_ACTION_NAME, "Jump")
 end
 
 local function unbind_jump_action()
@@ -1398,6 +1566,8 @@ local function reset_local_prediction()
 	localPrediction.CurrentYaw = mountedState.CameraYaw
 	localPrediction.CurrentSpeed = 0
 	localPrediction.ForwardHeldTime = 0
+	localPrediction.TerrainPitch = 0
+	localPrediction.TerrainRoll = 0
 	localPrediction.LastMoveDirection = nil
 	localPrediction.GroundOffset = 0
 	localPrediction.Position = nil
@@ -1568,73 +1738,83 @@ local function update_local_mount_prediction(deltaTime)
 		desiredMoveDirection = desiredMoveVector.Unit
 	end
 
-	if sprinting then
-		local wasForwarding = localPrediction.ForwardHeldTime > 0
-		localPrediction.ForwardHeldTime = math.min(
-			HorseMountConfig.ForwardAccelerationSeconds,
-			localPrediction.ForwardHeldTime + deltaTime
-		)
+	if desiredMoveDirection then
+		local directionScale = math.max(forwardAmount, backwardAmount, math.abs(inputX), 0.35)
 
-		local forwardAlpha = math.clamp(
-			localPrediction.ForwardHeldTime / HorseMountConfig.ForwardAccelerationSeconds,
-			0,
-			1
-		)
-		local forwardTargetSpeed = startForwardSpeed + ((sprintSpeed - startForwardSpeed) * forwardAlpha)
+		if sprinting then
+			local wasForwarding = localPrediction.ForwardHeldTime > 0
+			localPrediction.ForwardHeldTime = math.min(
+				HorseMountConfig.ForwardAccelerationSeconds,
+				localPrediction.ForwardHeldTime + deltaTime
+			)
 
-		if not wasForwarding and currentSpeed < startForwardSpeed then
-			currentSpeed = startForwardSpeed
+			local forwardAlpha = math.clamp(
+				localPrediction.ForwardHeldTime / HorseMountConfig.ForwardAccelerationSeconds,
+				0,
+				1
+			)
+			local forwardTargetSpeed = startForwardSpeed + ((sprintSpeed - startForwardSpeed) * forwardAlpha)
+
+			if not wasForwarding and currentSpeed < startForwardSpeed then
+				currentSpeed = startForwardSpeed
+			else
+				currentSpeed = move_towards(
+					currentSpeed,
+					forwardTargetSpeed,
+					HorseMountConfig.SidewaysAccelerationPerSecond * deltaTime
+				)
+			end
 		else
+			localPrediction.ForwardHeldTime = math.max(
+				0,
+				localPrediction.ForwardHeldTime - (deltaTime * HorseMountConfig.ForwardDecayPerSecond)
+			)
+
 			currentSpeed = move_towards(
 				currentSpeed,
-				forwardTargetSpeed,
+				walkSpeed * directionScale,
 				HorseMountConfig.SidewaysAccelerationPerSecond * deltaTime
 			)
 		end
 
-		targetYaw = mountedState.CameraYaw
-		desiredMoveDirection = cameraOrientation.LookVector
+		targetYaw = build_yaw_from_direction(desiredMoveDirection)
 	else
 		localPrediction.ForwardHeldTime = math.max(
 			0,
 			localPrediction.ForwardHeldTime - (deltaTime * HorseMountConfig.ForwardDecayPerSecond)
 		)
 
-		if desiredMoveDirection then
-			local directionScale = math.max(forwardAmount, backwardAmount, math.abs(inputX), 0.35)
-			local targetWalkSpeed = walkSpeed * directionScale
-			currentSpeed = move_towards(
-				currentSpeed,
-				targetWalkSpeed,
-				HorseMountConfig.SidewaysAccelerationPerSecond * deltaTime
-			)
-			targetYaw = build_yaw_from_direction(desiredMoveDirection)
-		else
-			currentSpeed = move_towards(
-				currentSpeed,
-				0,
-				HorseMountConfig.PassiveBrakingPerSecond * deltaTime
-			)
-		end
+		currentSpeed = move_towards(
+			currentSpeed,
+			0,
+			HorseMountConfig.PassiveBrakingPerSecond * deltaTime
+		)
 	end
 
 	localPrediction.CurrentSpeed = math.max(0, currentSpeed)
+
 	local angleDelta = wrap_angle(targetYaw - currentYaw)
 	currentYaw += math.clamp(angleDelta, -math.rad(maxTurnSpeedDegrees) * deltaTime, math.rad(maxTurnSpeedDegrees) * deltaTime)
 	localPrediction.CurrentYaw = wrap_angle(currentYaw)
 
-	local orientation = CFrame.Angles(0, localPrediction.CurrentYaw, 0)
+	local yawOrientation = CFrame.Angles(0, localPrediction.CurrentYaw, 0)
 	if desiredMoveDirection and desiredMoveDirection.Magnitude > 0.001 then
 		localPrediction.LastMoveDirection = desiredMoveDirection
 	end
 
 	local moveDirection = localPrediction.LastMoveDirection
 	if not moveDirection or moveDirection.Magnitude <= 0 then
-		moveDirection = orientation.LookVector
+		moveDirection = yawOrientation.LookVector
 		localPrediction.LastMoveDirection = moveDirection
 	end
 
 	local currentPosition = mountRoot.Position
+	local orientation = yawOrientation * build_terrain_tilt(
+		deltaTime,
+		currentPosition,
+		{ horseVisual, localPlayer.Character },
+		localPrediction.CurrentYaw
+	)
 	local verticalVelocity = 0
 	if localPrediction.JumpAirborne == true then
 		localPrediction.JumpVerticalVelocity = (localPrediction.JumpVerticalVelocity or 0)
@@ -1724,11 +1904,10 @@ local function get_control_start_yaw() return cameraController:getControlStartYa
 local function prepare_camera_for_mount() cameraController:prepareCameraForMount() end
 local function start_camera_transition(mode, duration) cameraController:startCameraTransition(mode, duration) end
 local function cancel_camera_transition() cameraController:cancelCameraTransition() end
-local function restore_camera() cameraController:restoreCamera(get_character_root_part) end
-local function update_camera_restore(deltaTime) cameraController:updateCameraRestore(deltaTime, get_character_root_part) end
+local function restore_camera() cameraController:releaseCameraAfterDismount() end
+local function hand_over_to_default_camera() cameraController:handOverToDefaultCamera() end
 local function update_camera_transition(deltaTime) cameraController:updateCameraTransition(deltaTime, mountedState, get_character_root_part) end
 local function update_camera_fov(deltaTime) cameraController:updateCameraFov(deltaTime, mountedState, localPrediction, get_prediction_movement, is_sprint_input_active) end
-local function get_running_sensitivity_multiplier() return cameraController:getRunningSensitivityMultiplier(mountedState, localPrediction, get_prediction_movement) end
 
 send_mount_input = function(forceSend)
 	if not mountedState.Active then
@@ -1740,11 +1919,6 @@ send_mount_input = function(forceSend)
 	local sprinting = is_sprint_input_active()
 	local jumpRequested = localPrediction.JumpPendingRequest
 	local jumpLanded = localPrediction.JumpPendingLanded == true
-
-	if sprinting then
-		moveX = 0
-		moveZ = 0
-	end
 
 	local yawChanged = math.abs(mountedState.CameraYaw - lastSentCameraYaw) >= 0.01
 	local moveChanged = math.abs(moveX - lastSentMoveX) >= 0.01 or math.abs(moveZ - lastSentMoveZ) >= 0.01
@@ -1795,6 +1969,7 @@ sync_mount_state_from_server = function(statePayload)
 		table.clear(mountTransitionCollisionStates)
 		bind_dismount_action()
 		bind_jump_action()
+		bind_sprint_action()
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
 		cancel_camera_transition()
@@ -1808,6 +1983,8 @@ sync_mount_state_from_server = function(statePayload)
 			send_mount_input(true)
 		end
 
+		hand_over_to_default_camera()
+
 		set_local_rider_mode("Idle")
 	elseif wasMounted then
 		mountTransitionCollisionToken += 1
@@ -1817,6 +1994,7 @@ sync_mount_state_from_server = function(statePayload)
 		reset_local_prediction()
 		unbind_dismount_action()
 		unbind_jump_action()
+		unbind_sprint_action()
 		stop_local_rider_tracks(0.08)
 		if previousTransitionMode == "Dismounting" then
 			task.spawn(function()
@@ -1828,13 +2006,12 @@ sync_mount_state_from_server = function(statePayload)
 		else
 			restore_camera()
 		end
-	elseif UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter
-		or (Workspace.CurrentCamera and Workspace.CurrentCamera.CameraType == Enum.CameraType.Scriptable)
-	then
+	elseif Workspace.CurrentCamera and Workspace.CurrentCamera.CameraType == Enum.CameraType.Scriptable then
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
 		unbind_dismount_action()
 		unbind_jump_action()
+		unbind_sprint_action()
 		stop_local_rider_tracks(0.08)
 		restore_camera()
 	end
@@ -1886,6 +2063,7 @@ request_dismount = function()
 	requestInFlight = true
 	unbind_dismount_action()
 	unbind_jump_action()
+	unbind_sprint_action()
 
 	local success, response = pcall(function()
 		return Net.Function.HorseMountAction:Call({
@@ -1903,6 +2081,7 @@ request_dismount = function()
 		if mountedState.Active then
 			bind_dismount_action()
 			bind_jump_action()
+			bind_sprint_action()
 		end
 	end
 end
@@ -1926,24 +2105,6 @@ localPlayer.CharacterAdded:Connect(function()
 			restore_camera()
 		end
 	end)
-end)
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if not mountedState.Active then
-		return
-	end
-
-	if input.KeyCode == Enum.KeyCode.LeftControl
-		or input.KeyCode == Enum.KeyCode.RightControl
-		or input.KeyCode == Enum.KeyCode.P
-	then
-		request_dismount()
-		return
-	end
-
-	if gameProcessed then
-		return
-	end
 end)
 
 Net.Event.HorseMountState:Connect(function(payload)
@@ -1972,7 +2133,6 @@ Net.Event.HorseMountState:Connect(function(payload)
 			and payload.TargetCFrame
 			or nil
 		prepare_camera_for_mount()
-		start_camera_transition("Mounting", duration)
 		play_local_mount_transition(
 			duration,
 			payload.TargetCFrame
@@ -2018,6 +2178,7 @@ Net.Event.HorseMountState:Connect(function(payload)
 				or nil
 			unbind_dismount_action()
 			unbind_jump_action()
+			unbind_sprint_action()
 			set_local_horse_animation_mode(localPrediction.HorseVisual, "Idle")
 			start_camera_transition("Dismounting", transitionDuration)
 			play_local_dismount_transition(
@@ -2053,7 +2214,6 @@ task.spawn(function()
 end)
 
 RunService.RenderStepped:Connect(function(deltaTime)
-	update_camera_restore(deltaTime)
 	update_camera_transition(deltaTime)
 
 	if not mountedState.Active then
@@ -2066,31 +2226,14 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		return
 	end
 
-	local sensitivityMultiplier = get_running_sensitivity_multiplier()
-	mountedState.CameraYaw = wrap_angle(
-		mountedState.CameraYaw - (UserInputService:GetMouseDelta().X * HorseMountConfig.MouseSensitivity * sensitivityMultiplier)
-	)
+	local camera = Workspace.CurrentCamera
+	if camera then
+		mountedState.CameraYaw = build_angle_y(camera.CFrame)
+	end
 
 	update_local_mount_prediction(deltaTime)
 	update_local_horse_animation()
 	update_mount_movement_sound()
-
-	local rootPart = get_character_root_part()
-	local camera = Workspace.CurrentCamera
-	if camera and rootPart then
-		local yawCFrame = CFrame.Angles(0, mountedState.CameraYaw, 0)
-		local focus = rootPart.Position + Vector3.new(0, HorseMountConfig.CameraFocusHeightOffset, 0)
-		local centeredPosition = focus
-			- (yawCFrame.LookVector * HorseMountConfig.CameraBackOffset)
-			+ Vector3.new(0, HorseMountConfig.CameraHeightOffset, 0)
-		local centeredLookAt = focus + (yawCFrame.LookVector * HorseMountConfig.CameraLookAhead)
-		local centeredCFrame = CFrame.lookAt(centeredPosition, centeredLookAt)
-		local desiredCFrame = centeredCFrame + (yawCFrame.RightVector * HorseMountConfig.CameraSideOffset)
-		local blendAlpha = 1 - math.exp(-HorseMountConfig.CameraSmoothness * deltaTime)
-
-		camera.CameraType = Enum.CameraType.Scriptable
-		camera.CFrame = camera.CFrame:Lerp(desiredCFrame, blendAlpha)
-	end
 
 	update_camera_fov(deltaTime)
 	update_local_rider_animation()
