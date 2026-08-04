@@ -5,7 +5,9 @@ local Network: any = require(ReplicatedStorage.Modules.Network)
 
 local EXPECTED_EVENTS: { string } = {
 	"AcknowledgeReveal",
+	"AreaUnlocked",
 	"DataUtilityChanged",
+	"HorseBrushAnimation",
 	"HorseIndexStateChanged",
 	"HorseMountInput",
 	"HorseMountState",
@@ -38,8 +40,10 @@ local EXPECTED_FUNCTIONS: { string } = {
 	"RestoreEquippedHorseNeeds",
 	"RollHorseRoulette",
 	"SellFruit",
+	"TeleportToArea",
 	"UpdateInventoryLoadout",
 	"UpdatePlayerSetting",
+	"UpgradeStable",
 	"UseHorseTool",
 	"WellWaterAction",
 	"WaterPlant",
@@ -63,8 +67,9 @@ return function(t: any): ()
 	end)
 
 	t.test("exposes stable domain aliases", function(): ()
-		t.expect.equal(Network.Admin.GetItemCatalog, Network.Functions.AdminGetItemCatalog)
-		t.expect.equal(Network.Horse.UseTool, Network.Functions.UseHorseTool)
-		t.expect.equal(Network.Horse.AcknowledgeReveal, Network.Events.HorseRevealAcknowledged)
+	t.expect.equal(Network.Admin.GetItemCatalog, Network.Functions.AdminGetItemCatalog)
+	t.expect.equal(Network.Horse.UseTool, Network.Functions.UseHorseTool)
+	t.expect.equal(Network.Horse.BrushAnimation, Network.Events.HorseBrushAnimation)
+	t.expect.equal(Network.Horse.AcknowledgeReveal, Network.Events.HorseRevealAcknowledged)
 	end)
 end

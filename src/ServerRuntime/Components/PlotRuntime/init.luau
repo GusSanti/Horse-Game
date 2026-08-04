@@ -16,6 +16,7 @@ local HAS_HAY_BALE_FOLDER_ATTRIBUTE = "HasHayBaleFolder"
 local HAS_HORSE_WATER_ATTRIBUTE = "HasHorseWater"
 local HAY_BALE_FOLDER_NAME = "HayBaleFolder"
 local HORSE_WATER_FOLDER_NAME = "HorseWater"
+local STABLE_PREVIEWS_FOLDER_NAME = "StablePreviews"
 
 type PlotData = {
 	instance: Instance,
@@ -33,6 +34,7 @@ local Framework = require(Modules:WaitForChild("Framework"))
 local Network = require(Modules:WaitForChild("Network"))
 local HorseRoamingService = require(HorseModules:WaitForChild("HorseRoamingService"))
 local HorseService = require(HorseModules:WaitForChild("HorseService"))
+local AdminAccessService = require(ServerModules:WaitForChild("Admin"):WaitForChild("AdminAccessService"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local Layout = require(script.Layout)
 local Prompts = require(script.Prompts)
@@ -154,6 +156,48 @@ end
 local get_level_plot_template = Layout.GetLevelPlotTemplate
 local replace_plot_contents = Layout.ReplacePlotContents
 
+local function publish_stable_previews(): ()
+	local previewFolder = ReplicatedStorage:FindFirstChild(STABLE_PREVIEWS_FOLDER_NAME)
+	if previewFolder and not previewFolder:IsA("Folder") then
+		previewFolder:Destroy()
+		previewFolder = nil
+	end
+	if not previewFolder then
+		previewFolder = Instance.new("Folder")
+		previewFolder.Name = STABLE_PREVIEWS_FOLDER_NAME
+		previewFolder.Parent = ReplicatedStorage
+	end
+
+	local plots = get_ordered_plots()
+	local previewPlot = plots[1]
+	if not previewPlot then
+		return
+	end
+
+	for level = StableDictionary.DefaultLevel, StableDictionary.MaxLevel do
+		local previewName = StableDictionary.get_level_template_name(level)
+		if not previewFolder:FindFirstChild(previewName) then
+			local template = get_level_plot_template(level, previewPlot.number)
+			if template then
+				local cloned, preview = pcall(function()
+					return template:Clone()
+				end)
+				if cloned and preview then
+					for _, descendant in preview:GetDescendants() do
+						if descendant:IsA("Script") or descendant:IsA("LocalScript") then
+							descendant:Destroy()
+						end
+					end
+					preview.Name = previewName
+					preview.Parent = previewFolder
+				else
+					warn(("[PlotRuntime] Could not publish preview for %s"):format(previewName))
+				end
+			end
+		end
+	end
+end
+
 local function sync_plot_horses(player: Player): ()
 	local plotData = assignedPlotByPlayer[player] or assign_plot(player)
 	if not plotData then
@@ -177,7 +221,7 @@ local function rebind_plot_slot_prompts(player: Player, plot: Instance): ()
 	promptRuntime:Rebind(player, plot)
 end
 
-local function set_player_plot_level(player: Player, requestedLevel): (boolean, string)
+local function set_player_plot_level(player: Player, requestedLevel, deferDataSave: boolean?): (boolean, string)
 	if player.Parent ~= Players then
 		return false, "PlayerUnavailable"
 	end
@@ -249,13 +293,80 @@ local function set_player_plot_level(player: Player, requestedLevel): (boolean, 
 	-- player-wide and immediately become available in every level that contains
 	-- their matching Slot folder.
 	stable.Level = level
-	DataUtility.server.set(player, "Stable", stable)
+	if not deferDataSave then
+		DataUtility.server.set(player, "Stable", stable)
+	end
 	sync_plot_horses(player)
 	refresh_plot_slot_prompts(player)
 	refresh_free_horse_prompts(player)
 	changingLevelByPlayer[player] = nil
 
 	return true, StableDictionary.get_level_template_name(level)
+end
+
+local function purchase_stable_upgrade(player: Player): {[string]: any}
+	if player.Parent ~= Players then
+		return { Success = false, Code = "PlayerUnavailable" }
+	end
+
+	local stable = DataUtility.server.get(player, "Stable")
+	if type(stable) ~= "table" then
+		return { Success = false, Code = "StableDataMissing" }
+	end
+
+	local currentLevel = StableDictionary.get_normalized_level(stable.Level)
+	local nextLevel = currentLevel + 1
+	if nextLevel > StableDictionary.MaxLevel then
+		return {
+			Success = false,
+			Code = "MaxLevel",
+			CurrentLevel = currentLevel,
+		}
+	end
+
+	local price = StableDictionary.get_level_upgrade_price(nextLevel)
+	if type(price) ~= "number" or price < 0 then
+		return {
+			Success = false,
+			Code = "UpgradeNotConfigured",
+			CurrentLevel = currentLevel,
+		}
+	end
+
+	local horseshoes = math.max(0, math.floor(tonumber(DataUtility.server.get(player, "Currencies.Horseshoes")) or 0))
+	if horseshoes < price then
+		return {
+			Success = false,
+			Code = "NotEnoughHorseshoes",
+			CurrentLevel = currentLevel,
+			NextLevel = nextLevel,
+			Price = price,
+			Horseshoes = horseshoes,
+		}
+	end
+
+	local changed, reason = set_player_plot_level(player, nextLevel, true)
+	if not changed then
+		return {
+			Success = false,
+			Code = reason,
+			CurrentLevel = currentLevel,
+			NextLevel = nextLevel,
+		}
+	end
+
+	DataUtility.server.begin_batch(player)
+	DataUtility.server.set(player, "Stable", stable)
+	DataUtility.server.set(player, "Currencies.Horseshoes", horseshoes - price)
+	DataUtility.server.end_batch(player)
+
+	return {
+		Success = true,
+		Code = "Upgraded",
+		PreviousLevel = currentLevel,
+		CurrentLevel = nextLevel,
+		Horseshoes = horseshoes - price,
+	}
 end
 
 local function restore_saved_plot_level(player: Player): ()
@@ -274,6 +385,12 @@ end
 local function handle_chat_command(player: Player, message: string): ()
 	local requestedLevel = string.match(string.lower(message), "^%s*!level(%d+)%s*$")
 	if not requestedLevel then
+		return
+	end
+
+	local hasAdminAccess = AdminAccessService.HasAccess(player)
+	if not hasAdminAccess then
+		warn(("[PlotRuntime] %s tried to use a stable level command without admin access"):format(player.Name))
 		return
 	end
 
@@ -391,7 +508,9 @@ function PlotRuntime:Init(): ()
 	end
 
 	self.Trove = Trove.new()
+	publish_stable_previews()
 	Network.Events.TeleportToStable:Connect(teleport_player_to_plot, self.Trove)
+	Network.Functions.UpgradeStable:Respond(purchase_stable_upgrade, self.Trove)
 	self.Trove:Connect(Framework.RuntimeEvents.PlayerAdded, on_player_added)
 	self.Trove:Connect(Framework.RuntimeEvents.PlayerRemoving, on_player_removing)
 	self.Trove:Connect(Framework.RuntimeEvents.CharacterAdded, on_character_added)

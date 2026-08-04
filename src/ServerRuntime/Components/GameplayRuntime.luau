@@ -35,6 +35,7 @@ local InventoryLoadoutService: any = require(InventoryModules:WaitForChild("Inve
 local NpcShopService: any = require(ShopModules:WaitForChild("NpcShopService"))
 local PersistentToolService: any = require(InventoryModules:WaitForChild("PersistentToolService"))
 local PlayerSettingsService: any = require(PlayerModules:WaitForChild("PlayerSettingsService"))
+local ZoneTeleportService: any = require(PlayerModules:WaitForChild("ZoneTeleportService"))
 local QuestService: any = require(QuestModules:WaitForChild("QuestService"))
 local RaceService: any = require(RaceModules:WaitForChild("RaceService"))
 
@@ -75,6 +76,7 @@ local SERVICES: { ServiceDefinition } = {
 	{ Name = "InventoryLoadoutService", Service = InventoryLoadoutService },
 	{ Name = "NpcShopService", Service = NpcShopService },
 	{ Name = "PlayerSettingsService", Service = PlayerSettingsService },
+	{ Name = "ZoneTeleportService", Service = ZoneTeleportService },
 	{ Name = "QuestService", Service = QuestService },
 	{ Name = "RaceService", Service = RaceService },
 	{ Name = "HorseRoamingService", Service = HorseRoamingService },

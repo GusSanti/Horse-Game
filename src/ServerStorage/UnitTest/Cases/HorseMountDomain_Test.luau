@@ -8,6 +8,7 @@ local Assembly: any = MountDomain.Assembly
 local RigAdapter: any = MountDomain.RigAdapter
 local TransactionRegistry: any = MountDomain.TransactionRegistry
 local InputState: any = MountDomain.InputState
+local HorseMountGeometry: any = require(HorseModules.HorseMountGeometry)
 
 local function Contains(ValueList: { string }, Expected: string): boolean
 	for _Index: number, Value: string in ValueList do
@@ -170,5 +171,34 @@ return function(t: any): ()
 		}, BeginJump, EndJump))
 		t.expect.equal(State.InputX, 0.5)
 		t.expect.equal(JumpRequests, 1)
+	end)
+
+	t.test("uses ground below an elevated roof during mount preparation", function(): ()
+		local Ground: Part = Instance.new("Part")
+		Ground.Anchored = true
+		Ground.Size = Vector3.new(20, 1, 20)
+		Ground.Position = Vector3.new(0, -12000.5, 0)
+		Ground.Parent = workspace
+
+		local Roof: Part = Instance.new("Part")
+		Roof.Anchored = true
+		Roof.Size = Vector3.new(20, 1, 20)
+		Roof.Position = Vector3.new(0, -11998, 0)
+		Roof.Parent = workspace
+
+		local Success: boolean, ErrorValue: any = pcall(function(): ()
+			local Position: Vector3 = HorseMountGeometry.resolveGroundPosition(
+				Vector3.new(0, -11995, 0),
+				{},
+				5
+			)
+			t.expect.equal(Position, Vector3.new(0, -11995, 0))
+		end)
+
+		Ground:Destroy()
+		Roof:Destroy()
+		if not Success then
+			error(ErrorValue, 0)
+		end
 	end)
 end

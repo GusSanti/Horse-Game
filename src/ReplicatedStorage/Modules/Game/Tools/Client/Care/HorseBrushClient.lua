@@ -1,11 +1,12 @@
 ------------------//SERVICES
 local Players: Players = game:GetService("Players")
+local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService: RunService = game:GetService("RunService")
 
 ------------------//CONSTANTS
 local localPlayer: Player = Players.LocalPlayer
 local PLAYER_BRUSH_ANIMATION_ID = "rbxassetid://99003220029388"
-local HORSE_BRUSH_ANIMATION_ID = "rbxassetid://294893849"
+local Network = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"))
 
 ------------------//VARIABLES
 local HorseBrushClient = {}
@@ -37,38 +38,6 @@ local function ensure_animator(controller: Instance?): Animator?
 	end
 
 	return nil
-end
-
-local function get_model_animator(model: Instance?): Animator?
-	if not model or not model:IsA("Model") then
-		return nil
-	end
-
-	local animationController = model:FindFirstChildOfClass("AnimationController")
-	if not animationController then
-		animationController = model:FindFirstChildWhichIsA("AnimationController", true)
-	end
-
-	if animationController then
-		return ensure_animator(animationController)
-	end
-
-	local humanoid = model:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		humanoid = model:FindFirstChildWhichIsA("Humanoid", true)
-	end
-
-	if humanoid then
-		return ensure_animator(humanoid)
-	end
-
-	if not animationController then
-		animationController = Instance.new("AnimationController")
-		animationController.Name = "HorseBrushAnimationController"
-		animationController.Parent = model
-	end
-
-	return ensure_animator(animationController)
 end
 
 local function load_animation_track(animator: Animator?, animation: Animation): AnimationTrack?
@@ -171,7 +140,9 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 
 	disconnect_all(session.connections)
 	stop_track(session.playerTrack)
-	stop_track(session.horseTrack)
+	pcall(function()
+		Network.Horse.BrushAnimation:Fire(session.horseId, false)
+	end)
 	restore_character(session)
 
 	if type(session.hideTask) == "function" then
@@ -179,9 +150,7 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 	end
 
 	destroy_animation(session.playerAnimation)
-	destroy_animation(session.horseAnimation)
 	session.playerAnimation = nil
-	session.horseAnimation = nil
 
 	if type(session.finishInteraction) == "function" then
 		session.finishInteraction(shouldRefreshPrompts)
@@ -249,13 +218,11 @@ local function start_session(context): boolean
 	local playerAnimation = Instance.new("Animation")
 	playerAnimation.AnimationId = PLAYER_BRUSH_ANIMATION_ID
 
-	local horseAnimation = Instance.new("Animation")
-	horseAnimation.AnimationId = HORSE_BRUSH_ANIMATION_ID
-
 	local session = {
 		character = character,
 		humanoid = humanoid,
 		horseVisual = context.horseVisual,
+		horseId = context.horseId,
 		tool = context.tool,
 		prompt = context.prompt,
 		invokeServerUse = context.invokeServerUse,
@@ -265,7 +232,6 @@ local function start_session(context): boolean
 		hideTask = context.hideTask,
 		taskText = context.taskText or "Brushing your horse...",
 		playerAnimation = playerAnimation,
-		horseAnimation = horseAnimation,
 		connections = {},
 		finishing = false,
 		closed = false,
@@ -281,13 +247,15 @@ local function start_session(context): boolean
 	}
 
 	session.playerTrack = load_animation_track(playerAnimator, playerAnimation)
-	session.horseTrack = load_animation_track(get_model_animator(context.horseVisual), horseAnimation)
 
 	activeSession = session
 
 	if type(context.beginInteraction) == "function" then
 		context.beginInteraction()
 	end
+	pcall(function()
+		Network.Horse.BrushAnimation:Fire(context.tool, context.horseId, true)
+	end)
 
 	humanoid.WalkSpeed = 0
 	humanoid.JumpPower = 0
@@ -301,7 +269,6 @@ local function start_session(context): boolean
 	end
 
 	play_track(session.playerTrack)
-	play_track(session.horseTrack)
 
 	if type(session.showTask) == "function" then
 		session.showTask({

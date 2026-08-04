@@ -9,6 +9,7 @@ local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("Ho
 local HorseMountGeometry = {}
 local MOUNT_ROOT_NAME = "HorseMountRoot"
 local MOUNT_SEAT_NAME = "HorseMountSeat"
+local MAX_GROUND_RISE_ABOVE_EXPECTED = 1.5
 
 local function should_include_in_ground_offset(basePart)
 	return basePart.Name ~= MOUNT_ROOT_NAME and basePart.Name ~= MOUNT_SEAT_NAME
@@ -201,7 +202,6 @@ end
 function HorseMountGeometry.resolveGroundPosition(position, ignoreList, groundOffset)
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	raycastParams.FilterDescendantsInstances = ignoreList
 	raycastParams.IgnoreWater = false
 
 	-- Start immediately above the expected hoof height. Starting above the whole
@@ -210,20 +210,41 @@ function HorseMountGeometry.resolveGroundPosition(position, ignoreList, groundOf
 	local resolvedGroundOffset = math.max(0, tonumber(groundOffset) or 0)
 	local probeAboveHooves = math.max(0.5, tonumber(HorseMountConfig.GroundProbeAboveHooves) or 3)
 	local expectedGroundY = position.Y - resolvedGroundOffset
+	local maxGroundY = expectedGroundY + MAX_GROUND_RISE_ABOVE_EXPECTED
 	local origin = Vector3.new(position.X, expectedGroundY + probeAboveHooves, position.Z)
 	local direction = Vector3.new(
 		0,
 		-(math.max(1, tonumber(HorseMountConfig.GroundProbeDistance) or 64) + probeAboveHooves),
 		0
 	)
-	local result = Workspace:Raycast(origin, direction, raycastParams)
+	local ignoredInstances = table.clone(ignoreList or {})
 
-	if result then
-		return Vector3.new(
-			position.X,
-			result.Position.Y + resolvedGroundOffset + HorseMountConfig.GroundClearance,
-			position.Z
-		)
+	-- A roof can still be inside the short probe area when the incoming horse
+	-- pivot is slightly too high. Skip hits that would raise the hooves by more
+	-- than a small terrain step, then continue the same ray toward actual ground.
+	-- This keeps gentle slopes mountable without ever selecting a ceiling as floor.
+	for _ = 1, 12 do
+		raycastParams.FilterDescendantsInstances = ignoredInstances
+		local result = Workspace:Raycast(origin, direction, raycastParams)
+		if not result then
+			break
+		end
+
+		if result.Position.Y <= maxGroundY then
+			return Vector3.new(
+				position.X,
+				result.Position.Y + resolvedGroundOffset + (HorseMountConfig.GroundClearance or 0),
+				position.Z
+			)
+		end
+
+		-- Terrain cannot be filtered per hit. Keeping the current height is safer
+		-- than snapping a rider above the expected ground level in that case.
+		if result.Instance == Workspace.Terrain then
+			break
+		end
+
+		table.insert(ignoredInstances, result.Instance)
 	end
 
 	return position

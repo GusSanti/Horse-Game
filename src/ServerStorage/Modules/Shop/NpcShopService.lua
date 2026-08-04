@@ -18,12 +18,20 @@ local InventoryLoadoutService = require(InventoryModules:WaitForChild("Inventory
 
 local NpcShopService = {}
 local initialized = false
+local npcFolderConnection = nil
+local observedNpcsFolder = nil
 
 local NPC_SHOPS = {
 	Cowboy = { ShopId = "Cowboy", ActionText = "Shop", ObjectText = "Cowboy" },
 	Doctor = { ShopId = "Doctor", ActionText = "Shop", ObjectText = "Doctor" },
 	TackShop = { ShopId = "TackShop", ActionText = "Shop", ObjectText = "Tack Shop" },
 	Noob = { ShopId = "Noob", ActionText = "Buy stable gear", ObjectText = "Stable Equipment" },
+	Upgrade = {
+		PromptName = "NpcStableUpgradePrompt",
+		ActionText = "Upgrade stable",
+		ObjectText = "Stable upgrades",
+		StableUpgrade = true,
+	},
 }
 
 local function get_inventory_path(item)
@@ -85,13 +93,15 @@ local function configure_npc(npc, definition)
 	if not parent or not parent:IsA("BasePart") then
 		return
 	end
-	local prompt = parent:FindFirstChild("NpcShopPrompt") or Instance.new("ProximityPrompt")
-	prompt.Name = "NpcShopPrompt"
+	local promptName = definition.PromptName or "NpcShopPrompt"
+	local prompt = parent:FindFirstChild(promptName) or Instance.new("ProximityPrompt")
+	prompt.Name = promptName
 	prompt.ActionText = definition.ActionText
 	prompt.ObjectText = definition.ObjectText
 	prompt.MaxActivationDistance = 10
 	prompt.RequiresLineOfSight = false
 	prompt:SetAttribute("NpcShopId", definition.ShopId)
+	prompt:SetAttribute("StableUpgradeNpc", definition.StableUpgrade == true)
 	prompt.Parent = parent
 end
 
@@ -102,6 +112,20 @@ local function configure_npcs()
 		local npc = npcs:FindFirstChild(npcName)
 		if npc then configure_npc(npc, definition) end
 	end
+
+	if observedNpcsFolder == npcs then
+		return
+	end
+	if npcFolderConnection then
+		npcFolderConnection:Disconnect()
+	end
+	observedNpcsFolder = npcs
+	npcFolderConnection = npcs.ChildAdded:Connect(function(npc)
+		local definition = NPC_SHOPS[npc.Name]
+		if definition then
+			task.defer(configure_npc, npc, definition)
+		end
+	end)
 end
 
 function NpcShopService.Init()

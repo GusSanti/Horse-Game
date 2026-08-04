@@ -32,7 +32,7 @@ local zoneState = {
 local SHOP_TABS = {
 	Cowboy = {
 		{ Category = "Water", Label = "Water" },
-		{ Category = "Misc", Label = "Care" },
+		{ Category = "Tack", Label = "Saddles" },
 	},
 	Doctor = {
 		{ Category = "Medicine", Label = "Medicine" },
@@ -42,9 +42,11 @@ local SHOP_TABS = {
 	},
 	Noob = {
 		{ Category = "Misc", Label = "Cleaning" },
-		{ Category = "Tack", Label = "Saddles" },
 	},
 }
+
+local SHOP_TITLE_BACKGROUND_NAMES = { "SeedShopBG", "FruitShopBG", "ShopBG" }
+local SHOP_TITLE_LABEL_NAMES = { "BuyTX", "TitleTX", "ShopTitleTX", "SellerTX" }
 
 local CLOSE_BUTTON_NAMES = {
 	close = true,
@@ -108,6 +110,53 @@ end
 
 local function find_label(root, names)
 	return find_named(root, names, "TextLabel")
+end
+
+local function is_text_instance(instance)
+	return instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox")
+end
+
+local function find_text_instance(root, names)
+	if not root then
+		return nil
+	end
+
+	for _, instance in ipairs(root:GetDescendants()) do
+		if is_text_instance(instance) and (not scrollingFrame or not instance:IsDescendantOf(scrollingFrame)) then
+			for _, name in ipairs(names) do
+				if string.lower(instance.Name) == string.lower(name) then
+					return instance
+				end
+			end
+		end
+	end
+end
+
+local function set_text_instance_text(instance, value)
+	if instance and is_text_instance(instance) then
+		instance.Text = value
+	end
+end
+
+local function get_shop_display_name(shopId)
+	local shopDefinition = ToolItemCatalog.GetShopDefinition(shopId)
+	if shopDefinition and type(shopDefinition.DisplayName) == "string" and shopDefinition.DisplayName ~= "" then
+		return shopDefinition.DisplayName
+	end
+
+	return tostring(shopId or "Seller")
+end
+
+local function update_shop_title(shopId)
+	if not sellerRoot then
+		return
+	end
+
+	local background = find_named(sellerRoot, SHOP_TITLE_BACKGROUND_NAMES, "GuiObject")
+	local title = background and find_text_instance(background, SHOP_TITLE_LABEL_NAMES)
+		or find_text_instance(sellerRoot, SHOP_TITLE_LABEL_NAMES)
+
+	set_text_instance_text(title, get_shop_display_name(shopId))
 end
 
 local function set_button_text(button, value)
@@ -386,6 +435,7 @@ local function open_shop(shopId)
 	if not tabs or not bind_seller() then return end
 	activeShopId = shopId
 	activeCategory = tabs[1].Category
+	update_shop_title(shopId)
 	set_seller_visible(true, not sellerRoot.Visible)
 	local tabsRoot = find_named(sellerRoot, { "BuySellSeedsFR", "Tabs", "TabButtons" }, "GuiObject") or sellerRoot
 	if tabsRoot ~= sellerRoot then
