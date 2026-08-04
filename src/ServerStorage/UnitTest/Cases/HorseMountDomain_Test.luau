@@ -171,6 +171,18 @@ return function(t: any): ()
 		}, BeginJump, EndJump))
 		t.expect.equal(State.InputX, 0.5)
 		t.expect.equal(JumpRequests, 1)
+
+		t.expect.truthy(InputState.Apply(State, {
+			Sequence = 3,
+			Stopping = true,
+			Sprinting = true,
+			JumpRequested = true,
+			RearRequested = true,
+		}, BeginJump, EndJump))
+		t.expect.truthy(State.Stopping)
+		t.expect.falsy(State.Sprinting)
+		t.expect.equal(State.RearRequestedAt, nil)
+		t.expect.equal(JumpRequests, 1)
 	end)
 
 	t.test("uses ground below an elevated roof during mount preparation", function(): ()

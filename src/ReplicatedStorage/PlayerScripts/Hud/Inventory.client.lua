@@ -109,7 +109,7 @@ local MAX_HOTBAR_SLOTS = InventoryLoadout.MAX_HOTBAR_SLOTS or 9
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 
-local FoodHoverTooltip = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("FoodHoverTooltip"))
+local ItemHoverTooltip = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("ItemHoverTooltip"))
 
 local rootTrove = Trove.new()
 local uiTrove = Trove.new()
@@ -456,6 +456,7 @@ local function create_click_target(card)
     button.Size = UDim2.fromScale(1, 1)
     button.Position = UDim2.fromScale(0, 0)
     button.ZIndex = card.ZIndex + 20
+	button:SetAttribute("UIAnim", true)
     button.Parent = card
     return button
 end
@@ -478,6 +479,8 @@ local function make_template_source(template)
 end
 
 local function set_selected_visual(card, isSelected)
+	local wasSelected = card:GetAttribute("InventorySelected") == true
+	card:SetAttribute("InventorySelected", isSelected)
     local stroke = card:FindFirstChildWhichIsA("UIStroke", true)
     if not stroke and card:IsA("GuiObject") then
         stroke = Instance.new("UIStroke")
@@ -485,9 +488,13 @@ local function set_selected_visual(card, isSelected)
         stroke.Parent = card
     end
     if stroke then
+		stroke.Color = Color3.new(1, 1, 1)
         stroke.Thickness = isSelected and 2.5 or 1
         stroke.Transparency = isSelected and 0 or 0.22
     end
+	if isSelected and not wasSelected then
+		HudAnim.punch(card, { Scale = 1.06 })
+	end
 end
 
 local function clear_viewport(viewportFrame)
@@ -1072,12 +1079,13 @@ local function get_visible_hotbar_entries()
 		}
 	end
 
-	for _, itemId in ipairs(itemIds) do
-		push("item", itemId, get_entry_key_from_item_id(itemId))
-	end
-
-	for _, toolName in ipairs(genericToolNames) do
-		push("generic", toolName, build_generic_entry_key(toolName))
+	local preferredEntries = DataUtility.client.get(InventoryLoadout.HOTBAR_ORDER_PATH)
+	for _, hotbarEntry in ipairs(InventoryLoadout.GetOrderedEntries(itemIds, genericToolNames, preferredEntries)) do
+		if hotbarEntry.Kind == "item" then
+			push("item", hotbarEntry.Value, get_entry_key_from_item_id(hotbarEntry.Value))
+		elseif hotbarEntry.Kind == "generic" then
+			push("generic", hotbarEntry.Value, build_generic_entry_key(hotbarEntry.Value))
+		end
 	end
 
 	if not loadoutInitialized then
@@ -1249,11 +1257,16 @@ local function render_inventory()
         activeEntriesByItemId[entry.EntryKey] = entry
         activeCardsByItemId[entry.EntryKey] = card
 
-        if activeCategoryId == "Foods" and FoodHoverTooltip.HasTooltip(entry.Definition) then
-            FoodHoverTooltip.Bind(clickTarget or card, entry.Definition, cardTrove)
+        local tooltipSource = entry.Definition or entry
+        if ItemHoverTooltip.HasTooltip(tooltipSource) then
+            ItemHoverTooltip.Bind(clickTarget or card, tooltipSource, cardTrove)
         end
 
         if clickTarget then
+			HudAnim.bind(clickTarget)
+			cardTrove:Add(function()
+				HudAnim.unbind(clickTarget)
+			end)
             cardTrove:Connect(clickTarget.Activated, function()
                 selectedItemId = entry.EntryKey
                 apply_selection()
@@ -1489,13 +1502,13 @@ local function bind_ui(ui)
     end
 
     if ui.DetailsDisplayRoot then
-        FoodHoverTooltip.Bind(ui.DetailsDisplayRoot, function()
-            if activeCategoryId ~= "Foods" or not selectedItemId then
+        ItemHoverTooltip.Bind(ui.DetailsDisplayRoot, function()
+            if not selectedItemId then
                 return nil
             end
 
             local entry = activeEntriesByItemId[selectedItemId]
-            return entry and entry.Definition or nil
+            return entry and (entry.Definition or entry) or nil
         end, uiTrove)
     end
 
@@ -1512,10 +1525,11 @@ local function bind_ui(ui)
         uiTrove:Add(DataUtility.client.bind(inventoryPath, queue_render))
     end
 
-    for _, loadoutPath in ipairs({
-        InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
-        InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH,
-        InventoryLoadout.HOTBAR_INITIALIZED_PATH,
+	for _, loadoutPath in ipairs({
+		InventoryLoadout.HOTBAR_ITEM_IDS_PATH,
+		InventoryLoadout.HOTBAR_GENERIC_TOOL_NAMES_PATH,
+		InventoryLoadout.HOTBAR_ORDER_PATH,
+		InventoryLoadout.HOTBAR_INITIALIZED_PATH,
     }) do
         uiTrove:Add(DataUtility.client.bind(loadoutPath, function()
             queue_live_groups_refresh()

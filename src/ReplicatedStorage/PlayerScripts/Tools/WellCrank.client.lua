@@ -8,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
+local plotValue = localPlayer:WaitForChild("Plot")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Libraries = Modules:WaitForChild("Libraries")
@@ -18,10 +19,12 @@ local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 
 local WELL_WATER_FUNCTION_NAME = "WellWaterAction"
 local WELL_PROMPT_ATTRIBUTE = "WellWaterPrompt"
+local SERVER_PROMPT_ENABLED_ATTRIBUTE = "WellWaterPromptEnabled"
 local BUCKET_READY_ATTRIBUTE = "WellWaterBucketReady"
 local REQUIRED_TURNS_ATTRIBUTE = "WellWaterRequiredTurns"
 local WELL_NAME = "Well"
 local WELL_HANDLE_NAME = "WellHandle"
+local CAMERA_PART_NAME = "Cam"
 local PIVOT_NAME = "Pivot"
 local HANDLE_NAME = "Handle"
 local GUI_NAME = "WellCrankProgressGui"
@@ -36,6 +39,7 @@ local COMPLETE_DELAY = 0.2
 
 local activeInteraction = nil
 local requestInFlight = false
+local trackedPromptConnections = {}
 
 local function is_primary_input(input)
 	return input.UserInputType == Enum.UserInputType.MouseButton1
@@ -83,6 +87,11 @@ local function get_well_from_instance(instance)
 	end
 
 	return nil
+end
+
+local function is_well_in_own_plot(well)
+	local plot = plotValue.Value
+	return plot ~= nil and well ~= nil and well:IsDescendantOf(plot)
 end
 
 local function get_handle_root(well)
@@ -286,6 +295,11 @@ local function get_camera_focus_offset(well)
 end
 
 local function build_camera_cframe(well, pivot)
+	local cameraPart = find_named_descendant(well, { CAMERA_PART_NAME }, "BasePart")
+	if cameraPart then
+		return cameraPart.CFrame
+	end
+
 	local wellCFrame = well:GetPivot()
 	local cameraPosition = wellCFrame:PointToWorldSpace(get_camera_offset(well))
 	local focusPosition = pivot.CFrame:PointToWorldSpace(get_camera_focus_offset(well))
@@ -607,6 +621,10 @@ local function start_crank(prompt, well)
 		return
 	end
 
+	if not is_well_in_own_plot(well) then
+		return
+	end
+
 	local pivot = find_pivot(well)
 	local handle = find_handle(well)
 	if not pivot or not handle then
@@ -681,6 +699,10 @@ local function collect_bucket(prompt, well)
 		return
 	end
 
+	if not is_well_in_own_plot(well) then
+		return
+	end
+
 	if prompt and prompt.Parent then
 		prompt.Enabled = false
 	end
@@ -691,13 +713,79 @@ local function collect_bucket(prompt, well)
 	end
 end
 
+local function apply_prompt_access(prompt)
+	if not prompt or not prompt.Parent then
+		return
+	end
+
+	local well = get_well_from_instance(prompt)
+	local serverEnabled = prompt:GetAttribute(SERVER_PROMPT_ENABLED_ATTRIBUTE) == true
+	prompt.Enabled = is_well_in_own_plot(well) and serverEnabled
+end
+
+local function track_well_prompt(prompt)
+	if not prompt:IsA("ProximityPrompt") then
+		return
+	end
+
+	if prompt.Name ~= "WellWaterPrompt" and prompt:GetAttribute(WELL_PROMPT_ATTRIBUTE) ~= true then
+		return
+	end
+
+	if trackedPromptConnections[prompt] then
+		apply_prompt_access(prompt)
+		return
+	end
+
+	local connections = {}
+	trackedPromptConnections[prompt] = connections
+
+	connections[#connections + 1] = prompt:GetAttributeChangedSignal(WELL_PROMPT_ATTRIBUTE):Connect(function()
+		apply_prompt_access(prompt)
+	end)
+
+	connections[#connections + 1] = prompt:GetAttributeChangedSignal(SERVER_PROMPT_ENABLED_ATTRIBUTE):Connect(function()
+		apply_prompt_access(prompt)
+	end)
+
+	connections[#connections + 1] = prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
+		task.defer(apply_prompt_access, prompt)
+	end)
+
+	connections[#connections + 1] = prompt.AncestryChanged:Connect(function()
+		if prompt.Parent then
+			apply_prompt_access(prompt)
+			return
+		end
+
+		for _, connection in ipairs(connections) do
+			connection:Disconnect()
+		end
+		trackedPromptConnections[prompt] = nil
+	end)
+
+	apply_prompt_access(prompt)
+end
+
+local function refresh_well_prompts()
+	for prompt in pairs(trackedPromptConnections) do
+		apply_prompt_access(prompt)
+	end
+
+	for _, descendant in ipairs(Workspace:GetDescendants()) do
+		if descendant:IsA("ProximityPrompt") then
+			track_well_prompt(descendant)
+		end
+	end
+end
+
 ProximityPromptService.PromptTriggered:Connect(function(prompt)
 	if prompt:GetAttribute(WELL_PROMPT_ATTRIBUTE) ~= true then
 		return
 	end
 
 	local well = get_well_from_instance(prompt)
-	if not well then
+	if not well or not is_well_in_own_plot(well) then
 		return
 	end
 
@@ -707,5 +795,15 @@ ProximityPromptService.PromptTriggered:Connect(function(prompt)
 		start_crank(prompt, well)
 	end
 end)
+
+Workspace.DescendantAdded:Connect(function(descendant)
+	if descendant:IsA("ProximityPrompt") then
+		track_well_prompt(descendant)
+	end
+end)
+
+plotValue:GetPropertyChangedSignal("Value"):Connect(refresh_well_prompts)
+
+refresh_well_prompts()
 
 script:SetAttribute("RuntimeReady", true)

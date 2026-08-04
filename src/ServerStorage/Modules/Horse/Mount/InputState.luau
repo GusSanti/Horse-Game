@@ -45,19 +45,25 @@ function InputState.Apply(
 	if type(PayloadValue.Sprinting) == "boolean" then
 		MountStateValue.Sprinting = PayloadValue.Sprinting
 	end
+	if type(PayloadValue.Stopping) == "boolean" then
+		MountStateValue.Stopping = PayloadValue.Stopping
+	end
+	if MountStateValue.Stopping == true then
+		MountStateValue.Sprinting = false
+	end
 	if IsFiniteNumber(PayloadValue.CameraYaw) then
 		MountStateValue.CameraYaw = math.atan2(math.sin(PayloadValue.CameraYaw), math.cos(PayloadValue.CameraYaw))
 	end
 	if type(PayloadValue.GaitMode) == "string" and VALID_GAIT_MODES[PayloadValue.GaitMode] then
 		MountStateValue.ClientGaitMode = PayloadValue.GaitMode
 	end
-	if PayloadValue.RearRequested == true then
+	if PayloadValue.RearRequested == true and MountStateValue.Stopping ~= true then
 		MountStateValue.RearRequestedAt = os.clock()
 	end
 	if PayloadValue.JumpLanded == true then
 		EndJump(MountStateValue)
 	end
-	if PayloadValue.JumpRequested == true then
+	if PayloadValue.JumpRequested == true and MountStateValue.Stopping ~= true then
 		BeginJump(MountStateValue, PayloadValue.JumpChargeAlpha)
 	end
 	return true

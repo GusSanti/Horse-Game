@@ -9,6 +9,7 @@ local Trove: any = require(Modules:WaitForChild("Libraries"):WaitForChild("Trove
 local AdminAccessService: any = require(
 	ServerStorage:WaitForChild("Modules"):WaitForChild("Admin"):WaitForChild("AdminAccessService")
 )
+local Commands: any = require(script.Commands)
 local Operations: any = require(script.Operations)
 
 local AdminRuntime = {
@@ -23,6 +24,7 @@ function AdminRuntime:Init(): ()
 
 	self.Trove = Trove.new()
 	Operations.Bind(self.Trove)
+	Commands.Bind(self.Trove)
 	self.Trove:Connect(Framework.RuntimeEvents.PlayerAdded, function(Player: Player): ()
 		task.spawn(AdminAccessService.ApplyAccessAttributes, Player)
 	end)

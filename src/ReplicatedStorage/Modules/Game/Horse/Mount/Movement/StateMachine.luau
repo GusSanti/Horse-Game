@@ -6,6 +6,8 @@ export type State = {
 	Speed: number,
 	Mode: Mode,
 	ForwardWasDown: boolean,
+	BackwardWasDown: boolean,
+	ReverseBrakeHeld: boolean,
 	LastForwardPressAt: number,
 	ForwardReleasedAt: number,
 	BoostEndsAt: number,
@@ -17,6 +19,7 @@ export type Input = {
 	Forward: number,
 	Backward: number,
 	Sprinting: boolean,
+	Stopping: boolean?,
 	ObstacleSpeedAlpha: number?,
 }
 
@@ -33,7 +36,10 @@ export type Config = {
 	HorseAccelerationBaseStat: number?,
 	HorseBrakePerSecond: number?,
 	HorseReverseAccelerationPerSecond: number?,
+	HorseReverseCoastDragPerSecond: number?,
+	HorseReverseStopEpsilon: number?,
 	HorseCoastDragPerSecond: number?,
+	HorseDismountBrakePerSecond: number?,
 	HorseDoubleTapWindowSeconds: number?,
 	HorseDoubleTapMinReleaseSeconds: number?,
 	HorseDoubleTapBoostSeconds: number?,
@@ -74,6 +80,8 @@ function StateMachine.Create(): State
 		Speed = 0,
 		Mode = "Idle",
 		ForwardWasDown = false,
+		BackwardWasDown = false,
+		ReverseBrakeHeld = false,
 		LastForwardPressAt = -math.huge,
 		ForwardReleasedAt = -math.huge,
 		BoostEndsAt = 0,
@@ -163,11 +171,15 @@ function StateMachine.Step(
 	local Forward: number = math.clamp(InputValue.Forward, 0, 1)
 	local Backward: number = math.clamp(InputValue.Backward, 0, 1)
 	local ForwardDown: boolean = Forward > INPUT_DEADZONE
+	local BackwardDown: boolean = Backward > INPUT_DEADZONE
+	local StopEpsilon: number = math.max(tonumber(ConfigValue.HorseMovementStopEpsilon) or 0.01, 0)
 
 	if StateMachine.IsRearActive(StateValue, Now) then
 		StateValue.Speed = 0
 		StateValue.Mode = "Rear"
 		StateValue.ForwardWasDown = ForwardDown
+		StateValue.BackwardWasDown = BackwardDown
+		StateValue.ReverseBrakeHeld = false
 		return StateValue
 	end
 
@@ -178,19 +190,32 @@ function StateMachine.Step(
 	end
 	StateValue.ForwardWasDown = ForwardDown
 
+	if BackwardDown and not StateValue.BackwardWasDown then
+		StateValue.ReverseBrakeHeld = StateValue.Speed > StopEpsilon
+	elseif not BackwardDown then
+		StateValue.ReverseBrakeHeld = false
+	end
+	StateValue.BackwardWasDown = BackwardDown
+
 	local _WalkSpeed: number, _TrotSpeed: number, _CanterSpeed: number, SprintSpeed: number = ResolveSpeeds(MovementValue)
 	local Speed: number = StateValue.Speed
-	if ForwardDown then
+	if InputValue.Stopping == true then
+		local DismountBrakeRate: number = math.max(
+			tonumber(ConfigValue.HorseDismountBrakePerSecond) or 14,
+			0
+		)
+		Speed = MoveTowards(Speed, 0, DismountBrakeRate * ClampedDelta)
+	elseif ForwardDown then
 		local Acceleration: number = GetForwardAcceleration(MovementValue, ConfigValue)
 		if InputValue.Sprinting or Now < StateValue.BoostEndsAt then
 			Acceleration *= math.max(tonumber(ConfigValue.HorseSprintAccelerationMultiplier) or 1.45, 1)
 		end
 		Speed = MoveTowards(Speed, SprintSpeed, Acceleration * Forward * ClampedDelta)
-	elseif Backward > INPUT_DEADZONE then
+	elseif BackwardDown then
 		if Speed > 0 then
 			local BrakeRate: number = math.max(tonumber(ConfigValue.HorseBrakePerSecond) or 20, 0)
 			Speed = MoveTowards(Speed, 0, BrakeRate * Backward * ClampedDelta)
-		else
+		elseif not StateValue.ReverseBrakeHeld then
 			local BackwardMultiplier: number = math.clamp(
 				tonumber(ConfigValue.HorseBackwardSpeedMultiplier) or 0.48,
 				0,
@@ -200,7 +225,9 @@ function StateMachine.Step(
 			Speed = MoveTowards(Speed, -(SprintSpeed * BackwardMultiplier), ReverseRate * Backward * ClampedDelta)
 		end
 	else
-		local CoastDrag: number = math.max(tonumber(ConfigValue.HorseCoastDragPerSecond) or 0, 0)
+		local CoastDrag: number = if Speed < 0
+			then math.max(tonumber(ConfigValue.HorseReverseCoastDragPerSecond) or 10, 0)
+			else math.max(tonumber(ConfigValue.HorseCoastDragPerSecond) or 0, 0)
 		Speed = MoveTowards(Speed, 0, CoastDrag * ClampedDelta)
 	end
 
@@ -210,8 +237,10 @@ function StateMachine.Step(
 		Speed = MoveTowards(Speed, SprintSpeed * ObstacleSpeedAlpha, BrakeRate * ClampedDelta)
 	end
 
-	local StopEpsilon: number = math.max(tonumber(ConfigValue.HorseMovementStopEpsilon) or 0.01, 0)
-	if math.abs(Speed) <= StopEpsilon then
+	local ActiveStopEpsilon: number = if Speed < 0
+		then math.max(tonumber(ConfigValue.HorseReverseStopEpsilon) or 0.15, StopEpsilon)
+		else StopEpsilon
+	if math.abs(Speed) <= ActiveStopEpsilon then
 		Speed = 0
 	end
 	StateValue.Speed = math.clamp(Speed, -(SprintSpeed), SprintSpeed)

@@ -9,6 +9,7 @@ local Utility = Modules:WaitForChild("Utility")
 
 local Trove = require(Libraries:WaitForChild("Trove"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local HeldItemVisual = require(GameData:WaitForChild("ToolItems"):WaitForChild("HeldItemVisual"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local FarmingUtility = require(Utility:WaitForChild("FarmingUtility"))
@@ -24,19 +25,6 @@ local pendingRefresh = {}
 local MANAGED_TOOL_ATTRIBUTE = "InventoryManaged"
 local SAVED_ITEM_COUNTS_PATH = "SavedTools.ItemCounts"
 local SAVED_GENERIC_COUNTS_PATH = "SavedTools.GenericCounts"
-
-local TOOL_COLOR_BY_CATEGORY = {
-	Food = Color3.fromRGB(231, 175, 87),
-	Fruits = Color3.fromRGB(209, 106, 62),
-	Water = Color3.fromRGB(98, 175, 255),
-	Grooming = Color3.fromRGB(225, 157, 188),
-	Misc = Color3.fromRGB(201, 201, 201),
-	Medicine = Color3.fromRGB(121, 205, 140),
-	Seeds = Color3.fromRGB(126, 97, 64),
-	Tack = Color3.fromRGB(150, 117, 86),
-	Cosmetics = Color3.fromRGB(212, 136, 174),
-	StableDecor = Color3.fromRGB(159, 134, 98),
-}
 
 local allItemDefinitions = ToolItemCatalog.GetAllItems()
 
@@ -346,26 +334,12 @@ local function get_item_tool_template(itemDefinition)
 end
 
 local function create_placeholder_tool(itemDefinition)
-	local tool = Instance.new("Tool")
-	tool.Name = itemDefinition.ToolName or itemDefinition.DisplayName or itemDefinition.ItemId
-	tool.RequiresHandle = false
-	tool.CanBeDropped = false
-
-	local handle = Instance.new("Part")
-	handle.Name = "Handle"
-	handle.Size = Vector3.new(1, 1, 1)
-	handle.Material = Enum.Material.SmoothPlastic
-	handle.TopSurface = Enum.SurfaceType.Smooth
-	handle.BottomSurface = Enum.SurfaceType.Smooth
-	handle.Color = TOOL_COLOR_BY_CATEGORY[itemDefinition.ToolCategory] or Color3.fromRGB(214, 214, 214)
-	handle.CanCollide = false
-	handle.Parent = tool
-
-	return tool
+	return HeldItemVisual.CreateFallback(itemDefinition)
 end
 
 local function refresh_saved_item_tool(tool: Tool, itemDefinition)
 	ToolItemCatalog.ApplyToolMetadata(tool, itemDefinition)
+	HeldItemVisual.Prepare(tool, itemDefinition)
 	tool.RequiresHandle = false
 	tool.CanBeDropped = false
 	tool:SetAttribute(MANAGED_TOOL_ATTRIBUTE, nil)

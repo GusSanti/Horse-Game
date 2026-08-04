@@ -12,6 +12,7 @@ local InventoryModules = ServerModules:WaitForChild("Inventory")
 
 local InventoryService = require(InventoryModules:WaitForChild("InventoryServer"))
 local InventoryLoadoutService = require(InventoryModules:WaitForChild("InventoryLoadoutService"))
+local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local Net = require(Libraries:WaitForChild("Net"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
@@ -23,18 +24,28 @@ local FRESH_BUCKET_ITEM_ID = "fresh_bucket"
 local WELL_NAME = "Well"
 local WELL_HANDLE_NAME = "WellHandle"
 local BUCKET_NAME = "Bucket"
+local CAMERA_PART_NAME = "Cam"
+local WATER_TIME_NAME = "WaterTime"
 local PROMPT_NAME = "WellWaterPrompt"
+local PLOT_VALUE_NAME = "Plot"
+local OWNER_USER_ID_ATTRIBUTE = "OwnerUserId"
 
 local DEFAULT_REQUIRED_TURNS = 3
+local DEFAULT_COOLDOWN_SECONDS = 60
 local MAX_INTERACTION_DISTANCE = 18
 local BUSY_TIMEOUT_SECONDS = 45
 
 local WELL_PROMPT_ATTRIBUTE = "WellWaterPrompt"
+local SERVER_PROMPT_ENABLED_ATTRIBUTE = "WellWaterPromptEnabled"
 local BUCKET_READY_ATTRIBUTE = "WellWaterBucketReady"
 local BUSY_USER_ID_ATTRIBUTE = "WellWaterBusyUserId"
 local BUSY_UNTIL_ATTRIBUTE = "WellWaterBusyUntil"
 local STATE_ATTRIBUTE = "WellWaterState"
 local REQUIRED_TURNS_ATTRIBUTE = "WellWaterRequiredTurns"
+local COOLDOWN_SECONDS_ATTRIBUTE = "WellWaterCooldownSeconds"
+local NEXT_READY_AT_ATTRIBUTE = "WellWaterNextReadyAt"
+local LAST_OWNER_USER_ID_ATTRIBUTE = "WellWaterLastOwnerUserId"
+local WELL_COOLDOWN_FIELD = "WellWaterReadyAt"
 local ORIGINAL_TRANSPARENCY_ATTRIBUTE = "WellWaterOriginalTransparency"
 local ORIGINAL_CAN_COLLIDE_ATTRIBUTE = "WellWaterOriginalCanCollide"
 local ORIGINAL_CAN_TOUCH_ATTRIBUTE = "WellWaterOriginalCanTouch"
@@ -72,6 +83,19 @@ local function find_bucket(well)
 	return find_named_descendant(well, { BUCKET_NAME }, nil)
 end
 
+local function find_water_time_label(well)
+	local waterTime = find_named_descendant(well, { WATER_TIME_NAME }, nil)
+	if not waterTime then
+		return nil
+	end
+
+	local billboard = waterTime:FindFirstChildWhichIsA("BillboardGui", true)
+	local label = billboard and billboard:FindFirstChildWhichIsA("TextLabel", true)
+		or waterTime:FindFirstChildWhichIsA("TextLabel", true)
+
+	return if label and label:IsA("TextLabel") then label else nil
+end
+
 local function find_prompt_parent(well)
 	local bucket = find_bucket(well)
 	local handleRoot = find_named_descendant(well, { WELL_HANDLE_NAME }, nil)
@@ -96,6 +120,7 @@ local function find_prompt_parent(well)
 
 	for _, descendant in ipairs(well:GetDescendants()) do
 		if descendant:IsA("BasePart")
+			and descendant.Name ~= CAMERA_PART_NAME
 			and (not bucket or not descendant:IsDescendantOf(bucket))
 			and (not handleRoot or not descendant:IsDescendantOf(handleRoot))
 		then
@@ -109,6 +134,18 @@ end
 local function get_required_turns(well)
 	local requiredTurns = tonumber(well:GetAttribute(REQUIRED_TURNS_ATTRIBUTE)) or DEFAULT_REQUIRED_TURNS
 	return math.max(1, requiredTurns)
+end
+
+local function get_cooldown_seconds(well)
+	local cooldownSeconds = tonumber(well:GetAttribute(COOLDOWN_SECONDS_ATTRIBUTE)) or DEFAULT_COOLDOWN_SECONDS
+	return math.max(0, math.floor(cooldownSeconds))
+end
+
+local function format_seconds(seconds)
+	local remaining = math.max(0, math.ceil(tonumber(seconds) or 0))
+	local minutes = math.floor(remaining / 60)
+	local secondsPart = remaining % 60
+	return ("%02d:%02d"):format(minutes, secondsPart)
 end
 
 local function store_part_originals(part)
@@ -192,6 +229,99 @@ local function is_busy(well)
 	return true, busyUserId
 end
 
+local function get_player_plot(player)
+	local plotValue = player:FindFirstChild(PLOT_VALUE_NAME)
+	if not plotValue or not plotValue:IsA("ObjectValue") then
+		return nil
+	end
+
+	return plotValue.Value
+end
+
+local function get_owner_user_id(well)
+	local current = well
+	while current and current ~= Workspace do
+		local ownerUserId = tonumber(current:GetAttribute(OWNER_USER_ID_ATTRIBUTE))
+		if ownerUserId and ownerUserId > 0 then
+			return ownerUserId
+		end
+		current = current.Parent
+	end
+
+	return nil
+end
+
+local function get_owner_player(well)
+	local ownerUserId = get_owner_user_id(well)
+	return ownerUserId and Players:GetPlayerByUserId(ownerUserId) or nil
+end
+
+local function is_well_in_player_plot(player, well)
+	local plot = get_player_plot(player)
+	if not plot or not well:IsDescendantOf(plot) then
+		return false
+	end
+
+	local ownerUserId = get_owner_user_id(well)
+	return ownerUserId == nil or ownerUserId == player.UserId
+end
+
+local function get_next_ready_at(player)
+	local stable = DataUtility.server.get(player, "Stable")
+	if type(stable) ~= "table" then
+		return 0
+	end
+
+	return math.max(0, math.floor(tonumber(stable[WELL_COOLDOWN_FIELD]) or 0))
+end
+
+local function set_next_ready_at(player, nextReadyAt)
+	local stable = DataUtility.server.get(player, "Stable")
+	if type(stable) ~= "table" then
+		return false
+	end
+
+	stable[WELL_COOLDOWN_FIELD] = math.max(0, math.floor(tonumber(nextReadyAt) or 0))
+	DataUtility.server.set(player, "Stable", stable)
+	return true
+end
+
+local function get_cooldown_remaining(player)
+	return math.max(0, get_next_ready_at(player) - os.time())
+end
+
+local function sync_owner_state(well, owner)
+	local ownerUserId = owner and owner.UserId or 0
+	local previousOwnerUserId = tonumber(well:GetAttribute(LAST_OWNER_USER_ID_ATTRIBUTE)) or 0
+	if ownerUserId == previousOwnerUserId then
+		return
+	end
+
+	well:SetAttribute(LAST_OWNER_USER_ID_ATTRIBUTE, ownerUserId)
+	well:SetAttribute(BUCKET_READY_ATTRIBUTE, false)
+	clear_busy(well)
+	set_bucket_visible(well, false)
+end
+
+local function update_water_time_label(well, owner, bucketReady, busy, cooldownRemaining)
+	local label = find_water_time_label(well)
+	if not label then
+		return
+	end
+
+	if not owner then
+		label.Text = ""
+	elseif bucketReady then
+		label.Text = "Collect"
+	elseif busy then
+		label.Text = "Cranking"
+	elseif cooldownRemaining > 0 then
+		label.Text = format_seconds(cooldownRemaining)
+	else
+		label.Text = "Ready"
+	end
+end
+
 local function update_prompt(well)
 	local promptParent = find_prompt_parent(well)
 	if not promptParent then
@@ -213,17 +343,32 @@ local function update_prompt(well)
 		prompt.Parent = promptParent
 	end
 
+	local owner = get_owner_player(well)
+	sync_owner_state(well, owner)
+
 	local bucketReady = well:GetAttribute(BUCKET_READY_ATTRIBUTE) == true
 	local busy = is_busy(well)
+	local cooldownRemaining = if owner then get_cooldown_remaining(owner) else 0
+	local isCoolingDown = cooldownRemaining > 0 and not bucketReady
+	local serverPromptEnabled = owner ~= nil and not busy and not isCoolingDown
 
 	prompt:SetAttribute(WELL_PROMPT_ATTRIBUTE, true)
-	prompt:SetAttribute(STATE_ATTRIBUTE, if bucketReady then "ReadyToCollect" else "ReadyToCrank")
-	prompt.Enabled = not busy
-	prompt.ActionText = if bucketReady then "Collect" else "Crank"
-	prompt.ObjectText = if bucketReady then "Fresh Bucket" else "Water Well"
+	prompt:SetAttribute(SERVER_PROMPT_ENABLED_ATTRIBUTE, serverPromptEnabled)
+	prompt:SetAttribute(
+		STATE_ATTRIBUTE,
+		if bucketReady then "ReadyToCollect" elseif isCoolingDown then "Cooldown" else "ReadyToCrank"
+	)
+	prompt.Enabled = serverPromptEnabled
+	prompt.ActionText = if bucketReady then "Collect" elseif isCoolingDown then "Wait" else "Crank"
+	prompt.ObjectText = if bucketReady then "Fresh Bucket" elseif isCoolingDown then format_seconds(cooldownRemaining) else "Water Well"
 	prompt.HoldDuration = if bucketReady then 0.35 else 0
 
-	well:SetAttribute(STATE_ATTRIBUTE, if busy then "Cranking" elseif bucketReady then "ReadyToCollect" else "ReadyToCrank")
+	well:SetAttribute(NEXT_READY_AT_ATTRIBUTE, if owner then get_next_ready_at(owner) else 0)
+	well:SetAttribute(
+		STATE_ATTRIBUTE,
+		if busy then "Cranking" elseif bucketReady then "ReadyToCollect" elseif isCoolingDown then "Cooldown" else "ReadyToCrank"
+	)
+	update_water_time_label(well, owner, bucketReady, busy, cooldownRemaining)
 end
 
 local function schedule_busy_timeout(well, busyUntil)
@@ -317,8 +462,19 @@ end
 local function begin_crank(player, well)
 	configure_well(well)
 
+	if not is_well_in_player_plot(player, well) then
+		update_prompt(well)
+		return { Success = false, Code = "NotYourWell" }
+	end
+
 	if well:GetAttribute(BUCKET_READY_ATTRIBUTE) == true then
 		return { Success = false, Code = "BucketReady" }
+	end
+
+	local cooldownRemaining = get_cooldown_remaining(player)
+	if cooldownRemaining > 0 then
+		update_prompt(well)
+		return { Success = false, Code = "Cooldown", RemainingSeconds = cooldownRemaining }
 	end
 
 	local busy, busyUserId = is_busy(well)
@@ -347,6 +503,11 @@ end
 local function complete_crank(player, well)
 	configure_well(well)
 
+	if not is_well_in_player_plot(player, well) then
+		update_prompt(well)
+		return { Success = false, Code = "NotYourWell" }
+	end
+
 	local busy, busyUserId = is_busy(well)
 	if not busy or busyUserId ~= player.UserId then
 		update_prompt(well)
@@ -370,6 +531,10 @@ end
 local function cancel_crank(player, well)
 	configure_well(well)
 
+	if not is_well_in_player_plot(player, well) then
+		return { Success = false, Code = "NotYourWell" }
+	end
+
 	local busy, busyUserId = is_busy(well)
 	if busy and busyUserId == player.UserId then
 		clear_busy(well)
@@ -381,6 +546,11 @@ end
 
 local function collect_bucket(player, well)
 	configure_well(well)
+
+	if not is_well_in_player_plot(player, well) then
+		update_prompt(well)
+		return { Success = false, Code = "NotYourWell" }
+	end
 
 	if well:GetAttribute(BUCKET_READY_ATTRIBUTE) ~= true then
 		return { Success = false, Code = "BucketNotReady" }
@@ -409,6 +579,7 @@ local function collect_bucket(player, well)
 	InventoryLoadoutService.SyncPlayerTools(player)
 
 	well:SetAttribute(BUCKET_READY_ATTRIBUTE, false)
+	set_next_ready_at(player, os.time() + get_cooldown_seconds(well))
 	set_bucket_visible(well, false)
 	update_prompt(well)
 	SoundUtility.PlayGameSFXForPlayer(player, "Watering")
@@ -471,6 +642,19 @@ function WellWaterService.Init()
 	end)
 
 	Players.PlayerRemoving:Connect(clear_player_busy)
+
+	task.spawn(function()
+		while initialized do
+			for well in pairs(configuredWells) do
+				if well.Parent then
+					update_prompt(well)
+				else
+					configuredWells[well] = nil
+				end
+			end
+			task.wait(1)
+		end
+	end)
 end
 
 return WellWaterService

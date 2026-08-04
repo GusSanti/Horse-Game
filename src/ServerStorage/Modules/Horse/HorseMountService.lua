@@ -655,6 +655,12 @@ local function create_horse_run_dust(horseVisual)
 		anchor.CFrame = get_hoof_node_cframe(hoof)
 		anchor.Parent = horseVisual:IsA("Model") and horseVisual or horseVisual.Parent
 
+		local groundRaycastParams = RaycastParams.new()
+		groundRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
+		groundRaycastParams.FilterDescendantsInstances = { horseVisual, anchor }
+		groundRaycastParams.IgnoreWater = false
+		groundRaycastParams.RespectCanCollide = true
+
 		local attachment = Instance.new("Attachment")
 		attachment.Name = "HorseRunDustAttachment"
 		attachment.Parent = anchor
@@ -687,6 +693,9 @@ local function create_horse_run_dust(horseVisual)
 		anchors[#anchors + 1] = {
 			Part = anchor,
 			Hoof = hoof,
+			GroundRaycastParams = groundRaycastParams,
+			GroundY = nil,
+			NextGroundProbeAt = 0,
 		}
 	end
 
@@ -694,11 +703,32 @@ local function create_horse_run_dust(horseVisual)
 end
 
 local function update_horse_run_dust_anchors(anchors)
+	local now = os.clock()
+	local probeHeight = math.max(tonumber(HorseMountConfig.HorseRunDustGroundProbeHeight) or 4, 0)
+	local probeDistance = math.max(tonumber(HorseMountConfig.HorseRunDustGroundProbeDistance) or 10, 0.1)
+	local groundOffset = tonumber(HorseMountConfig.HorseRunDustGroundOffset) or 0.05
+	local probeInterval = math.max(tonumber(HorseMountConfig.HorseRunDustGroundProbeInterval) or 0.05, 0.02)
 	for _, entry in ipairs(anchors or {}) do
 		local anchor = entry.Part
 		local hoof = entry.Hoof
 		if anchor and anchor.Parent and hoof and hoof.Parent then
-			anchor.CFrame = get_hoof_node_cframe(hoof)
+			local hoofPosition = get_hoof_node_cframe(hoof).Position
+			if now >= (entry.NextGroundProbeAt or 0) then
+				entry.NextGroundProbeAt = now + probeInterval
+				local rayResult = Workspace:Raycast(
+					hoofPosition + Vector3.new(0, probeHeight, 0),
+					Vector3.new(0, -(probeHeight + probeDistance), 0),
+					entry.GroundRaycastParams
+				)
+				if rayResult then
+					entry.GroundY = rayResult.Position.Y
+				end
+			end
+
+			local targetY = if type(entry.GroundY) == "number"
+				then entry.GroundY + groundOffset
+				else hoofPosition.Y
+			anchor.CFrame = CFrame.new(hoofPosition.X, targetY, hoofPosition.Z)
 		end
 	end
 end
@@ -730,6 +760,22 @@ local function cleanup_mount_horse(mountState, options)
 	destroy_instances({ mountState.RiderWeld })
 	destroy_instances(mountState.HorseWelds)
 	destroy_instances({ mountState.MountSeat, mountState.MountRoot })
+
+	if options.ReleaseOnDismount == true
+		and mountState.Player
+		and mountState.Player.Parent == Players
+		and mountState.HorseVisual
+		and mountState.HorseVisual.Parent
+	then
+		local released = HorseRoamingService.ReleaseOnDismount(
+			mountState.Player,
+			mountState.HorseId,
+			mountState.HorseVisual
+		)
+		if released then
+			return
+		end
+	end
 
 	if options.ReleaseToRoam == true
 		and mountState.Player
@@ -817,6 +863,7 @@ local function begin_dismount_transition(player, reason)
 	mountState.InputX = 0
 	mountState.InputZ = 0
 	mountState.Sprinting = false
+	mountState.Stopping = false
 	end_mount_jump(mountState)
 	play_horse_idle_animation(mountState.AnimationState)
 	play_player_dismount_animation(mountState.AnimationState)
@@ -1679,6 +1726,7 @@ local function mount_player(player, payload)
 		InputX = 0,
 		InputZ = 0,
 		Sprinting = false,
+		Stopping = false,
 		LastMoveDirection = spawnRotation.LookVector,
 		IsJumping = false,
 		JumpCooldownEndsAt = 0,
@@ -1814,10 +1862,8 @@ local function dismount_player(player)
 				restore_character_state(character, humanoid, mountState.CharacterState)
 			end
 
-			local remainsFree = HorseRoamingService.IsHorseFree(player, mountState.HorseId)
 			cleanup_mount_horse(mountState, {
-				ReleaseToRoam = remainsFree,
-				ClampIfTooFar = remainsFree,
+				ReleaseOnDismount = true,
 			})
 			if dismountingMountsByPlayer[player] == mountState then
 				dismountingMountsByPlayer[player] = nil
@@ -1921,7 +1967,7 @@ end
 
 local function handle_mount_input(player, payload)
 	local mountState = activeMountsByPlayer[player]
-	if not mountState then
+	if not mountState or type(payload) ~= "table" then
 		return
 	end
 

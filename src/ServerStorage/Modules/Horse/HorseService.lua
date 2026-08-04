@@ -47,7 +47,12 @@ local collisionServiceInitialized = false
 local registeredCollisionVisuals = setmetatable({}, { __mode = "k" })
 local stableAnimationStates = setmetatable({}, { __mode = "k" })
 local collisionPlayerConnections = {}
+local is_visual_horse_mounted: (Instance) -> boolean
 local RACE_MIN_STATUS_PERCENT = 50
+local ACTION_BEHAVIOR_TO_MODE = {
+	Eating = "EatDrink",
+	Drinking = "EatDrink",
+}
 local STATUS_DISPLAY_NAMES = {
 	Happiness = "Felicidade",
 	Hunger = "Hunger",
@@ -167,6 +172,10 @@ local function destroy_stable_animation_state(visual: Instance): ()
 	if state.BrushTrack then
 		state.BrushTrack:Destroy()
 	end
+	stop_stable_animation_track(state.FeedTrack)
+	if state.FeedTrack then
+		state.FeedTrack:Destroy()
+	end
 	for _, animation in state.Animations do
 		animation:Destroy()
 	end
@@ -199,15 +208,18 @@ local function sync_stable_animation(visual: Instance): ()
 	if not state then
 		return
 	end
-	if state.BrushActive then
+	if state.BrushActive or state.FeedActive then
 		return
 	end
 
 	local mountedUserId = visual:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE)
+	local roamingBehavior = visual:GetAttribute(ROAMING_BEHAVIOR_ATTRIBUTE)
 	local mode = if type(mountedUserId) == "number" and mountedUserId > 0
 		then nil
+		elseif ACTION_BEHAVIOR_TO_MODE[roamingBehavior] ~= nil
+			then ACTION_BEHAVIOR_TO_MODE[roamingBehavior]
 		elseif visual:GetAttribute(ROAMING_HORSE_ATTRIBUTE) == true
-			and visual:GetAttribute(ROAMING_BEHAVIOR_ATTRIBUTE) == "Walking"
+			and roamingBehavior == "Walking"
 		then "Walk"
 		else "Idle"
 
@@ -244,13 +256,14 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 
 	local idleTrack, idleAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseIdleAnimationId)
 	local walkTrack, walkAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseWalkAnimationId)
+	local eatDrinkTrack, eatDrinkAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseEatDrinkAnimationId)
 	if not idleTrack or not walkTrack then
-		for _, track in { idleTrack, walkTrack } do
+		for _, track in { idleTrack, walkTrack, eatDrinkTrack } do
 			if track then
 				track:Destroy()
 			end
 		end
-		for _, animation in { idleAnimation, walkAnimation } do
+		for _, animation in { idleAnimation, walkAnimation, eatDrinkAnimation } do
 			if animation then
 				animation:Destroy()
 			end
@@ -263,13 +276,24 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 		brushTrack.Priority = Enum.AnimationPriority.Action
 		brushTrack.Looped = true
 	end
+	if eatDrinkTrack then
+		eatDrinkTrack.Priority = Enum.AnimationPriority.Action
+		eatDrinkTrack.Looped = true
+	local feedTrack, feedAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseFeedAnimationId)
+	if feedTrack then
+		feedTrack.Priority = Enum.AnimationPriority.Action
+		feedTrack.Looped = true
+	end
 
 	local state = {
 		Mode = nil,
-		Tracks = { Idle = idleTrack, Walk = walkTrack },
+		Tracks = { Idle = idleTrack, Walk = walkTrack, EatDrink = eatDrinkTrack },
 		BrushTrack = brushTrack,
 		BrushActive = false,
-		Animations = { idleAnimation, walkAnimation, brushAnimation },
+		Animations = { idleAnimation, walkAnimation, brushAnimation, eatDrinkAnimation },
+		FeedTrack = feedTrack,
+		FeedActive = false,
+		Animations = { idleAnimation, walkAnimation, brushAnimation, feedAnimation },
 		Connections = {},
 	}
 	stableAnimationStates[visual] = state
@@ -348,6 +372,8 @@ function HorseService.PlayBrushAnimation(player: Player, horseId: string): (bool
 		return false, "BrushAnimationMissing"
 	end
 
+	state.FeedActive = false
+	stop_stable_animation_track(state.FeedTrack)
 	state.BrushActive = true
 	for _, track in state.Tracks do
 		stop_stable_animation_track(track)
@@ -369,6 +395,48 @@ function HorseService.StopBrushAnimation(player: Player, horseId: string): ()
 
 	state.BrushActive = false
 	stop_stable_animation_track(state.BrushTrack)
+	state.Mode = nil
+	sync_stable_animation(visual)
+end
+
+function HorseService.PlayFeedAnimation(player: Player, horseId: string): (boolean, string)
+	local visual = get_player_horse_visual(player, horseId)
+	if not visual then
+		return false, "HorseVisualMissing"
+	end
+	if is_visual_horse_mounted(visual) then
+		return false, "HorseMounted"
+	end
+
+	local state = stableAnimationStates[visual]
+	local feedTrack = state and state.FeedTrack
+	if not feedTrack then
+		return false, "FeedAnimationMissing"
+	end
+
+	state.BrushActive = false
+	stop_stable_animation_track(state.BrushTrack)
+	state.FeedActive = true
+	for _, track in state.Tracks do
+		stop_stable_animation_track(track)
+	end
+	pcall(function()
+		feedTrack:Stop(0)
+		feedTrack:Play(HorseMountConfig.AnimationFadeTime or 0.12, 1, 1)
+	end)
+
+	return true, "FeedAnimationPlaying"
+end
+
+function HorseService.StopFeedAnimation(player: Player, horseId: string): ()
+	local visual = get_player_horse_visual(player, horseId)
+	local state = visual and stableAnimationStates[visual] or nil
+	if not state or not state.FeedActive then
+		return
+	end
+
+	state.FeedActive = false
+	stop_stable_animation_track(state.FeedTrack)
 	state.Mode = nil
 	sync_stable_animation(visual)
 end
@@ -925,7 +993,7 @@ local function get_visible_instance_lowest_y(instance: Instance): number?
 	return lowestY
 end
 
-local function is_visual_horse_mounted(visualHorse: Instance): boolean
+is_visual_horse_mounted = function(visualHorse: Instance): boolean
 	return (tonumber(visualHorse:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE)) or 0) > 0
 end
 
@@ -1053,6 +1121,87 @@ local function get_stable_ground_y(horsePosition: BasePart, visualHorse: Instanc
 	return get_base_part_lowest_y(horsePosition)
 end
 
+local function get_visual_base_parts(visualHorse: Instance): {BasePart}
+	local baseParts = {}
+	if visualHorse:IsA("BasePart") then
+		baseParts[#baseParts + 1] = visualHorse
+	end
+
+	for _, descendant: Instance in visualHorse:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			baseParts[#baseParts + 1] = descendant
+		end
+	end
+
+	return baseParts
+end
+
+local function get_stable_physics_root(visualHorse: Instance, baseParts: {BasePart}): BasePart?
+	if visualHorse:IsA("BasePart") then
+		return visualHorse
+	end
+
+	if visualHorse:IsA("Model") then
+		local primaryPart = visualHorse.PrimaryPart
+		if primaryPart and primaryPart:IsDescendantOf(visualHorse) then
+			return primaryPart
+		end
+	end
+
+	for _, rootName in { "HorseRoot", "RootPart" } do
+		local rootPart = visualHorse:FindFirstChild(rootName, true)
+		if rootPart and rootPart:IsA("BasePart") then
+			return rootPart
+		end
+	end
+
+	return baseParts[1]
+end
+
+local function stop_visual_physics(baseParts: {BasePart}): ()
+	for _, basePart in baseParts do
+		if basePart.Parent then
+			basePart.AssemblyLinearVelocity = Vector3.zero
+			basePart.AssemblyAngularVelocity = Vector3.zero
+		end
+	end
+end
+
+local function stabilize_visual_horse_in_stable(visualHorse: Instance): ()
+	-- Keep one root in every physical assembly anchored. Anchoring every part
+	-- would stop Motor6D-driven idle animations, while anchoring only the root
+	-- prevents gravity/network ownership from making the visual shake.
+	local baseParts = get_visual_base_parts(visualHorse)
+	local rootPart = get_stable_physics_root(visualHorse, baseParts)
+	if not rootPart then
+		return
+	end
+
+	rootPart.Anchored = true
+	local rootAssemblyParts: {[BasePart]: boolean} = { [rootPart] = true }
+	for _, connectedPart in rootPart:GetConnectedParts(true) do
+		rootAssemblyParts[connectedPart] = true
+	end
+
+	for _, basePart in baseParts do
+		if not rootAssemblyParts[basePart] then
+			local hasAnchoredPart = basePart.Anchored
+			for _, connectedPart in basePart:GetConnectedParts(true) do
+				if connectedPart.Anchored then
+					hasAnchoredPart = true
+					break
+				end
+			end
+
+			if not hasAnchoredPart then
+				basePart.Anchored = true
+			end
+		end
+	end
+
+	stop_visual_physics(baseParts)
+end
+
 local function position_visual_horse(visualHorse: Instance, horsePosition: BasePart): ()
 	visualHorse:PivotTo(horsePosition.CFrame)
 
@@ -1077,7 +1226,13 @@ function HorseService.PositionVisualHorseInStable(visualHorse: Instance, horsePo
 	horsePosition.CanCollide = false
 	horsePosition.CanTouch = false
 	horsePosition.CanQuery = false
+	stabilize_visual_horse_in_stable(visualHorse)
 	position_visual_horse(visualHorse, horsePosition)
+	stabilize_visual_horse_in_stable(visualHorse)
+end
+
+function HorseService.StabilizeVisualHorseInStable(visualHorse: Instance): ()
+	stabilize_visual_horse_in_stable(visualHorse)
 end
 
 local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instance?, string)
@@ -1102,6 +1257,7 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 	if visualHorse:IsA("Model") or visualHorse:IsA("BasePart") then
 		HorseService.PositionVisualHorseInStable(visualHorse, horsePosition)
 		HorseSaddleVisualService.Sync(visualHorse, horse)
+		HorseService.StabilizeVisualHorseInStable(visualHorse)
 
 		return visualHorse, "Created"
 	end
@@ -1133,6 +1289,7 @@ local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 			HorseService.PositionVisualHorseInStable(visualHorses[1], horsePosition)
 		end
 		HorseSaddleVisualService.Sync(visualHorses[1], horse)
+		HorseService.StabilizeVisualHorseInStable(visualHorses[1])
 		return
 	end
 

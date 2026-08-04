@@ -9,6 +9,7 @@ local Utility = Modules:WaitForChild("Utility")
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local InventoryLoadout = require(Utility:WaitForChild("InventoryLoadout"))
 local ToolItemCatalog = require(GameData:WaitForChild("ToolItemCatalog"))
+local HeldItemVisual = require(GameData:WaitForChild("ToolItems"):WaitForChild("HeldItemVisual"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 
 local ConsumableToolService = {}
@@ -24,15 +25,6 @@ local MANAGED_INVENTORY_PATHS = {
 	["Inventory.Consumables.Misc"] = true,
 	["Inventory.Consumables.Medical"] = true,
 	["Inventory.Tack"] = true,
-}
-
-local TOOL_COLOR_BY_CATEGORY = {
-	Food = Color3.fromRGB(231, 175, 87),
-	Water = Color3.fromRGB(98, 175, 255),
-	Grooming = Color3.fromRGB(225, 157, 188),
-	Misc = Color3.fromRGB(201, 201, 201),
-	Medicine = Color3.fromRGB(121, 205, 140),
-	Tack = Color3.fromRGB(150, 117, 86),
 }
 
 local function normalize_key(value): string?
@@ -177,22 +169,7 @@ local function get_item_tool_template(itemDefinition): Instance?
 end
 
 local function create_placeholder_tool(itemDefinition): Tool
-	local tool = Instance.new("Tool")
-	tool.Name = itemDefinition.ToolName or itemDefinition.DisplayName or itemDefinition.ItemId
-	tool.RequiresHandle = false
-	tool.CanBeDropped = false
-
-	local handle = Instance.new("Part")
-	handle.Name = "Handle"
-	handle.Size = Vector3.new(1, 1, 1)
-	handle.Material = Enum.Material.SmoothPlastic
-	handle.TopSurface = Enum.SurfaceType.Smooth
-	handle.BottomSurface = Enum.SurfaceType.Smooth
-	handle.Color = TOOL_COLOR_BY_CATEGORY[itemDefinition.ToolCategory] or Color3.fromRGB(214, 214, 214)
-	handle.CanCollide = false
-	handle.Parent = tool
-
-	return tool
+	return HeldItemVisual.CreateFallback(itemDefinition)
 end
 
 local function strip_tool_scripts(root: Instance)
@@ -205,6 +182,7 @@ end
 
 local function sanitize_tool(tool: Tool, itemDefinition)
 	ToolItemCatalog.ApplyToolMetadata(tool, itemDefinition)
+	HeldItemVisual.Prepare(tool, itemDefinition)
 	tool:SetAttribute(MANAGED_TOOL_ATTRIBUTE, true)
 
 	local handle = tool:FindFirstChild("Handle")

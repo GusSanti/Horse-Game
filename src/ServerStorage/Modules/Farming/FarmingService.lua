@@ -15,6 +15,7 @@ local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
 local FarmingShopService = require(script.Parent:WaitForChild("FarmingShopService"))
 local QuestService = require(ServerModules:WaitForChild("Quest"):WaitForChild("QuestService"))
+local GrowthSchedule = require(script.Parent:WaitForChild("GrowthSchedule"))
 
 local FarmingService = {}
 
@@ -513,6 +514,10 @@ end
 
 local function clear_plant(state)
 	state.TimerToken = (state.TimerToken or 0) + 1
+	if state.GrowthSchedule then
+		state.GrowthSchedule:Destroy()
+		state.GrowthSchedule = nil
+	end
 
 	if state.StageTrove then
 		state.StageTrove:Destroy()
@@ -662,6 +667,10 @@ local function make_plant_harvestable(state)
 	state.WaterReady = false
 	state.NextWaterAt = nil
 	state.StageAdvanceAt = nil
+	if state.GrowthSchedule then
+		state.GrowthSchedule:Destroy()
+		state.GrowthSchedule = nil
+	end
 	destroy_water_indicator(state)
 	refresh_plant_attributes(state)
 	persist_plant_state(state)
@@ -675,6 +684,10 @@ end
 local function fail_growth(state, code: string)
 	state.GrowthError = code
 	state.TimerToken = (state.TimerToken or 0) + 1
+	if state.GrowthSchedule then
+		state.GrowthSchedule:Destroy()
+		state.GrowthSchedule = nil
+	end
 	destroy_water_indicator(state)
 	refresh_plant_attributes(state)
 	persist_plant_state(state)
@@ -730,38 +743,48 @@ local function apply_elapsed_growth(state, currentTime: number): boolean
 	return advanced or finished
 end
 
-local function start_growth_loop(state)
+local function start_growth_schedule(state)
 	state.TimerToken = (state.TimerToken or 0) + 1
-	local token = state.TimerToken
+	if state.GrowthSchedule then
+		state.GrowthSchedule:Destroy()
+	end
 
 	update_water_indicator(state)
+	state.GrowthSchedule = GrowthSchedule.new({
+		Now = get_now,
+		GetDeadline = function(): number?
+			if activePlants[state.Id] ~= state
+				or state.WaterReady
+				or state.Harvestable
+				or state.GrowthError
+				or not state.NextWaterAt
+			then
+				return nil
+			end
 
-	task.spawn(function()
-		while activePlants[state.Id] == state and state.TimerToken == token do
-			local currentTime = get_now()
-			apply_elapsed_growth(state, currentTime)
-
-			if state.WaterReady or state.Harvestable or state.GrowthError or not state.NextWaterAt then
+			local now = get_now()
+			local deadline = state.NextWaterAt
+			if state.StageAdvanceAt and not state.StageAdvanced then
+				deadline = math.min(deadline, state.StageAdvanceAt)
+			end
+			return math.min(deadline, now + WATER_INDICATOR_UPDATE_INTERVAL)
+		end,
+		Advance = function(currentTime: number): ()
+			if activePlants[state.Id] ~= state then
 				return
 			end
-
+			apply_elapsed_growth(state, currentTime)
 			update_water_indicator(state)
-
-			local waitSeconds = math.max(0.05, (state.NextWaterAt or currentTime) - currentTime)
-			if state.StageAdvanceAt and not state.StageAdvanced then
-				waitSeconds = math.min(waitSeconds, math.max(0.05, state.StageAdvanceAt - currentTime))
-			end
-
-			task.wait(math.min(WATER_INDICATOR_UPDATE_INTERVAL, waitSeconds))
-		end
-	end)
+		end,
+	})
+	state.GrowthSchedule:Refresh()
 end
 
 local function resume_growth_timer(state)
 	apply_elapsed_growth(state, get_now())
 
 	if not state.WaterReady and not state.Harvestable and not state.GrowthError and state.NextWaterAt then
-		start_growth_loop(state)
+		start_growth_schedule(state)
 	else
 		update_water_indicator(state)
 	end
@@ -786,7 +809,7 @@ local function start_growth_timer(state, durationSeconds: number, shouldAdvanceS
 
 	refresh_plant_attributes(state)
 	persist_plant_state(state)
-	start_growth_loop(state)
+	start_growth_schedule(state)
 end
 
 local function is_active_placement_occupied(player: Player, placement): boolean
@@ -902,6 +925,7 @@ function FarmingService.PlaceSeed(player: Player, worldPosition: Vector3)
 		Model = nil,
 		Hitbox = nil,
 		StageTrove = nil,
+		GrowthSchedule = nil,
 		WaterIndicator = nil,
 		TimerToken = 0,
 		WaterReady = false,
@@ -1102,6 +1126,7 @@ local function create_state_from_saved_plant(player: Player, savedPlant): any?
 		Model = nil,
 		Hitbox = nil,
 		StageTrove = nil,
+		GrowthSchedule = nil,
 		WaterIndicator = nil,
 		TimerToken = 0,
 		WaterReady = savedPlant.WaterReady == true,

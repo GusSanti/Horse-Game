@@ -8,6 +8,7 @@ local EXPECTED_EVENTS: { string } = {
 	"AreaUnlocked",
 	"DataUtilityChanged",
 	"HorseBrushAnimation",
+	"HorseFeedAnimation",
 	"HorseIndexStateChanged",
 	"HorseInteractionHold",
 	"HorseMountInput",
@@ -42,6 +43,7 @@ local EXPECTED_FUNCTIONS: { string } = {
 	"RestoreEquippedHorseNeeds",
 	"RollHorseRoulette",
 	"SellFruit",
+	"StableSlotAction",
 	"TeleportToArea",
 	"UpdateInventoryLoadout",
 	"UpdatePlayerSetting",
@@ -74,6 +76,7 @@ return function(t: any): ()
 	t.expect.equal(Network.Horse.BrushAnimation, Network.Events.HorseBrushAnimation)
 	t.expect.equal(Network.Horse.InteractionHold, Network.Events.HorseInteractionHold)
 	t.expect.equal(Network.Horse.ObstacleFeedback, Network.Events.ObstacleFeedback)
+	t.expect.equal(Network.Horse.FeedAnimation, Network.Events.HorseFeedAnimation)
 	t.expect.equal(Network.Horse.AcknowledgeReveal, Network.Events.HorseRevealAcknowledged)
 	end)
 end

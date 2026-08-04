@@ -30,6 +30,10 @@ local plotConnections: {RBXScriptConnection} = {}
 local activeAnimations: {[Instance]: any} = {}
 local elapsedSinceRefresh = 0
 local refreshQueued = false
+local ACTION_BEHAVIOR_TO_MODE = {
+	Eating = "EatDrink",
+	Drinking = "EatDrink",
+}
 
 ------------------//FUNCTIONS
 local function disconnect_all(connections: {RBXScriptConnection}): ()
@@ -192,6 +196,8 @@ local function ensure_animation_track(entry, mode: string): AnimationTrack?
 	local animator = get_model_animator(horseVisual)
 	local animationId = if mode == "Walk"
 		then HorseMountConfig.HorseWalkAnimationId
+		elseif mode == "EatDrink"
+			then HorseMountConfig.HorseEatDrinkAnimationId
 		else HorseMountConfig.HorseIdleAnimationId
 	if not animator or type(animationId) ~= "string" or animationId == "" then
 		return nil
@@ -215,7 +221,7 @@ local function ensure_animation_track(entry, mode: string): AnimationTrack?
 	end
 
 	pcall(function()
-		track.Priority = Enum.AnimationPriority.Idle
+		track.Priority = if mode == "EatDrink" then Enum.AnimationPriority.Action else Enum.AnimationPriority.Idle
 	end)
 
 	pcall(function()
@@ -312,7 +318,10 @@ local function sync_horse_idle_animation(horseVisual: Instance): ()
 	end
 
 	local roamingBehavior = horseVisual:GetAttribute(ROAMING_BEHAVIOR_ATTRIBUTE)
-	local mode = if horseVisual:GetAttribute(ROAMING_HORSE_ATTRIBUTE) == true and roamingBehavior == "Walking"
+	local actionMode = ACTION_BEHAVIOR_TO_MODE[roamingBehavior]
+	local mode = if actionMode ~= nil
+		then actionMode
+		elseif horseVisual:GetAttribute(ROAMING_HORSE_ATTRIBUTE) == true and roamingBehavior == "Walking"
 		then "Walk"
 		else "Idle"
 	play_animation_mode(entry, mode)
