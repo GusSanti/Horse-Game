@@ -1112,7 +1112,7 @@ end)
 task.defer(function()
 	local success, errorMessage = pcall(initialize_shop)
 	if not success then
-		warn("[FarmingShop] inicializacao falhou: " .. tostring(errorMessage))
+		warn("[FarmingShop] initialization failed: " .. tostring(errorMessage))
 	end
 end)
 
