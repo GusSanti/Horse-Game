@@ -13,6 +13,10 @@ local SHINE_DURATION_ATTRIBUTE: string = "ShineDuration"
 local SHINE_NAME: string = "HoverShine"
 local SHINE_TRANSPARENCY_ATTRIBUTE: string = "ShineTransparency"
 local SHINE_WIDTH_ATTRIBUTE: string = "ShineWidth"
+local DEFAULT_SHINE_WIDTH: number = 0.14
+local DEFAULT_SHINE_HEIGHT: number = 1.16
+local DEFAULT_SHINE_ANGLE: number = 12
+local DEFAULT_SHINE_DURATION: number = 0.55
 
 type ShineState = {
 	AnimationTrove: any,
@@ -94,9 +98,9 @@ local function CreateOverlay(Button: GuiButton, ShineTrove: any): (Frame, Frame)
 	Shine.AnchorPoint = Vector2.new(0.5, 0.5)
 	Shine.BackgroundColor3 = Color3.new(1, 1, 1)
 	Shine.BorderSizePixel = 0
-	Shine.Position = UDim2.fromScale(-0.35, 0.5)
+	Shine.Position = UDim2.fromScale(-0.22, 0.5)
 	Shine.Selectable = false
-	Shine.Size = UDim2.fromScale(0.18, 2.4)
+	Shine.Size = UDim2.fromScale(DEFAULT_SHINE_WIDTH, DEFAULT_SHINE_HEIGHT)
 	Shine.ZIndex = Overlay.ZIndex
 	Shine.Parent = Overlay
 
@@ -112,12 +116,16 @@ local function CreateOverlay(Button: GuiButton, ShineTrove: any): (Frame, Frame)
 end
 
 local function ApplyVisual(Button: GuiButton, State: ShineState): ()
-	local Width: number = math.clamp(GetNumberAttribute(Button, SHINE_WIDTH_ATTRIBUTE, 0.18), 0.06, 0.5)
+	local Width: number = math.clamp(
+		GetNumberAttribute(Button, SHINE_WIDTH_ATTRIBUTE, DEFAULT_SHINE_WIDTH),
+		0.04,
+		0.24
+	)
 	State.Overlay.ZIndex = Button.ZIndex + 2
 	State.Shine.BackgroundTransparency =
 		math.clamp(GetNumberAttribute(Button, SHINE_TRANSPARENCY_ATTRIBUTE, 0.72), 0, 1)
-	State.Shine.Rotation = GetNumberAttribute(Button, SHINE_ANGLE_ATTRIBUTE, 18)
-	State.Shine.Size = UDim2.fromScale(Width, 2.4)
+	State.Shine.Rotation = GetNumberAttribute(Button, SHINE_ANGLE_ATTRIBUTE, DEFAULT_SHINE_ANGLE)
+	State.Shine.Size = UDim2.fromScale(Width, DEFAULT_SHINE_HEIGHT)
 	State.Shine.ZIndex = State.Overlay.ZIndex
 end
 
@@ -125,7 +133,7 @@ local function Stop(State: ShineState): ()
 	State.Token += 1
 	State.AnimationTrove:Clean()
 	State.Overlay.Visible = false
-	State.Shine.Position = UDim2.fromScale(-0.35, 0.5)
+	State.Shine.Position = UDim2.fromScale(-0.22, 0.5)
 end
 
 function HoverShine.play(Button: GuiButton): ()
@@ -140,10 +148,14 @@ function HoverShine.play(Button: GuiButton): ()
 	local Token: number = State.Token
 	State.Overlay.Visible = true
 
-	local Duration: number = math.clamp(GetNumberAttribute(Button, SHINE_DURATION_ATTRIBUTE, 0.42), 0.12, 1.5)
+	local Duration: number = math.clamp(
+		GetNumberAttribute(Button, SHINE_DURATION_ATTRIBUTE, DEFAULT_SHINE_DURATION),
+		0.16,
+		1.5
+	)
 	local Tween: Tween = TweenUtils.tween(
 		State.Shine,
-		{ Position = UDim2.fromScale(1.35, 0.5) },
+		{ Position = UDim2.fromScale(1.22, 0.5) },
 		Duration,
 		Enum.EasingStyle.Quad,
 		Enum.EasingDirection.Out
