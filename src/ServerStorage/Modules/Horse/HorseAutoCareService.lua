@@ -206,10 +206,17 @@ local function build_action_candidate(player: Player)
 	end
 
 	local bestCandidate = nil
+	local needsChanged = false
+	local now = os.time()
 	for _, horseId in get_assigned_horse_ids(stable, horses) do
 		local horse = owned[horseId]
+		local isFree = horse and HorseRoamingService.IsHorseFree(player, horseId) == true
+		if horse and isFree then
+			needsChanged = HorseCareService.RefreshHorse(horse, now) or needsChanged
+		end
+
 		local visual = horse and HorseRoamingService.GetLiveVisual(player, horseId) or nil
-		if visual and visual.Parent and not is_visual_mounted(visual) then
+		if isFree and visual and visual.Parent and not is_visual_mounted(visual) then
 			if hayCount > 0 then
 				local hungerRatio = get_need_ratio(horse, "Hunger")
 				if hungerRatio and hungerRatio <= NEED_TRIGGER_RATIO then
@@ -263,6 +270,10 @@ local function build_action_candidate(player: Player)
 				end
 			end
 		end
+	end
+
+	if needsChanged then
+		DataUtility.server.set(player, "Horses.Owned", owned)
 	end
 
 	return bestCandidate

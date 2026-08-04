@@ -980,6 +980,9 @@ function HorseRoamingService.PerformStableAction(
 	if is_visual_mounted(visual) then
 		return false, "HorseMounted"
 	end
+	if not HorseRoamingService.IsHorseFree(player, horseId) then
+		return false, "HorseNotFree"
+	end
 
 	local actionOptions = options or {}
 	local targetPosition = actionOptions.TargetPosition
