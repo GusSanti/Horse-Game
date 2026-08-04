@@ -21,7 +21,7 @@ local PRELOAD_SKIPPED_ATTRIBUTE = "ClientUiPreloadSkipped"
 local SHOP_ACTION_REMOTE_NAME = "FarmingShopAction"
 local MAX_PRELOAD_WAIT_SECONDS = 3
 local SHOP_UI_DISCOVERY_INTERVAL = 0.5
-local SHOP_UI_WARNING_INTERVAL = 20
+local SHOP_UI_DISCOVERY_ATTEMPTS = 12
 local CARD_BUILD_INTERVAL_SECONDS = 0.03
 local SECONDARY_TAB_PRELOAD_DELAY_SECONDS = 0.2
 local CARD_STAGGER_DELAY = 0.028
@@ -106,6 +106,7 @@ local currentUi: ShopUi? = nil
 local currentUiConnections = {}
 local activeTab = "Seed"
 local requestInFlight = false
+local shopDiscoveryQueued = false
 
 local function get_farming_items(toolCategory: string, kind: string)
 	local items = {}
@@ -989,6 +990,10 @@ local function bind_panel_buttons(panel: ShopPanel)
 end
 
 local function bind_ui(ui: ShopUi)
+	if currentUi == ui then
+		return
+	end
+
 	disconnect_connections(currentUiConnections)
 
 	if currentUi then
@@ -1053,11 +1058,7 @@ local function initialize_shop()
 		warn("[FarmingShop] failed to initialize DataUtility: " .. tostring(dataError))
 	end
 
-	local attempts = 0
-
-	while true do
-		attempts += 1
-
+	for attempts = 1, SHOP_UI_DISCOVERY_ATTEMPTS do
 		local ui = try_get_shop_ui()
 		if ui then
 			bind_ui(ui)
@@ -1068,9 +1069,45 @@ local function initialize_shop()
 			warn("[FarmingShop] aguardando SeedShop/FruitShop UI no PlayerGui...")
 		end
 
-		task.wait(SHOP_UI_DISCOVERY_INTERVAL)
+		if attempts < SHOP_UI_DISCOVERY_ATTEMPTS then
+			task.wait(SHOP_UI_DISCOVERY_INTERVAL)
+		end
 	end
+
+	warn("[FarmingShop] SeedShop/FruitShop UI was not ready after the initial discovery window")
 end
+
+local function queue_shop_discovery(): ()
+	if currentUi or shopDiscoveryQueued then
+		return
+	end
+
+	shopDiscoveryQueued = true
+	task.defer(function()
+		shopDiscoveryQueued = false
+		if currentUi then
+			return
+		end
+
+		local ui = try_get_shop_ui()
+		if ui then
+			bind_ui(ui)
+		end
+	end)
+end
+
+playerGui.DescendantAdded:Connect(function(instance: Instance): ()
+	if instance.Name == MAIN_UI_NAME
+		or instance.Name == MAINFRAME_NAME
+		or instance.Name == FRAMES_CONTAINER_NAME
+		or instance.Name == SEED_SHOP_FRAME_NAME
+		or instance.Name == FRUIT_SHOP_FRAME_NAME
+		or instance.Name == SEED_TEMPLATE_NAME
+		or instance.Name == FRUIT_TEMPLATE_NAME
+	then
+		queue_shop_discovery()
+	end
+end)
 
 task.defer(function()
 	local success, errorMessage = pcall(initialize_shop)
