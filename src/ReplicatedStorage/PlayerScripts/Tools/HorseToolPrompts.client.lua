@@ -218,7 +218,7 @@ local function get_interaction_duration(definition, itemDefinition): number
 	end
 
 	if itemId == "horse_brush" then
-		return 1.5
+		return 10
 	end
 
 	if toolCategory == "Food" or toolCategory == "Water" then

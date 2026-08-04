@@ -21,6 +21,7 @@ local horseBrush = {
 		"Horse Brush",
 	},
 	clientHandlerName = "HorseBrushClient",
+	interactionDuration = 10,
 	prompt = {
 		actionText = "Brush",
 		objectText = "Your horse",

@@ -13,7 +13,7 @@ local ToolRegistry = require(GameModules:WaitForChild("Tools"):WaitForChild("Reg
 
 local plotValue = localPlayer:WaitForChild("Plot")
 
-local CLEAN_ANIMATION_ID = "rbxassetid://118212823724658"
+local CLEAN_ANIMATION_ID = "rbxassetid://71026839915576"
 local CLEAN_ANIMATION_FADE_SECONDS = 0.1
 local CLEAN_ANIMATION_FALLBACK_DURATION_SECONDS = 1.6
 local CLEAN_MOVE_REACHED_DISTANCE = 2.75
@@ -22,6 +22,9 @@ local CLEAN_MOVE_TIMEOUT_PADDING_SECONDS = 1.5
 local CLEAN_MOVE_TIMEOUT_MIN_SECONDS = 2
 local CLEAN_MOVE_TIMEOUT_MAX_SECONDS = 8
 local PLAYER_MODULE_WAIT_SECONDS = 3
+local BROOM_TOOL_ITEM_ID = "stable_broom"
+local BROOM_VISUAL_NAME = "Broom"
+local BROOM_MOTOR_NAME = "Broom"
 
 local activePrompts = {}
 local connections = {}
@@ -193,6 +196,148 @@ local function get_character_parts(): (Model?, Humanoid?, BasePart?)
 	return character, humanoid, rootPart
 end
 
+local function find_right_arm(character: Model): BasePart?
+	for _, partName in ipairs({ "RightHand", "Right Arm", "RightLowerArm", "RightUpperArm" }) do
+		local part = character:FindFirstChild(partName)
+		if part and part:IsA("BasePart") then
+			return part
+		end
+	end
+
+	local rightHand = character:FindFirstChild("RightHand", true)
+	return if rightHand and rightHand:IsA("BasePart") then rightHand else nil
+end
+
+local function get_broom_template(): Instance?
+	local assets = ReplicatedStorage:FindFirstChild("Assets")
+	local vfx = assets and assets:FindFirstChild("VFX")
+	local objects = vfx and vfx:FindFirstChild("Objects")
+	return objects and objects:FindFirstChild(BROOM_VISUAL_NAME)
+end
+
+local function find_broom_handle(visual: Instance): BasePart?
+	if visual:IsA("BasePart") then
+		return visual
+	end
+
+	local namedHandle = visual:FindFirstChild("Handle", true)
+	if namedHandle and namedHandle:IsA("BasePart") then
+		return namedHandle
+	end
+
+	return visual:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function get_tool_grip(tool: Tool, rightArm: BasePart): CFrame
+	for _, joint in ipairs(rightArm:GetChildren()) do
+		if joint:IsA("Motor6D")
+			and joint.Part0 == rightArm
+			and joint.Part1
+			and joint.Part1:IsDescendantOf(tool)
+		then
+			return joint.C0
+		end
+	end
+
+	return tool.Grip
+end
+
+local function hide_tool_visual(tool: Tool): {any}
+	local hiddenVisuals = {}
+
+	for _, descendant in ipairs(tool:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			hiddenVisuals[#hiddenVisuals + 1] = {
+				Instance = descendant,
+				Value = descendant.LocalTransparencyModifier,
+			}
+			descendant.LocalTransparencyModifier = 1
+		end
+	end
+
+	return hiddenVisuals
+end
+
+local function restore_tool_visual(hiddenVisuals: {any})
+	for _, entry in ipairs(hiddenVisuals) do
+		if entry.Instance and entry.Instance.Parent then
+			entry.Instance.LocalTransparencyModifier = entry.Value
+		end
+	end
+end
+
+local function attach_broom_visual(character: Model, tool: Tool): (Instance?, {any}?)
+	local rightArm = find_right_arm(character)
+	local template = get_broom_template()
+	if not rightArm or not template then
+		return nil, nil
+	end
+
+	local cloneSucceeded, visual = pcall(function()
+		return template:Clone()
+	end)
+	if not cloneSucceeded or not visual then
+		return nil, nil
+	end
+
+	local handle = find_broom_handle(visual)
+	if not handle then
+		visual:Destroy()
+		return nil, nil
+	end
+
+	visual.Name = "Handle"
+	handle.Name = "Handle"
+
+	local function prepare_part(part: BasePart)
+		part.Anchored = false
+		part.CanCollide = false
+		part.CanTouch = false
+		part.CanQuery = false
+		part.Massless = true
+
+		if part ~= handle then
+			local weld = Instance.new("WeldConstraint")
+			weld.Name = "BroomVisualWeld"
+			weld.Part0 = handle
+			weld.Part1 = part
+			weld.Parent = part
+		end
+	end
+
+	if visual:IsA("BasePart") then
+		prepare_part(visual)
+	end
+
+	for _, descendant in ipairs(visual:GetDescendants()) do
+		if descendant:IsA("Script") or descendant:IsA("LocalScript") then
+			descendant:Destroy()
+		elseif descendant:IsA("BasePart") then
+			prepare_part(descendant)
+		end
+	end
+
+	local grip = get_tool_grip(tool, rightArm)
+	local targetHandleCFrame = rightArm.CFrame * grip
+	if visual:IsA("Model") then
+		local handleToPivot = handle.CFrame:ToObjectSpace(visual:GetPivot())
+		visual:PivotTo(targetHandleCFrame * handleToPivot)
+	else
+		handle.CFrame = targetHandleCFrame
+	end
+
+	visual.Parent = character
+
+	local motor = Instance.new("Motor6D")
+	motor.Name = BROOM_MOTOR_NAME
+	motor.Part0 = rightArm
+	motor.Part1 = handle
+	motor.C0 = grip
+	motor.Parent = rightArm
+
+	return visual, hide_tool_visual(tool)
+end
+
 local function get_clean_stand_position(rootPart: BasePart, targetPart: BasePart): Vector3
 	local targetPosition = targetPart.Position
 	local rootPosition = rootPart.Position
@@ -259,9 +404,15 @@ local function face_root_towards(rootPart: BasePart, targetPosition: Vector3)
 	rootPart.CFrame = CFrame.lookAt(rootPosition, lookAt)
 end
 
-local function play_clean_animation(humanoid: Humanoid)
+local function play_clean_animation(character: Model, humanoid: Humanoid, tool: Tool, toolItemId: string)
 	local track, animation = load_clean_animation(humanoid)
 	local duration = get_animation_duration(track)
+	local broomVisual = nil
+	local hiddenToolVisuals = nil
+
+	if toolItemId == BROOM_TOOL_ITEM_ID then
+		broomVisual, hiddenToolVisuals = attach_broom_visual(character, tool)
+	end
 
 	if track then
 		pcall(function()
@@ -279,6 +430,14 @@ local function play_clean_animation(humanoid: Humanoid)
 
 	if animation then
 		animation:Destroy()
+	end
+
+	if broomVisual then
+		broomVisual:Destroy()
+	end
+
+	if hiddenToolVisuals then
+		restore_tool_visual(hiddenToolVisuals)
 	end
 end
 
@@ -327,8 +486,8 @@ local function request_clean(tool: Tool, horseId: string, dirtId: string, target
 		return finish_request(false)
 	end
 
-	local _character, humanoid, rootPart = get_character_parts()
-	if not humanoid or not rootPart or not targetPart.Parent then
+	local character, humanoid, rootPart = get_character_parts()
+	if not character or not humanoid or not rootPart or not targetPart.Parent then
 		return finish_request(false)
 	end
 
@@ -350,7 +509,7 @@ local function request_clean(tool: Tool, horseId: string, dirtId: string, target
 	humanoid.JumpHeight = 0
 	humanoid.AutoRotate = false
 
-	play_clean_animation(humanoid)
+	play_clean_animation(character, humanoid, tool, toolItemId)
 
 	if not is_tool_still_equipped(tool) or not targetPart.Parent then
 		return finish_request(false)

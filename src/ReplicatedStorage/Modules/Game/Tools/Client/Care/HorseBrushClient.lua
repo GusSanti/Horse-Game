@@ -236,7 +236,7 @@ local function start_session(context): boolean
 		finishing = false,
 		closed = false,
 		startedAt = os.clock(),
-		actionDuration = math.max(context.actionDuration or 1.5, 0.05),
+		actionDuration = math.max(context.actionDuration or 10, 0.05),
 		rootPart = resolvedRootPart,
 		savedCharacterPivot = character:GetPivot(),
 		savedWalkSpeed = humanoid.WalkSpeed,
