@@ -23,6 +23,7 @@ local FRESH_BUCKET_ITEM_ID = "fresh_bucket"
 local WELL_NAME = "Well"
 local WELL_HANDLE_NAME = "WellHandle"
 local BUCKET_NAME = "Bucket"
+local CAMERA_PART_NAME = "Cam"
 local PROMPT_NAME = "WellWaterPrompt"
 
 local DEFAULT_REQUIRED_TURNS = 3
@@ -96,6 +97,7 @@ local function find_prompt_parent(well)
 
 	for _, descendant in ipairs(well:GetDescendants()) do
 		if descendant:IsA("BasePart")
+			and descendant.Name ~= CAMERA_PART_NAME
 			and (not bucket or not descendant:IsDescendantOf(bucket))
 			and (not handleRoot or not descendant:IsDescendantOf(handleRoot))
 		then

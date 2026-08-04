@@ -826,6 +826,47 @@ function HorseRoamingService.Release(player: Player, horseId: string, visual: In
 	return true, "Released"
 end
 
+function HorseRoamingService.ReleaseOnDismount(player: Player, horseId: string, visual: Instance): (boolean, string)
+	if player.Parent ~= Players or type(horseId) ~= "string" or horseId == "" or not visual or not visual.Parent then
+		return false, "HorseUnavailable"
+	end
+
+	local playerSpawn = get_player_spawn(player)
+	if not playerSpawn then
+		return false, "PlayerSpawnMissing"
+	end
+
+	local currentPosition = visual:GetPivot().Position
+	local offsetFromSpawn = Vector3.new(
+		currentPosition.X - playerSpawn.Position.X,
+		0,
+		currentPosition.Z - playerSpawn.Position.Z
+	)
+	local isWithinRoamingRange = offsetFromSpawn.Magnitude <= HorseRoamingConfig.MaxDistanceFromPlayerSpawn
+	local wasFree = HorseRoamingService.IsHorseFree(player, horseId)
+
+	-- Dismounting inside the plot roaming radius leaves the horse where it is.
+	-- A horse that was not already free becomes free before its roaming state starts.
+	if not wasFree and not isWithinRoamingRange then
+		return false, "OutsideRoamingRange"
+	end
+
+	if not wasFree then
+		set_free_state(player, horseId, true)
+		visual:SetAttribute(FREE_ATTRIBUTE, true)
+	end
+
+	local released, releaseReason = HorseRoamingService.Release(player, horseId, visual, {
+		ClampIfTooFar = not isWithinRoamingRange,
+	})
+	if not released and not wasFree then
+		set_free_state(player, horseId, false)
+		visual:SetAttribute(FREE_ATTRIBUTE, nil)
+	end
+
+	return released, releaseReason
+end
+
 function HorseRoamingService.PrepareForMount(
 	player: Player,
 	horseId: string,

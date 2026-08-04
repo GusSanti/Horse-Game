@@ -731,6 +731,22 @@ local function cleanup_mount_horse(mountState, options)
 	destroy_instances(mountState.HorseWelds)
 	destroy_instances({ mountState.MountSeat, mountState.MountRoot })
 
+	if options.ReleaseOnDismount == true
+		and mountState.Player
+		and mountState.Player.Parent == Players
+		and mountState.HorseVisual
+		and mountState.HorseVisual.Parent
+	then
+		local released = HorseRoamingService.ReleaseOnDismount(
+			mountState.Player,
+			mountState.HorseId,
+			mountState.HorseVisual
+		)
+		if released then
+			return
+		end
+	end
+
 	if options.ReleaseToRoam == true
 		and mountState.Player
 		and mountState.Player.Parent == Players
@@ -1814,10 +1830,8 @@ local function dismount_player(player)
 				restore_character_state(character, humanoid, mountState.CharacterState)
 			end
 
-			local remainsFree = HorseRoamingService.IsHorseFree(player, mountState.HorseId)
 			cleanup_mount_horse(mountState, {
-				ReleaseToRoam = remainsFree,
-				ClampIfTooFar = remainsFree,
+				ReleaseOnDismount = true,
 			})
 			if dismountingMountsByPlayer[player] == mountState then
 				dismountingMountsByPlayer[player] = nil

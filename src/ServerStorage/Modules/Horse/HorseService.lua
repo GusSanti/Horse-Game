@@ -1053,6 +1053,87 @@ local function get_stable_ground_y(horsePosition: BasePart, visualHorse: Instanc
 	return get_base_part_lowest_y(horsePosition)
 end
 
+local function get_visual_base_parts(visualHorse: Instance): {BasePart}
+	local baseParts = {}
+	if visualHorse:IsA("BasePart") then
+		baseParts[#baseParts + 1] = visualHorse
+	end
+
+	for _, descendant: Instance in visualHorse:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			baseParts[#baseParts + 1] = descendant
+		end
+	end
+
+	return baseParts
+end
+
+local function get_stable_physics_root(visualHorse: Instance, baseParts: {BasePart}): BasePart?
+	if visualHorse:IsA("BasePart") then
+		return visualHorse
+	end
+
+	if visualHorse:IsA("Model") then
+		local primaryPart = visualHorse.PrimaryPart
+		if primaryPart and primaryPart:IsDescendantOf(visualHorse) then
+			return primaryPart
+		end
+	end
+
+	for _, rootName in { "HorseRoot", "RootPart" } do
+		local rootPart = visualHorse:FindFirstChild(rootName, true)
+		if rootPart and rootPart:IsA("BasePart") then
+			return rootPart
+		end
+	end
+
+	return baseParts[1]
+end
+
+local function stop_visual_physics(baseParts: {BasePart}): ()
+	for _, basePart in baseParts do
+		if basePart.Parent then
+			basePart.AssemblyLinearVelocity = Vector3.zero
+			basePart.AssemblyAngularVelocity = Vector3.zero
+		end
+	end
+end
+
+local function stabilize_visual_horse_in_stable(visualHorse: Instance): ()
+	-- Keep one root in every physical assembly anchored. Anchoring every part
+	-- would stop Motor6D-driven idle animations, while anchoring only the root
+	-- prevents gravity/network ownership from making the visual shake.
+	local baseParts = get_visual_base_parts(visualHorse)
+	local rootPart = get_stable_physics_root(visualHorse, baseParts)
+	if not rootPart then
+		return
+	end
+
+	rootPart.Anchored = true
+	local rootAssemblyParts: {[BasePart]: boolean} = { [rootPart] = true }
+	for _, connectedPart in rootPart:GetConnectedParts(true) do
+		rootAssemblyParts[connectedPart] = true
+	end
+
+	for _, basePart in baseParts do
+		if not rootAssemblyParts[basePart] then
+			local hasAnchoredPart = basePart.Anchored
+			for _, connectedPart in basePart:GetConnectedParts(true) do
+				if connectedPart.Anchored then
+					hasAnchoredPart = true
+					break
+				end
+			end
+
+			if not hasAnchoredPart then
+				basePart.Anchored = true
+			end
+		end
+	end
+
+	stop_visual_physics(baseParts)
+end
+
 local function position_visual_horse(visualHorse: Instance, horsePosition: BasePart): ()
 	visualHorse:PivotTo(horsePosition.CFrame)
 
@@ -1077,7 +1158,13 @@ function HorseService.PositionVisualHorseInStable(visualHorse: Instance, horsePo
 	horsePosition.CanCollide = false
 	horsePosition.CanTouch = false
 	horsePosition.CanQuery = false
+	stabilize_visual_horse_in_stable(visualHorse)
 	position_visual_horse(visualHorse, horsePosition)
+	stabilize_visual_horse_in_stable(visualHorse)
+end
+
+function HorseService.StabilizeVisualHorseInStable(visualHorse: Instance): ()
+	stabilize_visual_horse_in_stable(visualHorse)
 end
 
 local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instance?, string)
@@ -1102,6 +1189,7 @@ local function create_visual_horse_in_slot(slotFolder: Instance, horse): (Instan
 	if visualHorse:IsA("Model") or visualHorse:IsA("BasePart") then
 		HorseService.PositionVisualHorseInStable(visualHorse, horsePosition)
 		HorseSaddleVisualService.Sync(visualHorse, horse)
+		HorseService.StabilizeVisualHorseInStable(visualHorse)
 
 		return visualHorse, "Created"
 	end
@@ -1133,6 +1221,7 @@ local function sync_visual_horse_in_slot(slotFolder: Instance, horse): ()
 			HorseService.PositionVisualHorseInStable(visualHorses[1], horsePosition)
 		end
 		HorseSaddleVisualService.Sync(visualHorses[1], horse)
+		HorseService.StabilizeVisualHorseInStable(visualHorses[1])
 		return
 	end
 

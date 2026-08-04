@@ -22,6 +22,7 @@ local BUCKET_READY_ATTRIBUTE = "WellWaterBucketReady"
 local REQUIRED_TURNS_ATTRIBUTE = "WellWaterRequiredTurns"
 local WELL_NAME = "Well"
 local WELL_HANDLE_NAME = "WellHandle"
+local CAMERA_PART_NAME = "Cam"
 local PIVOT_NAME = "Pivot"
 local HANDLE_NAME = "Handle"
 local GUI_NAME = "WellCrankProgressGui"
@@ -286,6 +287,11 @@ local function get_camera_focus_offset(well)
 end
 
 local function build_camera_cframe(well, pivot)
+	local cameraPart = find_named_descendant(well, { CAMERA_PART_NAME }, "BasePart")
+	if cameraPart then
+		return cameraPart.CFrame
+	end
+
 	local wellCFrame = well:GetPivot()
 	local cameraPosition = wellCFrame:PointToWorldSpace(get_camera_offset(well))
 	local focusPosition = pivot.CFrame:PointToWorldSpace(get_camera_focus_offset(well))
