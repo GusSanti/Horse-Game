@@ -1157,6 +1157,14 @@ rootTrove:Connect(RunService.Heartbeat, function(deltaTime: number)
 		return
 	end
 
+	-- The status values are time based, but there is no reason to refresh them
+	-- while the stable is covered by another frame.  Keeping this guard here
+	-- avoids doing work every interval for a hidden UI and lets the next
+	-- visibility/data signal render the cards again.
+	if not is_ui_visible(ui.Root) then
+		return
+	end
+
 	refreshAccumulator += deltaTime
 	if refreshAccumulator < REFRESH_INTERVAL then
 		return
