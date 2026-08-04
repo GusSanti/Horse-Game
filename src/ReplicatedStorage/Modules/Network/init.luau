@@ -43,6 +43,7 @@ local Functions = table.freeze({
 	UpdateInventoryLoadout = Net.Function.UpdateInventoryLoadout,
 	UpdatePlayerSetting = Net.Function.UpdatePlayerSetting,
 	UseHorseTool = Net.Function.UseHorseTool,
+	WellWaterAction = Net.Function.WellWaterAction,
 	WaterPlant = Net.Function.WaterPlant,
 })
 

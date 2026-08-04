@@ -30,6 +30,7 @@ local HorseSaddleAssetService: any = require(HorseModules:WaitForChild("HorseSad
 local HorseService: any = require(HorseModules:WaitForChild("HorseService"))
 local StableCleaningService: any = require(HorseModules:WaitForChild("StableCleaningService"))
 local WaterTankService: any = require(HorseModules:WaitForChild("WaterTankService"))
+local WellWaterService: any = require(HorseModules:WaitForChild("WellWaterService"))
 local InventoryLoadoutService: any = require(InventoryModules:WaitForChild("InventoryLoadoutService"))
 local NpcShopService: any = require(ShopModules:WaitForChild("NpcShopService"))
 local PersistentToolService: any = require(InventoryModules:WaitForChild("PersistentToolService"))
@@ -80,6 +81,7 @@ local SERVICES: { ServiceDefinition } = {
 	{ Name = "HorseMountService", Service = HorseMountService },
 	{ Name = "HayBaleService", Service = HayBaleService },
 	{ Name = "WaterTankService", Service = WaterTankService },
+	{ Name = "WellWaterService", Service = WellWaterService },
 	{ Name = "StableCleaningService", Service = StableCleaningService },
 }
 

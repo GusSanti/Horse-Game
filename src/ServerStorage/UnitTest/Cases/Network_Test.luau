@@ -41,6 +41,7 @@ local EXPECTED_FUNCTIONS: { string } = {
 	"UpdateInventoryLoadout",
 	"UpdatePlayerSetting",
 	"UseHorseTool",
+	"WellWaterAction",
 	"WaterPlant",
 }
 

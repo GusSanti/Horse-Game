@@ -44,6 +44,7 @@ local RuntimeManifest = {
 		Entry("HorseToolPrompts", "Tools", "HorseToolPrompts"),
 		Entry("StableCleaningPrompts", "Tools", "StableCleaningPrompts"),
 		Entry("WaterTankPrompts", "Tools", "WaterTankPrompts"),
+		Entry("WellCrank", "Tools", "WellCrank"),
 	}),
 }
 
