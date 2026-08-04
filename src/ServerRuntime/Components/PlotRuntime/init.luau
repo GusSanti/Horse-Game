@@ -214,9 +214,6 @@ end
 local function refresh_plot_slot_prompts(player: Player): ()
 	promptRuntime:RefreshSlots(player)
 end
-local function refresh_free_horse_prompts(player: Player): ()
-	promptRuntime:RefreshFree(player)
-end
 local function rebind_plot_slot_prompts(player: Player, plot: Instance): ()
 	promptRuntime:Rebind(player, plot)
 end
@@ -298,7 +295,6 @@ local function set_player_plot_level(player: Player, requestedLevel, deferDataSa
 	end
 	sync_plot_horses(player)
 	refresh_plot_slot_prompts(player)
-	refresh_free_horse_prompts(player)
 	changingLevelByPlayer[player] = nil
 
 	return true, StableDictionary.get_level_template_name(level)
@@ -459,7 +455,6 @@ local function on_player_added(player: Player): ()
 
 	local horsesConnection = DataUtility.server.bind(player, "Horses", function()
 		sync_plot_horses(player)
-		refresh_free_horse_prompts(player)
 	end)
 
 	if horsesConnection then
@@ -469,7 +464,6 @@ local function on_player_added(player: Player): ()
 	local stableConnection = DataUtility.server.bind(player, "Stable", function(stable)
 		sync_plot_horses(player)
 		refresh_plot_slot_prompts(player)
-		refresh_free_horse_prompts(player)
 
 		if type(stable) == "table" then
 			local savedLevel = StableDictionary.get_normalized_level(stable.Level)
@@ -509,6 +503,9 @@ function PlotRuntime:Init(): ()
 
 	self.Trove = Trove.new()
 	publish_stable_previews()
+	Network.Functions.StableSlotAction:Respond(function(Player: Player, Payload: any): any
+		return promptRuntime:Execute(Player, Payload)
+	end, self.Trove)
 	Network.Events.TeleportToStable:Connect(teleport_player_to_plot, self.Trove)
 	Network.Functions.UpgradeStable:Respond(purchase_stable_upgrade, self.Trove)
 	self.Trove:Connect(Framework.RuntimeEvents.PlayerAdded, on_player_added)

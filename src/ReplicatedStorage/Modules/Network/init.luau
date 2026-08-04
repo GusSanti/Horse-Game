@@ -10,6 +10,7 @@ local Events = table.freeze({
 	DataChanged = Net.Event.DataUtilityChanged,
 	HorseIndexStateChanged = Net.Event.HorseIndexStateChanged,
 	HorseBrushAnimation = Net.Event.HorseBrushAnimation,
+	HorseFeedAnimation = Net.Event.HorseFeedAnimation,
 	HorseMountInput = Net.Event.HorseMountInput,
 	HorseMountState = Net.Event.HorseMountState,
 	HorseRevealAcknowledged = Net.Event.AcknowledgeReveal,
@@ -42,6 +43,7 @@ local Functions = table.freeze({
 	PlantSeed = Net.Function.PlantSeed,
 	RaceAction = Net.Function.RaceAction,
 	SellFruit = Net.Function.SellFruit,
+	StableSlotAction = Net.Function.StableSlotAction,
 	TeleportToArea = Net.Function.TeleportToArea,
 	UpdateInventoryLoadout = Net.Function.UpdateInventoryLoadout,
 	UpdatePlayerSetting = Net.Function.UpdatePlayerSetting,
@@ -64,7 +66,9 @@ local Network = {
 	Horse = table.freeze({
 		AcknowledgeReveal = Events.HorseRevealAcknowledged,
 		BrushAnimation = Events.HorseBrushAnimation,
+		FeedAnimation = Events.HorseFeedAnimation,
 		CleanStableDirt = Functions.CleanStableDirt,
+		StableSlotAction = Functions.StableSlotAction,
 		UseTool = Functions.UseHorseTool,
 	}),
 }

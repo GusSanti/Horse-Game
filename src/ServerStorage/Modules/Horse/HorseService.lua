@@ -47,6 +47,7 @@ local collisionServiceInitialized = false
 local registeredCollisionVisuals = setmetatable({}, { __mode = "k" })
 local stableAnimationStates = setmetatable({}, { __mode = "k" })
 local collisionPlayerConnections = {}
+local is_visual_horse_mounted: (Instance) -> boolean
 local RACE_MIN_STATUS_PERCENT = 50
 local ACTION_BEHAVIOR_TO_MODE = {
 	Eating = "EatDrink",
@@ -171,6 +172,10 @@ local function destroy_stable_animation_state(visual: Instance): ()
 	if state.BrushTrack then
 		state.BrushTrack:Destroy()
 	end
+	stop_stable_animation_track(state.FeedTrack)
+	if state.FeedTrack then
+		state.FeedTrack:Destroy()
+	end
 	for _, animation in state.Animations do
 		animation:Destroy()
 	end
@@ -203,7 +208,7 @@ local function sync_stable_animation(visual: Instance): ()
 	if not state then
 		return
 	end
-	if state.BrushActive then
+	if state.BrushActive or state.FeedActive then
 		return
 	end
 
@@ -274,6 +279,10 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 	if eatDrinkTrack then
 		eatDrinkTrack.Priority = Enum.AnimationPriority.Action
 		eatDrinkTrack.Looped = true
+	local feedTrack, feedAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseFeedAnimationId)
+	if feedTrack then
+		feedTrack.Priority = Enum.AnimationPriority.Action
+		feedTrack.Looped = true
 	end
 
 	local state = {
@@ -282,6 +291,9 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 		BrushTrack = brushTrack,
 		BrushActive = false,
 		Animations = { idleAnimation, walkAnimation, brushAnimation, eatDrinkAnimation },
+		FeedTrack = feedTrack,
+		FeedActive = false,
+		Animations = { idleAnimation, walkAnimation, brushAnimation, feedAnimation },
 		Connections = {},
 	}
 	stableAnimationStates[visual] = state
@@ -360,6 +372,8 @@ function HorseService.PlayBrushAnimation(player: Player, horseId: string): (bool
 		return false, "BrushAnimationMissing"
 	end
 
+	state.FeedActive = false
+	stop_stable_animation_track(state.FeedTrack)
 	state.BrushActive = true
 	for _, track in state.Tracks do
 		stop_stable_animation_track(track)
@@ -381,6 +395,48 @@ function HorseService.StopBrushAnimation(player: Player, horseId: string): ()
 
 	state.BrushActive = false
 	stop_stable_animation_track(state.BrushTrack)
+	state.Mode = nil
+	sync_stable_animation(visual)
+end
+
+function HorseService.PlayFeedAnimation(player: Player, horseId: string): (boolean, string)
+	local visual = get_player_horse_visual(player, horseId)
+	if not visual then
+		return false, "HorseVisualMissing"
+	end
+	if is_visual_horse_mounted(visual) then
+		return false, "HorseMounted"
+	end
+
+	local state = stableAnimationStates[visual]
+	local feedTrack = state and state.FeedTrack
+	if not feedTrack then
+		return false, "FeedAnimationMissing"
+	end
+
+	state.BrushActive = false
+	stop_stable_animation_track(state.BrushTrack)
+	state.FeedActive = true
+	for _, track in state.Tracks do
+		stop_stable_animation_track(track)
+	end
+	pcall(function()
+		feedTrack:Stop(0)
+		feedTrack:Play(HorseMountConfig.AnimationFadeTime or 0.12, 1, 1)
+	end)
+
+	return true, "FeedAnimationPlaying"
+end
+
+function HorseService.StopFeedAnimation(player: Player, horseId: string): ()
+	local visual = get_player_horse_visual(player, horseId)
+	local state = visual and stableAnimationStates[visual] or nil
+	if not state or not state.FeedActive then
+		return
+	end
+
+	state.FeedActive = false
+	stop_stable_animation_track(state.FeedTrack)
 	state.Mode = nil
 	sync_stable_animation(visual)
 end
@@ -937,7 +993,7 @@ local function get_visible_instance_lowest_y(instance: Instance): number?
 	return lowestY
 end
 
-local function is_visual_horse_mounted(visualHorse: Instance): boolean
+is_visual_horse_mounted = function(visualHorse: Instance): boolean
 	return (tonumber(visualHorse:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE)) or 0) > 0
 end
 

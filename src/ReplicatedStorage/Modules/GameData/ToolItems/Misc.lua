@@ -25,6 +25,8 @@ return {
 		ShopId = "Noob",
 		ItemId = "horse_brush",
 		DisplayName = "Horse Brush",
+		ToolGrip = CFrame.new(0, -0.48, -0.08)
+			* CFrame.Angles(0, math.rad(12), math.rad(90)),
 		IconImage = "rbxassetid://92561730155272",
 		Description = "A soft brush used to calm your horse and make it feel cared for.",
 		Price = 3,

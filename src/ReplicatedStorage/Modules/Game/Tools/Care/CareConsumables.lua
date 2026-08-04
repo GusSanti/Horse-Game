@@ -16,6 +16,7 @@ for _, itemDefinition in ipairs(CareItemCatalog.GetAllItems()) do
 			itemDefinition.DisplayName,
 			itemDefinition.ToolName,
 		},
+		clientHandlerName = if itemDefinition.CareType == "Food" then "HorseFeedClient" else nil,
 		prompt = {
 			actionText = itemDefinition.PromptActionText or "Use",
 			objectText = itemDefinition.PromptObjectText or "Your horse",

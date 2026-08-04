@@ -1,11 +1,13 @@
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
-local FoodHoverTooltip = {}
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local TweenUtils = require(Modules:WaitForChild("Libraries"):WaitForChild("HudAnim"):WaitForChild("Utils"))
 
-local TOOLTIP_GUI_NAME = "FoodHoverTooltipGui"
+local ItemHoverTooltip = {}
+
+local TOOLTIP_GUI_NAME = "ItemHoverTooltipGui"
 local TOOLTIP_WIDTH = 238
 local TOOLTIP_PADDING = 10
 local TOOLTIP_OFFSET = Vector2.new(16, 18)
@@ -91,7 +93,7 @@ local function ensure_tooltip()
 		corner.Parent = tooltipFrame
 
 		local stroke = Instance.new("UIStroke")
-		stroke.Color = Color3.fromRGB(255, 225, 170)
+		stroke.Color = Color3.new(1, 1, 1)
 		stroke.Transparency = TOOLTIP_STROKE_TRANSPARENCY
 		stroke.Thickness = 1
 		stroke.Parent = tooltipFrame
@@ -118,7 +120,7 @@ local function ensure_tooltip()
 		titleLabel.Name = "Title"
 		titleLabel.BackgroundTransparency = 1
 		titleLabel.Font = Enum.Font.GothamBold
-		titleLabel.TextColor3 = Color3.fromRGB(255, 236, 192)
+		titleLabel.TextColor3 = Color3.new(1, 1, 1)
 		titleLabel.TextSize = 15
 		titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 		titleLabel.TextYAlignment = Enum.TextYAlignment.Top
@@ -176,8 +178,6 @@ local function play_tooltip_transition(isShowing)
 	local duration = if isShowing then TOOLTIP_SHOW_TIME else TOOLTIP_HIDE_TIME
 	local easingStyle = if isShowing then Enum.EasingStyle.Back else Enum.EasingStyle.Quad
 	local easingDirection = if isShowing then Enum.EasingDirection.Out else Enum.EasingDirection.In
-	local tweenInfo = TweenInfo.new(duration, easingStyle, easingDirection)
-
 	local targets = {
 		{ tooltipFrame, "BackgroundTransparency", if isShowing then TOOLTIP_BG_TRANSPARENCY else 1 },
 		{ stroke, "Transparency", if isShowing then TOOLTIP_STROKE_TRANSPARENCY else 1 },
@@ -185,6 +185,7 @@ local function play_tooltip_transition(isShowing)
 		{ bodyLabel, "TextTransparency", if isShowing then 0 else 1 },
 		{ scale, "Scale", if isShowing then 1 else TOOLTIP_START_SCALE },
 	}
+	local completionTween = nil
 
 	if isShowing then
 		tooltipFrame.BackgroundTransparency = 1
@@ -205,8 +206,15 @@ local function play_tooltip_transition(isShowing)
 	for _, target in ipairs(targets) do
 		local instance, propertyName, value = target[1], target[2], target[3]
 		if instance then
-			local tween = TweenService:Create(instance, tweenInfo, { [propertyName] = value })
+			local tween = TweenUtils.tween(
+				instance,
+				{ [propertyName] = value },
+				duration,
+				easingStyle,
+				easingDirection
+			)
 			tooltipTweens[#tooltipTweens + 1] = tween
+			completionTween = tween
 			tween:Play()
 		end
 	end
@@ -215,7 +223,12 @@ local function play_tooltip_transition(isShowing)
 		return
 	end
 
-	task.delay(duration, function()
+	if not completionTween then
+		tooltipFrame.Visible = false
+		return
+	end
+
+	completionTween.Completed:Once(function()
 		if tooltipToken ~= token or not tooltipFrame then
 			return
 		end
@@ -257,7 +270,7 @@ local function update_position()
 	end
 
 	if activeTarget and not is_target_visible(activeTarget) then
-		FoodHoverTooltip.Hide(activeTarget)
+		ItemHoverTooltip.Hide(activeTarget)
 		return
 	end
 
@@ -286,7 +299,11 @@ local function start_position_updates()
 		return
 	end
 
-	positionConnection = RunService.RenderStepped:Connect(update_position)
+	positionConnection = UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			update_position()
+		end
+	end)
 end
 
 local function stop_position_updates()
@@ -385,7 +402,7 @@ local function build_effect_lines(itemDefinition)
 	return lines
 end
 
-function FoodHoverTooltip.HasTooltip(source)
+function ItemHoverTooltip.HasTooltip(source)
 	local itemDefinition = resolve_definition(source)
 	if not itemDefinition then
 		return false
@@ -394,9 +411,9 @@ function FoodHoverTooltip.HasTooltip(source)
 	return #build_effect_lines(itemDefinition) > 0
 end
 
-function FoodHoverTooltip.Show(source, target)
+function ItemHoverTooltip.Show(source, target)
 	local itemDefinition = resolve_definition(source)
-	if not FoodHoverTooltip.HasTooltip(itemDefinition) then
+	if not ItemHoverTooltip.HasTooltip(itemDefinition) then
 		return
 	end
 
@@ -406,7 +423,7 @@ function FoodHoverTooltip.Show(source, target)
 	end
 
 	activeTarget = target
-	titleLabel.Text = itemDefinition.DisplayName or itemDefinition.ToolName or itemDefinition.ItemId or "Food"
+	titleLabel.Text = itemDefinition.DisplayName or itemDefinition.ToolName or itemDefinition.ItemId or "Item"
 	bodyLabel.Text = table.concat(build_effect_lines(itemDefinition), "\n")
 	frame.Visible = true
 	update_position()
@@ -414,7 +431,7 @@ function FoodHoverTooltip.Show(source, target)
 	start_position_updates()
 end
 
-function FoodHoverTooltip.Hide(target)
+function ItemHoverTooltip.Hide(target)
 	if target and activeTarget ~= target then
 		return
 	end
@@ -427,17 +444,17 @@ function FoodHoverTooltip.Hide(target)
 	stop_position_updates()
 end
 
-function FoodHoverTooltip.Bind(target, source, trove)
+function ItemHoverTooltip.Bind(target, source, trove)
 	if not target or not target:IsA("GuiObject") then
 		return nil
 	end
 
 	local function show()
-		FoodHoverTooltip.Show(source, target)
+		ItemHoverTooltip.Show(source, target)
 	end
 
 	local function hide()
-		FoodHoverTooltip.Hide(target)
+		ItemHoverTooltip.Hide(target)
 	end
 
 	if trove and type(trove.Connect) == "function" then
@@ -467,4 +484,4 @@ function FoodHoverTooltip.Bind(target, source, trove)
 	end
 end
 
-return FoodHoverTooltip
+return ItemHoverTooltip

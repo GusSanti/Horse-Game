@@ -8,6 +8,7 @@ local EXPECTED_EVENTS: { string } = {
 	"AreaUnlocked",
 	"DataUtilityChanged",
 	"HorseBrushAnimation",
+	"HorseFeedAnimation",
 	"HorseIndexStateChanged",
 	"HorseMountInput",
 	"HorseMountState",
@@ -40,6 +41,7 @@ local EXPECTED_FUNCTIONS: { string } = {
 	"RestoreEquippedHorseNeeds",
 	"RollHorseRoulette",
 	"SellFruit",
+	"StableSlotAction",
 	"TeleportToArea",
 	"UpdateInventoryLoadout",
 	"UpdatePlayerSetting",
@@ -70,6 +72,7 @@ return function(t: any): ()
 	t.expect.equal(Network.Admin.GetItemCatalog, Network.Functions.AdminGetItemCatalog)
 	t.expect.equal(Network.Horse.UseTool, Network.Functions.UseHorseTool)
 	t.expect.equal(Network.Horse.BrushAnimation, Network.Events.HorseBrushAnimation)
+	t.expect.equal(Network.Horse.FeedAnimation, Network.Events.HorseFeedAnimation)
 	t.expect.equal(Network.Horse.AcknowledgeReveal, Network.Events.HorseRevealAcknowledged)
 	end)
 end

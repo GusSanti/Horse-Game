@@ -48,19 +48,16 @@ local DISMOUNT_ACTION_NAME = "HorseMountDismount"
 local JUMP_ACTION_NAME = "HorseMountJump"
 local SPRINT_ACTION_NAME = "HorseMountSprint"
 local REAR_ACTION_NAME = "HorseMountRear"
-local STABLE_MOUNT_PROMPT_ATTACHMENT_NAME = "StableMountPromptAttachment"
 
 local HORSE_FOLDER_NAME = ToolDictionary.HorseFolderName
 local VISUAL_HORSE_ATTRIBUTE = ToolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE = ToolDictionary.HorseIdAttribute
-local MOUNTED_USER_ID_ATTRIBUTE = ToolDictionary.MountedUserIdAttribute
 
 local requestInFlight = false
 local send_mount_input
-local request_mount
 local request_dismount
+local dismountStopStartedAt: number? = nil
 local sync_mount_state_from_server
-local refresh_stable_mount_prompts
 local ensure_local_prediction
 local localPrediction = {
 	HorseVisual = nil,
@@ -104,12 +101,10 @@ local lastSentMoveX = 0
 local lastSentMoveZ = 0
 local lastSentCameraYaw = 0
 local lastSentSprinting = false
+local lastSentStopping = false
 local inputSequence = 0
 local pendingInputs = {}
 local mountMovementSound = nil
-local stableMountPromptAttachments = {}
-local stableMountPromptConnections = {}
-local stableMountPromptCharacterConnections = {}
 local mountTransitionCollisionStates = {}
 local mountTransitionCollisionToken = 0
 local riderAnimationState = {
@@ -1087,193 +1082,6 @@ local function find_local_horse_visual(horseId)
 	return nil
 end
 
-local function disconnect_stable_mount_prompt_connections()
-	for _, connection in ipairs(stableMountPromptConnections) do
-		connection:Disconnect()
-	end
-
-	table.clear(stableMountPromptConnections)
-end
-
-local function disconnect_stable_mount_prompt_character_connections()
-	for _, connection in ipairs(stableMountPromptCharacterConnections) do
-		connection:Disconnect()
-	end
-
-	table.clear(stableMountPromptCharacterConnections)
-end
-
-local function is_holding_tool()
-	local character = localPlayer.Character
-	if not character then
-		return false
-	end
-
-	return character:FindFirstChildOfClass("Tool") ~= nil
-end
-
-local function clear_stable_mount_prompts()
-	for _, attachment in ipairs(stableMountPromptAttachments) do
-		if attachment and attachment.Parent then
-			attachment:Destroy()
-		end
-	end
-
-	table.clear(stableMountPromptAttachments)
-end
-
-local function set_stable_mount_prompts_enabled(enabled)
-	for _, attachment in ipairs(stableMountPromptAttachments) do
-		if attachment and attachment.Parent then
-			local prompt = attachment:FindFirstChild("StableMountPrompt")
-			if prompt and prompt:IsA("ProximityPrompt") then
-				prompt.Enabled = enabled == true
-			end
-		end
-	end
-end
-
-local function get_stable_mount_prompt_parent(horseVisual)
-	if horseVisual:IsA("BasePart") then
-		return horseVisual
-	end
-
-	if horseVisual:IsA("Model") then
-		if horseVisual.PrimaryPart then
-			return horseVisual.PrimaryPart
-		end
-
-		return horseVisual:FindFirstChildWhichIsA("BasePart", true)
-	end
-
-	return nil
-end
-
-local function get_stable_horse_visuals()
-	local plot = plotValue.Value
-	local horseFolder = plot and plot:FindFirstChild(HORSE_FOLDER_NAME)
-	if not horseFolder then
-		return {}
-	end
-
-	local visuals = {}
-	for _, descendant in ipairs(horseFolder:GetDescendants()) do
-		if descendant:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true
-			and (descendant:IsA("Model") or descendant:IsA("BasePart"))
-		then
-			visuals[#visuals + 1] = descendant
-		end
-	end
-
-	return visuals
-end
-
-local function get_stable_mount_prompt_position(promptParent)
-	local worldPosition = promptParent.Position + Vector3.new(
-		0,
-		HorseMountConfig.StableMountPromptHeightOffset or 2,
-		0
-	)
-	return promptParent.CFrame:PointToObjectSpace(worldPosition)
-end
-
-refresh_stable_mount_prompts = function()
-	clear_stable_mount_prompts()
-
-	if not localPlayer.Character
-		or mountedState.Active
-		or mountedState.TransitionMode ~= nil
-		or requestInFlight
-		or is_holding_tool()
-	then
-		return
-	end
-
-	for _, horseVisual in ipairs(get_stable_horse_visuals()) do
-		local horseId = horseVisual:GetAttribute(HORSE_ID_ATTRIBUTE)
-		local isMounted = horseVisual:GetAttribute(MOUNTED_USER_ID_ATTRIBUTE) ~= nil
-		local promptParent = get_stable_mount_prompt_parent(horseVisual)
-
-		if not isMounted and promptParent and type(horseId) == "string" and horseId ~= "" then
-			local attachment = Instance.new("Attachment")
-			attachment.Name = STABLE_MOUNT_PROMPT_ATTACHMENT_NAME
-			attachment.Position = get_stable_mount_prompt_position(promptParent)
-			attachment.Parent = promptParent
-
-			local prompt = Instance.new("ProximityPrompt")
-			prompt.Name = "StableMountPrompt"
-			prompt.ActionText = HorseMountConfig.StableMountPromptActionText or "Mount"
-			prompt.ObjectText = HorseMountConfig.StableMountPromptObjectText or "Your Horse"
-			prompt.KeyboardKeyCode = Enum.KeyCode.G
-			prompt.HoldDuration = HorseMountConfig.StableMountPromptHoldDuration or 2
-			prompt.MaxActivationDistance = HorseMountConfig.StableMountPromptMaxActivationDistance or 14
-			prompt.RequiresLineOfSight = false
-			prompt.Style = Enum.ProximityPromptStyle.Default
-			prompt.Parent = attachment
-
-			prompt.Triggered:Connect(function()
-				if request_mount then
-					request_mount(horseId)
-				end
-			end)
-
-			stableMountPromptAttachments[#stableMountPromptAttachments + 1] = attachment
-		end
-	end
-end
-
-local function watch_stable_mount_prompt_horses()
-	disconnect_stable_mount_prompt_connections()
-
-	local plot = plotValue.Value
-	if plot then
-		stableMountPromptConnections[#stableMountPromptConnections + 1] = plot.ChildAdded:Connect(function(child)
-			if child.Name == HORSE_FOLDER_NAME then
-				watch_stable_mount_prompt_horses()
-			end
-		end)
-	end
-
-	local horseFolder = plot and plot:FindFirstChild(HORSE_FOLDER_NAME)
-	if not horseFolder then
-		refresh_stable_mount_prompts()
-		return
-	end
-
-	stableMountPromptConnections[#stableMountPromptConnections + 1] = horseFolder.DescendantAdded:Connect(function(descendant)
-		if descendant:IsA("ProximityPrompt") or descendant.Name == STABLE_MOUNT_PROMPT_ATTACHMENT_NAME then
-			return
-		end
-
-		task.defer(refresh_stable_mount_prompts)
-	end)
-
-	refresh_stable_mount_prompts()
-end
-
-local function watch_stable_mount_prompt_tools(character)
-	disconnect_stable_mount_prompt_character_connections()
-
-	if not character then
-		refresh_stable_mount_prompts()
-		return
-	end
-
-	stableMountPromptCharacterConnections[#stableMountPromptCharacterConnections + 1] = character.ChildAdded:Connect(function(child)
-		if child:IsA("Tool") then
-			refresh_stable_mount_prompts()
-		end
-	end)
-
-	stableMountPromptCharacterConnections[#stableMountPromptCharacterConnections + 1] = character.ChildRemoved:Connect(function(child)
-		if child:IsA("Tool") then
-			refresh_stable_mount_prompts()
-		end
-	end)
-
-	refresh_stable_mount_prompts()
-end
-
 local function get_owned_horse_data(horseId)
 	local horses = DataUtility.client.get("Horses")
 	local ownedHorses = type(horses) == "table" and horses.Owned or nil
@@ -1684,6 +1492,11 @@ local function update_local_mount_prediction(deltaTime)
 
 	local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
 	local inputX, inputZ = get_move_vector()
+	local stoppingForDismount: boolean = dismountStopStartedAt ~= nil
+	if stoppingForDismount then
+		inputX = 0
+		inputZ = 0
+	end
 	local forwardAmount = math.max(0, -inputZ)
 	local backwardAmount = math.max(0, inputZ)
 	local currentPosition = mountRoot.Position
@@ -1705,6 +1518,7 @@ local function update_local_mount_prediction(deltaTime)
 		Forward = forwardAmount,
 		Backward = backwardAmount,
 		Sprinting = is_sprint_input_active(),
+		Stopping = stoppingForDismount,
 		ObstacleSpeedAlpha = if localPrediction.JumpAirborne then 1 else probeSample.ObstacleSpeedAlpha,
 	}, movement, HorseMountConfig, deltaTime, os.clock())
 	localPrediction.CurrentSpeed = horizontalState.Speed
@@ -1842,14 +1656,20 @@ send_mount_input = function(forceSend)
 
 	local now = os.clock()
 	local moveX, moveZ = get_move_vector()
-	local sprinting = localPrediction.HorizontalState.Mode == "Gallop"
-	local jumpRequested = localPrediction.JumpPendingRequest
-	local jumpLanded = localPrediction.JumpPendingLanded == true
-	local rearRequested = localPrediction.RearPendingRequest == true
+	local stoppingForDismount: boolean = dismountStopStartedAt ~= nil
+	if stoppingForDismount then
+		moveX = 0
+		moveZ = 0
+	end
+	local sprinting = not stoppingForDismount and localPrediction.HorizontalState.Mode == "Gallop"
+	local jumpRequested = if stoppingForDismount then nil else localPrediction.JumpPendingRequest
+	local jumpLanded = not stoppingForDismount and localPrediction.JumpPendingLanded == true
+	local rearRequested = not stoppingForDismount and localPrediction.RearPendingRequest == true
 
 	local yawChanged = math.abs(mountedState.CameraYaw - lastSentCameraYaw) >= 0.01
 	local moveChanged = math.abs(moveX - lastSentMoveX) >= 0.01 or math.abs(moveZ - lastSentMoveZ) >= 0.01
 	local sprintChanged = sprinting ~= lastSentSprinting
+	local stoppingChanged = stoppingForDismount ~= lastSentStopping
 	local jumpChanged = jumpRequested ~= nil or jumpLanded or rearRequested
 
 	if not forceSend
@@ -1857,6 +1677,7 @@ send_mount_input = function(forceSend)
 		and not yawChanged
 		and not moveChanged
 		and not sprintChanged
+		and not stoppingChanged
 		and not jumpChanged
 	then
 		return
@@ -1867,6 +1688,7 @@ send_mount_input = function(forceSend)
 	lastSentMoveZ = moveZ
 	lastSentCameraYaw = mountedState.CameraYaw
 	lastSentSprinting = sprinting
+	lastSentStopping = stoppingForDismount
 
 	inputSequence += 1
 	pendingInputs[inputSequence] = {
@@ -1884,6 +1706,7 @@ send_mount_input = function(forceSend)
 		MoveZ = moveZ,
 		CameraYaw = mountedState.CameraYaw,
 		Sprinting = sprinting,
+		Stopping = stoppingForDismount,
 		GaitMode = localPrediction.HorizontalState.Mode,
 		JumpRequested = jumpRequested ~= nil,
 		JumpChargeAlpha = jumpRequested or 0,
@@ -1900,6 +1723,9 @@ sync_mount_state_from_server = function(statePayload)
 	local wasMounted = mountedState.Active
 	local previousTransitionMode = mountedState.TransitionMode
 	local mounted = type(statePayload) == "table" and statePayload.Mounted == true
+	if not mounted then
+		dismountStopStartedAt = nil
+	end
 
 	mountedState.Active = mounted
 	mountedState.HorseId = mounted and statePayload.HorseId or nil
@@ -1962,80 +1788,56 @@ sync_mount_state_from_server = function(statePayload)
 		restore_camera()
 	end
 
-	refresh_stable_mount_prompts()
 end
 
-request_mount = function(horseId)
-	if requestInFlight or mountedState.Active or mountedState.TransitionMode ~= nil or type(horseId) ~= "string" or horseId == "" then
-		return
-	end
-
-	requestInFlight = true
-	-- Keep the currently triggered prompt alive until Roblox finishes its input
-	-- cycle. Destroying it inside Triggered can leave the custom prompt system
-	-- holding the input and interfere with nearby E prompts after dismounting.
-	set_stable_mount_prompts_enabled(false)
-
-	local success, response = pcall(function()
-		return Net.Function.HorseMountAction:Call({
-			Action = "Mount",
-			HorseId = horseId,
-			MountAtHorse = true,
-		})
-	end)
-
-	requestInFlight = false
-
-	if success and response and response.Success == true and response.State and not mountedState.Active then
-		sync_mount_state_from_server(response.State)
-	elseif not success or not response or response.Success ~= true then
-		riderAnimationState.TransitionToken += 1
-		riderAnimationState.SettleToken += 1
-		mountedState.TransitionMode = nil
-		clear_transition_root_targets()
-		cancel_camera_transition()
-		stop_local_rider_tracks(0.08)
-		restore_character_collisions_after_failed_mount()
-		restore_camera()
-		refresh_stable_mount_prompts()
-	end
-end
-
-request_dismount = function()
-	if requestInFlight or not mountedState.Active or mountedState.TransitionMode == "Dismounting" then
-		return
-	end
-
-	requestInFlight = true
+local function perform_dismount_request()
 	unbind_dismount_action()
 	unbind_jump_action()
 	unbind_rear_action()
 	unbind_sprint_action()
-
 	local success, response = pcall(function()
 		return Net.Function.HorseMountAction:Call({
 			Action = "Dismount",
 		})
 	end)
-
 	requestInFlight = false
-
 	if success and response and response.Success then
-	else
-		mountedState.TransitionMode = nil
-		clear_transition_root_targets()
-		cancel_camera_transition()
-		if mountedState.Active then
-			bind_dismount_action()
-			bind_jump_action()
-			bind_rear_action()
-			bind_sprint_action()
-		end
+		return
+	end
+
+	dismountStopStartedAt = nil
+	mountedState.TransitionMode = nil
+	clear_transition_root_targets()
+	cancel_camera_transition()
+	if mountedState.Active then
+		bind_dismount_action()
+		bind_jump_action()
+		bind_rear_action()
+		bind_sprint_action()
 	end
 end
 
+request_dismount = function()
+	if requestInFlight
+		or dismountStopStartedAt ~= nil
+		or not mountedState.Active
+		or mountedState.TransitionMode == "Dismounting"
+	then
+		return
+	end
+
+	dismountStopStartedAt = os.clock()
+	sprintButtonActive = false
+	localPrediction.JumpPendingRequest = nil
+	localPrediction.JumpPendingLanded = false
+	localPrediction.RearPendingRequest = false
+	unbind_jump_action()
+	unbind_rear_action()
+	unbind_sprint_action()
+	send_mount_input(true)
+end
+
 localPlayer.CharacterRemoving:Connect(function()
-	disconnect_stable_mount_prompt_character_connections()
 	mountTransitionCollisionToken += 1
 	table.clear(mountTransitionCollisionStates)
 	clear_local_rider_animation_state()
@@ -2045,7 +1847,6 @@ localPlayer.CharacterRemoving:Connect(function()
 end)
 
 localPlayer.CharacterAdded:Connect(function()
-	watch_stable_mount_prompt_tools(localPlayer.Character)
 	clear_local_rider_animation_state()
 	preload_local_rider_animations()
 	task.defer(function()
@@ -2120,10 +1921,10 @@ Net.Event.HorseMountState:Connect(function(payload)
 				restore_character_collisions_after_failed_mount()
 			end
 		end)
-		set_stable_mount_prompts_enabled(false)
 	elseif payload.Kind == "Mounted" and payload.State then
 		sync_mount_state_from_server(payload.State)
 	elseif payload.Kind == "Dismounting" then
+		dismountStopStartedAt = nil
 		if mountedState.Active then
 			local now = Workspace:GetServerTimeNow()
 			local transitionDuration = payload.Duration
@@ -2175,9 +1976,6 @@ Net.Event.HorseMountState:Connect(function(payload)
 	end
 end)
 
-plotValue:GetPropertyChangedSignal("Value"):Connect(watch_stable_mount_prompt_horses)
-watch_stable_mount_prompt_horses()
-watch_stable_mount_prompt_tools(localPlayer.Character)
 preload_local_rider_animations()
 
 task.spawn(function()
@@ -2211,6 +2009,23 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	end
 
 	update_local_mount_prediction(deltaTime)
+	if dismountStopStartedAt ~= nil and not requestInFlight then
+		local elapsed: number = os.clock() - dismountStopStartedAt
+		local stopThreshold: number = math.max(
+			tonumber(HorseMountConfig.HorseDismountStopSpeedThreshold) or 0.2,
+			0
+		)
+		local timeoutSeconds: number = math.max(
+			tonumber(HorseMountConfig.HorseDismountStopTimeoutSeconds) or 2.4,
+			0.1
+		)
+		if (not localPrediction.JumpAirborne and math.abs(localPrediction.CurrentSpeed) <= stopThreshold)
+			or elapsed >= timeoutSeconds
+		then
+			requestInFlight = true
+			task.spawn(perform_dismount_request)
+		end
+	end
 	update_local_horse_animation()
 	update_mount_movement_sound()
 

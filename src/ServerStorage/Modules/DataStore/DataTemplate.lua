@@ -79,6 +79,7 @@ local ProfileTemplate = {
 		GenericCounts = {},
 		HotbarItemIds = {},
 		HotbarGenericToolNames = {},
+		HotbarOrder = {},
 		HotbarLoadoutInitialized = false,
 	},
 
@@ -88,6 +89,7 @@ local ProfileTemplate = {
 		HorseSlots = defaultHorseSlots,
 		HayBalesPlaced = 0,
 		WaterTankFilled = false,
+		WellWaterReadyAt = 0,
 		ActiveStyleId = "Default",
 		Upgrades = {},
 		PlacedDecor = {},
