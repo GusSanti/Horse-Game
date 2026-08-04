@@ -5,6 +5,7 @@ local Workspace = game:GetService("Workspace")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Dictionary = Modules:WaitForChild("Dictionary")
+local GameModules = Modules:WaitForChild("Game")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
@@ -19,9 +20,17 @@ local HorseMountCharacter = require(HorseModules:WaitForChild("HorseMountCharact
 local HorseMountGeometry = require(HorseModules:WaitForChild("HorseMountGeometry"))
 local HorseRoamingService = require(HorseModules:WaitForChild("HorseRoamingService"))
 local HorseService = require(HorseModules:WaitForChild("HorseService"))
+local HorseMountDomain = require(HorseModules:WaitForChild("Mount"))
+local HorseMountAssembly = HorseMountDomain.Assembly
+local HorseMountBindings = HorseMountDomain.Bindings
+local HorseMountInputState = HorseMountDomain.InputState
+local HorseRigAdapter = HorseMountDomain.RigAdapter
+local TransactionRegistry = HorseMountDomain.TransactionRegistry
+local HorseMovement = require(
+	GameModules:WaitForChild("Horse"):WaitForChild("Mount"):WaitForChild("Movement")
+)
+local HorseMovementState = HorseMovement.StateMachine
 
-local HorseMountAction = Net.Function.HorseMountAction
-local HorseMountInput = Net.Event.HorseMountInput
 local HorseMountState = Net.Event.HorseMountState
 
 local PLOT_VALUE_NAME = ToolDictionary.PlotValueName
@@ -31,14 +40,9 @@ local HORSE_ID_ATTRIBUTE = ToolDictionary.HorseIdAttribute
 local MOUNTED_USER_ID_ATTRIBUTE = ToolDictionary.MountedUserIdAttribute
 
 local MOUNTED_VISUALS_FOLDER_NAME = "MountedHorseVisuals"
-local MOUNT_ROOT_NAME = "HorseMountRoot"
-local MOUNT_SEAT_NAME = "HorseMountSeat"
+local MOUNT_ROOT_NAME = HorseMountAssembly.Names.Root
+local MOUNT_SEAT_NAME = HorseMountAssembly.Names.Seat
 local MOUNT_RIDER_WELD_NAME = "HorseMountRiderWeld"
-local MOUNT_DRIVER_ATTACHMENT_NAME = "HorseMountDriverAttachment"
-local MOUNT_LINEAR_VELOCITY_NAME = "HorseMountLinearVelocity"
-local MOUNT_ALIGN_ORIENTATION_NAME = "HorseMountAlignOrientation"
-local MOUNT_ANTIGRAVITY_ATTACHMENT_NAME = "HorseMountAntiGravityAttachment"
-local MOUNT_ANTIGRAVITY_FORCE_NAME = "HorseMountAntiGravityForce"
 local MOUNT_DEBUG_ENABLED = false
 
 local MOUNT_DISABLED_STATES = {
@@ -51,10 +55,10 @@ local MOUNT_DISABLED_STATES = {
 
 local HorseMountService = {}
 
-local initialized = false
+local serviceTrove = nil
 local activeMountsByPlayer = {}
-local preparingMountsByPlayer = {}
-local playerConnections = {}
+local dismountingMountsByPlayer = {}
+local mountTransactions = TransactionRegistry.new()
 local begin_mount_jump
 local end_mount_jump
 
@@ -129,23 +133,6 @@ local function get_character_parts(player)
 	end
 
 	return character, humanoid, rootPart
-end
-
-local function get_visual_base_parts(horseVisual)
-	local baseParts = {}
-
-	if horseVisual:IsA("BasePart") then
-		baseParts[#baseParts + 1] = horseVisual
-		return baseParts
-	end
-
-	for _, descendant in ipairs(horseVisual:GetDescendants()) do
-		if descendant:IsA("BasePart") then
-			baseParts[#baseParts + 1] = descendant
-		end
-	end
-
-	return baseParts
 end
 
 local function disable_horse_transition_collisions(baseParts)
@@ -410,6 +397,7 @@ local function build_horse_summary(horse)
 			TrotSpeed = movement.TrotSpeed or 18,
 			CanterSpeed = movement.CanterSpeed or 22,
 			SprintSpeed = movement.SprintSpeed or 26,
+			Acceleration = movement.Acceleration or 0.8,
 			TurnRate = movement.TurnRate or 0.8,
 			Jump = movement.Jump or HorseMountConfig.HorseJumpBaseStat or 0.78,
 		},
@@ -474,22 +462,6 @@ local function clear_visual_mount_marker(horseVisual)
 end
 
 
-local function get_mount_parent(horseVisual)
-	if horseVisual:IsA("Model") then
-		return horseVisual
-	end
-
-	return horseVisual.Parent
-end
-
-local function create_weld(part0, part1, parent)
-	local weld = Instance.new("WeldConstraint")
-	weld.Part0 = part0
-	weld.Part1 = part1
-	weld.Parent = parent or part0
-	return weld
-end
-
 local function create_offset_weld(part0, part1, c0, c1, parent)
 	local weld = Instance.new("Weld")
 	weld.Part0 = part0
@@ -545,47 +517,6 @@ local function stabilize_mount_physics(mountState)
 	zero_assembly_velocity(mountState and mountState.RootPart)
 end
 
-local function create_anti_gravity_force(mountRoot)
-	local attachment = Instance.new("Attachment")
-	attachment.Name = MOUNT_ANTIGRAVITY_ATTACHMENT_NAME
-	attachment.Parent = mountRoot
-
-	local vectorForce = Instance.new("VectorForce")
-	vectorForce.Name = MOUNT_ANTIGRAVITY_FORCE_NAME
-	vectorForce.ApplyAtCenterOfMass = true
-	vectorForce.RelativeTo = Enum.ActuatorRelativeTo.World
-	vectorForce.Attachment0 = attachment
-	vectorForce.Parent = mountRoot
-	return vectorForce
-end
-
-local function create_driver_constraints(mountRoot, initialRootCFrame)
-	local attachment = Instance.new("Attachment")
-	attachment.Name = MOUNT_DRIVER_ATTACHMENT_NAME
-	attachment.Parent = mountRoot
-
-	local linearVelocity = Instance.new("LinearVelocity")
-	linearVelocity.Name = MOUNT_LINEAR_VELOCITY_NAME
-	linearVelocity.Attachment0 = attachment
-	linearVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
-	linearVelocity.VectorVelocity = Vector3.zero
-	linearVelocity.MaxForce = HorseMountConfig.MountLinearMaxForce or 1000000
-	linearVelocity.Parent = mountRoot
-
-	local alignOrientation = Instance.new("AlignOrientation")
-	alignOrientation.Name = MOUNT_ALIGN_ORIENTATION_NAME
-	alignOrientation.Attachment0 = attachment
-	alignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-	alignOrientation.CFrame = initialRootCFrame.Rotation
-	alignOrientation.MaxTorque = HorseMountConfig.MountAlignMaxTorque or 1000000
-	alignOrientation.MaxAngularVelocity = HorseMountConfig.MountAlignMaxAngularVelocity or 8
-	alignOrientation.Responsiveness = HorseMountConfig.MountAlignResponsiveness or 18
-	alignOrientation.RigidityEnabled = false
-	alignOrientation.Parent = mountRoot
-
-	return attachment, linearVelocity, alignOrientation
-end
-
 local function update_anti_gravity_force(mountState)
 	local mountRoot = mountState and mountState.MountRoot
 	local antiGravityForce = mountState and mountState.AntiGravityForce
@@ -604,64 +535,6 @@ local function assign_network_owner_to_mount(mountState)
 	-- Every welded horse part belongs to the same physics assembly. Assigning
 	-- only its root avoids repeatedly reevaluating ownership for every visual part.
 	assign_network_owner(mountState.MountRoot, mountState.Player)
-end
-
-local function create_mount_assembly(player, horseVisual, baseParts, seatOffset, initialRootCFrame)
-	local mountParent = get_mount_parent(horseVisual)
-	if not mountParent then
-		return nil, nil, nil, nil, nil, nil, nil, nil
-	end
-
-	local mountRoot = Instance.new("Part")
-	mountRoot.Name = MOUNT_ROOT_NAME
-	mountRoot.Transparency = 1
-	mountRoot.Size = Vector3.new(2.4, 2.4, 2.4)
-	mountRoot.Anchored = false
-	mountRoot.CanCollide = false
-	mountRoot.CanQuery = false
-	mountRoot.CanTouch = false
-	mountRoot.CFrame = initialRootCFrame
-	mountRoot.Parent = mountParent
-
-	local mountSeat = Instance.new("Seat")
-	mountSeat.Name = MOUNT_SEAT_NAME
-	mountSeat.Size = HorseMountConfig.SeatSize
-	mountSeat.Transparency = 1
-	mountSeat.Anchored = false
-	mountSeat.CanCollide = false
-	mountSeat.CanQuery = false
-	mountSeat.CanTouch = false
-	mountSeat.CFrame = initialRootCFrame * build_horizontal_seat_offset(seatOffset)
-	mountSeat.Parent = mountParent
-
-	local welds = {
-		create_weld(mountRoot, mountSeat, mountRoot),
-	}
-
-	local mountParts = {
-		mountRoot,
-		mountSeat,
-	}
-
-	for _, basePart in ipairs(baseParts) do
-		basePart.Massless = true
-		basePart.Anchored = false
-		basePart.CanCollide = false
-		basePart.CanQuery = false
-		basePart.CanTouch = false
-		welds[#welds + 1] = create_weld(mountRoot, basePart, mountRoot)
-		mountParts[#mountParts + 1] = basePart
-	end
-
-	if horseVisual:IsA("Model") then
-		horseVisual.PrimaryPart = mountRoot
-	end
-
-	local antiGravityForce = create_anti_gravity_force(mountRoot)
-	local driverAttachment, linearVelocity, alignOrientation = create_driver_constraints(mountRoot, initialRootCFrame)
-	antiGravityForce.Force = Vector3.new(0, mountRoot.AssemblyMass * Workspace.Gravity, 0)
-	assign_network_owner(mountRoot, player)
-	return mountRoot, mountSeat, welds, antiGravityForce, mountParts, driverAttachment, linearVelocity, alignOrientation
 end
 
 local function destroy_instances(instances)
@@ -702,7 +575,7 @@ local function get_rear_hoof_nodes(horseVisual)
 		end
 	end
 
-	for _, part in ipairs(get_visual_base_parts(horseVisual)) do
+	for _, part in ipairs(HorseRigAdapter.GetBaseParts(horseVisual)) do
 		partNodes[#partNodes + 1] = part
 	end
 
@@ -845,6 +718,10 @@ local function cleanup_mount_horse(mountState, options)
 	if not mountState then
 		return
 	end
+	if mountState.HorseCleanupCompleted == true then
+		return
+	end
+	mountState.HorseCleanupCompleted = true
 	options = options or {}
 
 	destroy_instances(mountState.DustResources)
@@ -901,11 +778,23 @@ end
 local function begin_dismount_transition(player, reason)
 	local mountState = activeMountsByPlayer[player]
 	if not mountState then
-		send_unmounted_state(player, reason)
+		if mountTransactions:GetPhase(player) ~= "Dismounting" then
+			send_unmounted_state(player, reason)
+		end
+		return nil
+	end
+	if not mountTransactions:Transition(
+		player,
+		mountState.TransactionToken,
+		"Mounted",
+		"Dismounting"
+	) then
+		warn(string.format("[HorseMountService] Refused invalid dismount transition for %s", player.Name))
 		return nil
 	end
 
 	activeMountsByPlayer[player] = nil
+	dismountingMountsByPlayer[player] = mountState
 
 	local dismountCFrame = nil
 	if mountState.MountRoot and mountState.MountRoot.Parent then
@@ -1028,6 +917,10 @@ end_mount_jump = function(mountState)
 end
 
 send_unmounted_state = function(player, reason)
+	if not player or player.Parent ~= Players then
+		return
+	end
+
 	HorseMountState:Fire(player, {
 		Kind = "Unmounted",
 		Reason = reason or "Unmounted",
@@ -1113,6 +1006,7 @@ local function clear_mount_state(player, reason, options)
 
 	options = options or {}
 	activeMountsByPlayer[player] = nil
+	mountTransactions:Finish(player, mountState.TransactionToken)
 
 	local dismountCFrame = nil
 	if options.SkipCharacterPlacement ~= true and mountState.MountRoot and mountState.MountRoot.Parent then
@@ -1196,6 +1090,15 @@ local function update_observed_mount_speed(mountState, deltaTime)
 	end
 
 	local position = mountRoot.Position
+	local assemblyVelocity = mountRoot.AssemblyLinearVelocity
+	local planarVelocity = Vector3.new(assemblyVelocity.X, 0, assemblyVelocity.Z)
+	local lookVector = mountRoot.CFrame.LookVector
+	local planarLook = Vector3.new(lookVector.X, 0, lookVector.Z)
+	if planarLook.Magnitude > 0.001 then
+		mountState.ObservedSignedSpeed = planarVelocity:Dot(planarLook.Unit)
+	else
+		mountState.ObservedSignedSpeed = 0
+	end
 	local lastPosition = mountState.LastPosition
 	mountState.LastPosition = position
 	mountState.SpeedSampleReady = false
@@ -1220,6 +1123,32 @@ local function update_observed_mount_speed(mountState, deltaTime)
 	mountState.SpeedWindowDistance = 0
 	mountState.SpeedWindowSeconds = 0
 	mountState.SpeedSampleReady = true
+end
+
+local function update_movement_ack(mountState, deltaTime)
+	mountState.MovementAckElapsed = (mountState.MovementAckElapsed or 0) + math.max(deltaTime, 0)
+	local interval = math.max(tonumber(HorseMountConfig.HorseMovementAckIntervalSeconds) or 0.1, 0.05)
+	local processedSequence = mountState.LastProcessedInputSequence or 0
+	if mountState.MovementAckElapsed < interval
+		or processedSequence <= (mountState.LastAcknowledgedInputSequence or 0)
+	then
+		return
+	end
+
+	mountState.MovementAckElapsed %= interval
+	mountState.LastAcknowledgedInputSequence = processedSequence
+	local movement = mountState.HorseSummary and mountState.HorseSummary.Movement or {}
+	local observedSpeed = mountState.ObservedSignedSpeed or 0
+	local correctionRequired = mountState.SpeedCorrectionPending == true
+	local acknowledgedSpeed = if correctionRequired then 0 else observedSpeed
+	HorseMountState:Fire(mountState.Player, {
+		Kind = "MovementState",
+		LastProcessedSequence = processedSequence,
+		Speed = acknowledgedSpeed,
+		GaitMode = HorseMovementState.ClassifySpeed(acknowledgedSpeed, movement, false),
+		CorrectionRequired = correctionRequired,
+	})
+	mountState.SpeedCorrectionPending = false
 end
 
 local function get_mount_speed_ceiling(mountState)
@@ -1267,6 +1196,7 @@ local function enforce_mount_speed_limit(mountState, deltaTime)
 		mountRoot:PivotTo(mountState.LastValidCFrame)
 		mountState.LastPosition = mountState.LastValidCFrame.Position
 	end
+	mountState.SpeedCorrectionPending = true
 
 	mountState.SpeedViolations = (mountState.SpeedViolations or 0) + 1
 
@@ -1289,6 +1219,7 @@ local function update_mount(mountState, deltaTime)
 	if not enforce_mount_speed_limit(mountState, deltaTime) then
 		return false
 	end
+	update_movement_ack(mountState, deltaTime)
 
 	if mountState.IsJumping == true then
 		local autoClearAt = mountState.JumpAutoClearAt or 0
@@ -1306,7 +1237,9 @@ local function update_mount(mountState, deltaTime)
 	apply_mounted_humanoid_pose(mountState)
 	update_mount_animation_state(mountState)
 	update_horse_run_dust_anchors(mountState.DustAnchors)
-	set_horse_run_dust_enabled(mountState.DustEmitters, mountState.Sprinting and mountState.IsJumping ~= true)
+	local movement = mountState.HorseSummary and mountState.HorseSummary.Movement or {}
+	local gaitMode = HorseMovementState.ClassifySpeed(mountState.ObservedSignedSpeed or 0, movement, false)
+	set_horse_run_dust_enabled(mountState.DustEmitters, gaitMode == "Gallop" and mountState.IsJumping ~= true)
 	return true
 end
 
@@ -1355,10 +1288,12 @@ local function mount_player(player, payload)
 		}
 	end
 
-	if preparingMountsByPlayer[player] then
+	local transactionPhase = mountTransactions:GetPhase(player)
+	if transactionPhase and transactionPhase ~= "Mounted" then
 		return {
 			Success = false,
-			Code = "MountPreparationBusy",
+			Code = "MountBusy",
+			Phase = transactionPhase,
 		}
 	end
 
@@ -1390,6 +1325,9 @@ local function mount_player(player, payload)
 		clear_mount_state(player, "SwitchHorse", {
 			SkipCharacterPlacement = true,
 		})
+	elseif transactionPhase == "Mounted" then
+		-- Recover defensively if an interrupted legacy flow left only the lock.
+		mountTransactions:Cancel(player)
 	end
 
 	local horseVisual = find_live_horse_visual(player, horseId)
@@ -1427,15 +1365,30 @@ local function mount_player(player, payload)
 		end
 	end
 
-	local baseParts = get_visual_base_parts(horseVisual)
-	if #baseParts == 0 then
+	local horseRig, rigError = HorseRigAdapter.ResolveAndReport(horseVisual)
+	if not horseRig then
 		if isTemporaryVisual and horseVisual.Parent then
 			horseVisual:Destroy()
 		end
 
 		return {
 			Success = false,
-			Code = "HorseVisualMissing",
+			Code = rigError or "HorseRigInvalid",
+		}
+	end
+	local baseParts = horseRig.BaseParts
+
+	local initialTransactionPhase = mountAtHorse and "Preparing" or "Mounting"
+	local transactionToken, busyPhase = mountTransactions:TryBegin(player, initialTransactionPhase)
+	if not transactionToken then
+		if isTemporaryVisual and horseVisual.Parent then
+			horseVisual:Destroy()
+		end
+
+		return {
+			Success = false,
+			Code = "MountBusy",
+			Phase = busyPhase,
 		}
 	end
 
@@ -1443,11 +1396,6 @@ local function mount_player(player, payload)
 	local horseState = capture_horse_state(horseVisual, baseParts)
 	local wasRoaming = HorseRoamingService.IsRoaming(horseVisual)
 	if mountAtHorse then
-		local preparation = {
-			HorseId = horseId,
-		}
-		preparingMountsByPlayer[player] = preparation
-
 		local callSucceeded, prepared, prepareReason, preparedWasRoaming = pcall(
 			HorseRoamingService.PrepareForMount,
 			player,
@@ -1455,10 +1403,6 @@ local function mount_player(player, payload)
 			horseVisual,
 			character
 		)
-		if preparingMountsByPlayer[player] == preparation then
-			preparingMountsByPlayer[player] = nil
-		end
-
 		if callSucceeded then
 			wasRoaming = preparedWasRoaming == true
 		else
@@ -1473,6 +1417,7 @@ local function mount_player(player, payload)
 		end
 
 		if not prepared then
+			mountTransactions:Finish(player, transactionToken)
 			restore_horse_after_failed_mount(
 				player,
 				horseId,
@@ -1493,6 +1438,7 @@ local function mount_player(player, payload)
 			or currentRootPart ~= rootPart
 			or humanoid.Health <= 0
 		then
+			mountTransactions:Finish(player, transactionToken)
 			restore_horse_after_failed_mount(
 				player,
 				horseId,
@@ -1508,6 +1454,20 @@ local function mount_player(player, payload)
 		end
 
 		stableHorseRootCFrame = horseVisual:GetPivot()
+		if not mountTransactions:Transition(player, transactionToken, "Preparing", "Mounting") then
+			restore_horse_after_failed_mount(
+				player,
+				horseId,
+				horseVisual,
+				horseState,
+				isTemporaryVisual,
+				wasRoaming
+			)
+			return {
+				Success = false,
+				Code = "MountCancelled",
+			}
+		end
 	else
 		wasRoaming = HorseRoamingService.TakeControl(horseVisual, true)
 	end
@@ -1589,7 +1549,14 @@ local function mount_player(player, payload)
 	task.wait(mountDuration)
 
 	local currentCharacter, currentHumanoid, currentRootPart = get_character_parts(player)
-	if currentCharacter ~= character or currentHumanoid ~= humanoid or currentRootPart ~= rootPart or humanoid.Health <= 0 then
+	local transactionIsCurrent = mountTransactions:IsCurrent(player, transactionToken, "Mounting")
+	if not transactionIsCurrent
+		or currentCharacter ~= character
+		or currentHumanoid ~= humanoid
+		or currentRootPart ~= rootPart
+		or humanoid.Health <= 0
+	then
+		mountTransactions:Finish(player, transactionToken)
 		destroy_mount_animation_state(mountingAnimationState)
 		restore_character_state(character, humanoid, characterState)
 		restore_horse_after_failed_mount(
@@ -1603,7 +1570,7 @@ local function mount_player(player, payload)
 
 		return {
 			Success = false,
-			Code = "CharacterUnavailable",
+			Code = transactionIsCurrent and "CharacterUnavailable" or "MountCancelled",
 		}
 	end
 
@@ -1611,14 +1578,35 @@ local function mount_player(player, payload)
 	rootPart.AssemblyLinearVelocity = Vector3.zero
 	rootPart.AssemblyAngularVelocity = Vector3.zero
 
-	local mountRoot, mountSeat, horseWelds, antiGravityForce, mountParts, driverAttachment, linearVelocity, alignOrientation = create_mount_assembly(
-		player,
-		horseVisual,
-		baseParts,
-		seatOffset,
-		initialRootCFrame
+	local assemblySucceeded, mountAssembly = pcall(
+		HorseMountAssembly.Create,
+		horseRig,
+		build_horizontal_seat_offset(seatOffset),
+		initialRootCFrame,
+		{
+			SeatSize = HorseMountConfig.SeatSize,
+			LinearMaxForce = HorseMountConfig.MountLinearMaxForce or 1000000,
+			AlignMaxTorque = HorseMountConfig.MountAlignMaxTorque or 1000000,
+			AlignMaxAngularVelocity = HorseMountConfig.MountAlignMaxAngularVelocity or 8,
+			AlignResponsiveness = HorseMountConfig.MountAlignResponsiveness or 18,
+		}
 	)
-	if not mountRoot or not mountSeat then
+	if not assemblySucceeded or not mountAssembly then
+		if not assemblySucceeded then
+			warn(string.format(
+				"[HorseMountService] Failed to create mount assembly for %s: %s",
+				horseId,
+				tostring(mountAssembly)
+			))
+		end
+		local mountParent = horseVisual:IsA("Model") and horseVisual or horseVisual.Parent
+		if mountParent then
+			destroy_instances({
+				mountParent:FindFirstChild(MOUNT_SEAT_NAME),
+				mountParent:FindFirstChild(MOUNT_ROOT_NAME),
+			})
+		end
+		mountTransactions:Finish(player, transactionToken)
 		destroy_mount_animation_state(mountingAnimationState)
 		restore_character_state(character, humanoid, characterState)
 		restore_horse_after_failed_mount(
@@ -1632,7 +1620,28 @@ local function mount_player(player, payload)
 
 		return {
 			Success = false,
-			Code = "HorseVisualMissing",
+			Code = assemblySucceeded and "HorseVisualMissing" or "HorseAssemblyFailed",
+		}
+	end
+
+	local mountRoot = mountAssembly.Root
+	local mountSeat = mountAssembly.Seat
+	if not mountTransactions:Transition(player, transactionToken, "Mounting", "Mounted") then
+		destroy_instances(mountAssembly.Welds)
+		destroy_instances({ mountSeat, mountRoot })
+		destroy_mount_animation_state(mountingAnimationState)
+		restore_character_state(character, humanoid, characterState)
+		restore_horse_after_failed_mount(
+			player,
+			horseId,
+			horseVisual,
+			horseState,
+			isTemporaryVisual,
+			wasRoaming
+		)
+		return {
+			Success = false,
+			Code = "MountCancelled",
 		}
 	end
 
@@ -1643,14 +1652,16 @@ local function mount_player(player, payload)
 		HorseVisual = horseVisual,
 		HorseState = horseState,
 		IsTemporaryVisual = isTemporaryVisual,
-		HorseWelds = horseWelds,
-		MountParts = mountParts,
+		HorseRig = horseRig,
+		HorseWelds = mountAssembly.Welds,
+		FallbackWeldParts = mountAssembly.FallbackWeldParts,
 		MountRoot = mountRoot,
 		MountSeat = mountSeat,
-		DriverAttachment = driverAttachment,
-		LinearVelocity = linearVelocity,
-		AlignOrientation = alignOrientation,
-		AntiGravityForce = antiGravityForce,
+		DriverAttachment = mountAssembly.DriverAttachment,
+		LinearVelocity = mountAssembly.LinearVelocity,
+		AlignOrientation = mountAssembly.AlignOrientation,
+		AntiGravityForce = mountAssembly.AntiGravityForce,
+		TransactionToken = transactionToken,
 		RiderWeld = nil,
 		Character = character,
 		Humanoid = humanoid,
@@ -1675,6 +1686,11 @@ local function mount_player(player, payload)
 		JumpStartedAt = 0,
 		JumpExpectedAirSeconds = 0,
 		LastJumpChargeAlpha = 0,
+		LastProcessedInputSequence = 0,
+		LastAcknowledgedInputSequence = 0,
+		MovementAckElapsed = 0,
+		ObservedSignedSpeed = 0,
+		ClientGaitMode = "Idle",
 	}
 	mountState.DustResources, mountState.DustEmitters, mountState.DustAnchors = create_horse_run_dust(horseVisual)
 
@@ -1752,13 +1768,16 @@ local function dismount_player(player)
 			TargetCFrame = mountState.DismountCFrame,
 		})
 
-		task.spawn(function()
+		local transitionThread = task.spawn(function()
 			local character = mountState.Character
 			local humanoid = mountState.Humanoid
 			local rootPart = mountState.RootPart
 
 			if releaseDelay > 0 then
 				task.wait(releaseDelay)
+			end
+			if mountState.DismountCancelled == true then
+				return
 			end
 
 			if character and character.Parent and humanoid and humanoid.Parent and rootPart and rootPart.Parent and humanoid.Health > 0 then
@@ -1769,6 +1788,9 @@ local function dismount_player(player)
 
 				if moveDuration > 0 then
 					task.wait(moveDuration)
+				end
+				if mountState.DismountCancelled == true then
+					return
 				end
 
 				if character.Parent and rootPart.Parent and mountState.DismountCFrame then
@@ -1783,6 +1805,9 @@ local function dismount_player(player)
 			if groundHoldDuration > 0 then
 				task.wait(groundHoldDuration)
 			end
+			if mountState.DismountCancelled == true then
+				return
+			end
 
 			stop_mount_animations(mountState)
 			if character and character.Parent and humanoid and humanoid.Parent then
@@ -1794,9 +1819,16 @@ local function dismount_player(player)
 				ReleaseToRoam = remainsFree,
 				ClampIfTooFar = remainsFree,
 			})
+			if dismountingMountsByPlayer[player] == mountState then
+				dismountingMountsByPlayer[player] = nil
+			end
+			mountTransactions:Finish(player, mountState.TransactionToken)
 			RunService.Heartbeat:Wait()
 			send_unmounted_state(player, "Dismounted")
 		end)
+		if serviceTrove then
+			serviceTrove:Add(transitionThread)
+		end
 	end
 
 	return {
@@ -1827,141 +1859,129 @@ local function get_player_mount_state(player)
 	}
 end
 
-local function disconnect_player_connections(player)
-	local connections = playerConnections[player]
-	if not connections then
+local function cancel_pending_mount(player, reason)
+	local phase = mountTransactions:GetPhase(player)
+	if phase ~= "Preparing" and phase ~= "Mounting" then
+		return false
+	end
+
+	mountTransactions:Cancel(player)
+	send_unmounted_state(player, reason)
+	return true
+end
+
+local function force_clear_dismounting_state(player)
+	local mountState = dismountingMountsByPlayer[player]
+	if not mountState then
+		return false
+	end
+
+	dismountingMountsByPlayer[player] = nil
+	mountState.DismountCancelled = true
+	mountTransactions:Finish(player, mountState.TransactionToken)
+	stop_mount_animations(mountState)
+	destroy_instances({ mountState.RiderWeld })
+	if mountState.Character and mountState.Character.Parent and mountState.Humanoid and mountState.Humanoid.Parent then
+		restore_character_state(mountState.Character, mountState.Humanoid, mountState.CharacterState)
+	end
+	cleanup_mount_horse(mountState, {
+		ReleaseToRoam = false,
+	})
+	return true
+end
+
+local function handle_character_changed(player, reason)
+	if activeMountsByPlayer[player] then
+		clear_mount_state(player, reason, {
+			SkipCharacterPlacement = true,
+		})
 		return
 	end
 
-	for _, connection in ipairs(connections) do
-		connection:Disconnect()
-	end
-
-	playerConnections[player] = nil
+	cancel_pending_mount(player, reason)
 end
 
-local function bind_player(player)
-	disconnect_player_connections(player)
-
-	local connections = {}
-	playerConnections[player] = connections
-
-	connections[#connections + 1] = player.CharacterAdded:Connect(function()
-		clear_mount_state(player, "CharacterChanged", {
-			SkipCharacterPlacement = true,
-		})
-	end)
-
-	connections[#connections + 1] = player.CharacterRemoving:Connect(function()
-		clear_mount_state(player, "CharacterRemoving", {
-			SkipCharacterPlacement = true,
-		})
-	end)
-end
-
-function HorseMountService.Init()
-	if initialized then
-		return
-	end
-
-	for _, player in ipairs(Players:GetPlayers()) do
-		bind_player(player)
-	end
-
-	Players.PlayerAdded:Connect(bind_player)
-	Players.PlayerRemoving:Connect(function(player)
-		preparingMountsByPlayer[player] = nil
+local function handle_player_removing(player)
+	if activeMountsByPlayer[player] then
 		clear_mount_state(player, "PlayerRemoving", {
 			SkipCharacterPlacement = true,
 			ReturnToStable = true,
 		})
-		HorseRoamingService.ReturnPlayerHorsesToStable(player)
+	else
+		cancel_pending_mount(player, "PlayerRemoving")
+	end
+	force_clear_dismounting_state(player)
+	HorseRoamingService.ReturnPlayerHorsesToStable(player)
 
-		local plot = get_player_plot(player)
-		if plot then
-			HorseService.SyncPlotHorses(player, plot)
+	local plot = get_player_plot(player)
+	if plot then
+		HorseService.SyncPlotHorses(player, plot)
+	end
+end
+
+local function handle_mount_input(player, payload)
+	local mountState = activeMountsByPlayer[player]
+	if not mountState then
+		return
+	end
+
+	HorseMountInputState.Apply(mountState, payload, begin_mount_jump, end_mount_jump)
+end
+
+local function update_active_mounts(deltaTime)
+	local playersToUnmount = {}
+	for player, mountState in pairs(activeMountsByPlayer) do
+		if not validate_mount_state(mountState)
+			or mountState.Humanoid.Health <= 0
+			or not update_mount(mountState, deltaTime)
+		then
+			playersToUnmount[#playersToUnmount + 1] = player
 		end
-		disconnect_player_connections(player)
-	end)
+	end
 
-	HorseMountAction:Respond(function(player, payload)
-		if type(payload) ~= "table" then
-			return {
-				Success = false,
-				Code = "InvalidPayload",
-			}
-		end
+	for _, player in ipairs(playersToUnmount) do
+		clear_mount_state(player, "MountInvalid", {
+			SkipCharacterPlacement = true,
+		})
+	end
+end
 
-		if payload.Action == "Mount" then
-			return mount_player(player, payload)
-		end
+function HorseMountService.Init()
+	if serviceTrove then
+		return
+	end
 
-		if payload.Action == "Dismount" then
-			return dismount_player(player)
-		end
+	serviceTrove = HorseMountBindings.Bind({
+		Mount = mount_player,
+		Dismount = dismount_player,
+		GetState = get_player_mount_state,
+		Input = handle_mount_input,
+		CharacterChanged = handle_character_changed,
+		PlayerRemoving = handle_player_removing,
+		Heartbeat = update_active_mounts,
+	})
+end
 
-		if payload.Action == "GetState" then
-			return get_player_mount_state(player)
-		end
+function HorseMountService.Destroy()
+	if not serviceTrove then
+		return
+	end
 
-		return {
-			Success = false,
-			Code = "UnknownAction",
-		}
-	end)
+	serviceTrove:Destroy()
+	serviceTrove = nil
 
-	HorseMountInput:Connect(function(player, payload)
-		local mountState = activeMountsByPlayer[player]
-		if not mountState or type(payload) ~= "table" then
-			return
-		end
+	for player in table.clone(activeMountsByPlayer) do
+		clear_mount_state(player, "ServiceDestroy", {
+			SkipCharacterPlacement = true,
+			ReturnToStable = true,
+		})
+	end
+	for player in table.clone(dismountingMountsByPlayer) do
+		force_clear_dismounting_state(player)
+	end
 
-		if is_finite_number(payload.MoveX) then
-			mountState.InputX = math.clamp(payload.MoveX, -1, 1)
-		end
-
-		if is_finite_number(payload.MoveZ) then
-			mountState.InputZ = math.clamp(payload.MoveZ, -1, 1)
-		end
-
-		if type(payload.Sprinting) == "boolean" then
-			mountState.Sprinting = payload.Sprinting
-		end
-
-		if is_finite_number(payload.CameraYaw) then
-			mountState.CameraYaw = payload.CameraYaw
-		end
-
-		if payload.JumpLanded == true then
-			end_mount_jump(mountState)
-		end
-
-		if payload.JumpRequested == true then
-			begin_mount_jump(mountState, payload.JumpChargeAlpha)
-		end
-	end)
-
-	RunService.Heartbeat:Connect(function(deltaTime)
-		local playersToUnmount = {}
-
-		for player, mountState in pairs(activeMountsByPlayer) do
-			if not validate_mount_state(mountState) then
-				playersToUnmount[#playersToUnmount + 1] = player
-			elseif mountState.Humanoid.Health <= 0 then
-				playersToUnmount[#playersToUnmount + 1] = player
-			elseif not update_mount(mountState, deltaTime) then
-				playersToUnmount[#playersToUnmount + 1] = player
-			end
-		end
-
-		for _, player in ipairs(playersToUnmount) do
-			clear_mount_state(player, "MountInvalid", {
-				SkipCharacterPlacement = true,
-			})
-		end
-	end)
-
-	initialized = true
+	mountTransactions:Clear()
+	HorseRigAdapter.ClearReportedDiagnostics()
 end
 
 return HorseMountService

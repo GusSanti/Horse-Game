@@ -1,9 +1,14 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
+local GameModules = Modules:WaitForChild("Game")
 local GameData = Modules:WaitForChild("GameData")
 
 local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
+local HorseMovement = require(
+	GameModules:WaitForChild("Horse"):WaitForChild("Mount"):WaitForChild("Movement")
+)
+local HorseMovementState = HorseMovement.StateMachine
 
 local HorseMountAnimation = {}
 
@@ -96,7 +101,7 @@ local function load_animation_track(animator, animationId, priority, looped)
 	end)
 
 	if not success or not track then
-		warn(("[HorseMountAnimation] nao foi possivel carregar %s: %s"):format(
+		warn(("[HorseMountAnimation] could not load %s: %s"):format(
 			normalizedAnimationId,
 			tostring(track)
 		))
@@ -197,12 +202,15 @@ local function is_mount_moving(mountState)
 		return false
 	end
 
-	local inputMagnitude = math.sqrt((mountState.InputX * mountState.InputX) + (mountState.InputZ * mountState.InputZ))
-	return mountState.Sprinting == true or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
+	return math.abs(mountState.ObservedSignedSpeed or 0) > (HorseMountConfig.ForwardInputDeadzone or 0.05)
 end
 
 local function is_mount_running(mountState)
-	return mountState and mountState.Sprinting == true or false
+	if not mountState then
+		return false
+	end
+	local movement = mountState.HorseSummary and mountState.HorseSummary.Movement or {}
+	return HorseMovementState.ClassifySpeed(mountState.ObservedSignedSpeed or 0, movement, false) == "Gallop"
 end
 
 local function set_horse_animation_mode(animationState, mode)
@@ -413,6 +421,18 @@ function HorseMountAnimation.updateMountAnimationState(mountState)
 	end
 
 	set_horse_animation_mode(animationState, mode)
+	if mode ~= "Idle" then
+		local movement = mountState.HorseSummary and mountState.HorseSummary.Movement or {}
+		local referenceSpeed = if mode == "Run"
+			then (movement.SprintSpeed or 26)
+			else (movement.WalkSpeed or 14)
+		local playbackSpeed = math.clamp(
+			math.abs(mountState.ObservedSignedSpeed or 0) / math.max(referenceSpeed, 0.01),
+			0.7,
+			1.25
+		)
+		adjust_track_speed(if mode == "Run" then animationState.HorseRunTrack else animationState.HorseWalkTrack, playbackSpeed)
+	end
 end
 
 function HorseMountAnimation.startMountAnimations(mountState)

@@ -9,6 +9,7 @@ local Workspace = game:GetService("Workspace")
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local ClientModules = Modules:WaitForChild("Client")
 local Dictionary = Modules:WaitForChild("Dictionary")
+local GameModules = Modules:WaitForChild("Game")
 local GameData = Modules:WaitForChild("GameData")
 local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
@@ -21,6 +22,11 @@ local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseEquipmentUtility = require(Utility:WaitForChild("Horse"):WaitForChild("HorseEquipmentUtility"))
 local SoundUtility = require(Utility:WaitForChild("SoundUtility"))
 local HorseMountCamera = require(HudModules:WaitForChild("HorseMountCamera"))
+local HorseMovement = require(
+	GameModules:WaitForChild("Horse"):WaitForChild("Mount"):WaitForChild("Movement")
+)
+local HorseGroundProbe = HorseMovement.GroundProbe
+local HorseMovementState = HorseMovement.StateMachine
 
 local localPlayer = Players.LocalPlayer
 local plotValue = localPlayer:WaitForChild(ToolDictionary.PlotValueName)
@@ -39,8 +45,9 @@ local MOUNT_RUN_PLAYBACK_SPEED = 1
 local MOUNT_MOVEMENT_VOLUME = 0.45
 local LOCAL_MOUNT_SMOOTHNESS = 26
 local DISMOUNT_ACTION_NAME = "HorseMountDismount"
-local JUMP_ACTION_NAME = "HorseMountJumpCharge"
+local JUMP_ACTION_NAME = "HorseMountJump"
 local SPRINT_ACTION_NAME = "HorseMountSprint"
+local REAR_ACTION_NAME = "HorseMountRear"
 local STABLE_MOUNT_PROMPT_ATTACHMENT_NAME = "StableMountPromptAttachment"
 
 local HORSE_FOLDER_NAME = ToolDictionary.HorseFolderName
@@ -62,16 +69,12 @@ local localPrediction = {
 	AlignOrientation = nil,
 	CurrentYaw = 0,
 	CurrentSpeed = 0,
-	ForwardHeldTime = 0,
 	TerrainPitch = 0,
 	TerrainRoll = 0,
 	LastMoveDirection = nil,
 	GroundOffset = 0,
 	Position = nil,
 	Movement = nil,
-	JumpCharging = false,
-	JumpChargeStartedAt = 0,
-	JumpChargeAlpha = 0,
 	JumpPendingRequest = nil,
 	JumpPendingLanded = false,
 	JumpVerticalVelocity = 0,
@@ -79,6 +82,11 @@ local localPrediction = {
 	JumpCooldownEndsAt = 0,
 	JumpStartedAt = 0,
 	JumpExpectedAirSeconds = 0,
+	HorizontalState = HorseMovementState.Create(),
+	GroundProbe = nil,
+	TurnLean = 0,
+	RearPitch = 0,
+	RearPendingRequest = false,
 }
 
 local mountedState = {
@@ -96,6 +104,8 @@ local lastSentMoveX = 0
 local lastSentMoveZ = 0
 local lastSentCameraYaw = 0
 local lastSentSprinting = false
+local inputSequence = 0
+local pendingInputs = {}
 local mountMovementSound = nil
 local stableMountPromptAttachments = {}
 local stableMountPromptConnections = {}
@@ -591,23 +601,9 @@ end
 
 local function build_angle_y(cframe) return math.atan2(-cframe.LookVector.X, -cframe.LookVector.Z) end
 
-local function build_yaw_from_direction(direction) return math.atan2(-direction.X, -direction.Z) end
-
 local function wrap_angle(angle) return math.atan2(math.sin(angle), math.cos(angle)) end
 
 local function is_finite_number(value) return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge end
-
-local function move_towards(current, target, maxDelta)
-	if math.abs(target - current) <= maxDelta then
-		return target
-	end
-
-	if target > current then
-		return current + maxDelta
-	end
-
-	return current - maxDelta
-end
 
 local function get_character_root_part()
 	local character = localPlayer.Character
@@ -954,14 +950,9 @@ local function update_local_rider_animation()
 		return
 	end
 
-	local moveX, moveZ = get_move_vector()
-	local inputMagnitude = math.sqrt((moveX * moveX) + (moveZ * moveZ))
-	local moving = (localPrediction.CurrentSpeed or 0) > 0.25
-		or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
-	local sprinting = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-		or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
-
-	set_local_rider_mode(moving and sprinting and "Ride" or "Idle")
+	local moving = math.abs(localPrediction.CurrentSpeed or 0) > 0.25
+	local galloping = localPrediction.HorizontalState.Mode == "Gallop"
+	set_local_rider_mode(moving and galloping and "Ride" or "Idle")
 end
 
 local function get_base_part_lowest_y(basePart)
@@ -1074,61 +1065,6 @@ local function resolve_ground_position(position, ignoreList, groundOffset)
 	end
 
 	return position
-end
-
-local function sample_ground_height(position, ignoreList)
-	local raycastParams = RaycastParams.new()
-	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	raycastParams.FilterDescendantsInstances = ignoreList
-	raycastParams.IgnoreWater = false
-
-	local origin = position + Vector3.new(0, HorseMountConfig.GroundProbeHeight, 0)
-	local direction = Vector3.new(0, -(HorseMountConfig.GroundProbeDistance + HorseMountConfig.GroundProbeHeight), 0)
-	local result = Workspace:Raycast(origin, direction, raycastParams)
-	return result and result.Position.Y or nil
-end
-
-local function resolve_ground_tilt(position, ignoreList, yaw)
-	local spacing = math.max(tonumber(HorseMountConfig.TerrainProbeSpacing) or 3, 0.5)
-	local yawCFrame = CFrame.Angles(0, yaw, 0)
-	local forward = yawCFrame.LookVector
-	local right = yawCFrame.RightVector
-
-	local frontHeight = sample_ground_height(position + (forward * spacing), ignoreList)
-	local backHeight = sample_ground_height(position - (forward * spacing), ignoreList)
-	local rightHeight = sample_ground_height(position + (right * spacing), ignoreList)
-	local leftHeight = sample_ground_height(position - (right * spacing), ignoreList)
-
-	local maxPitch = math.rad(math.max(tonumber(HorseMountConfig.MaxTerrainPitchDegrees) or 22, 0))
-	local maxRoll = math.rad(math.max(tonumber(HorseMountConfig.MaxTerrainRollDegrees) or 12, 0))
-	local span = spacing * 2
-
-	local pitchAngle = 0
-	if frontHeight and backHeight then
-		pitchAngle = math.clamp(math.atan2(frontHeight - backHeight, span), -maxPitch, maxPitch)
-	end
-
-	local rollAngle = 0
-	if rightHeight and leftHeight then
-		rollAngle = math.clamp(math.atan2(rightHeight - leftHeight, span), -maxRoll, maxRoll)
-	end
-
-	return pitchAngle, rollAngle
-end
-
-local function build_terrain_tilt(deltaTime, position, ignoreList, yaw)
-	local targetPitch = 0
-	local targetRoll = 0
-
-	if localPrediction.JumpAirborne ~= true and HorseMountConfig.StickMountedHorseToGround == true then
-		targetPitch, targetRoll = resolve_ground_tilt(position, ignoreList, yaw)
-	end
-
-	local blendAlpha = 1 - math.exp(-(HorseMountConfig.TerrainTiltResponsiveness or 8) * deltaTime)
-	localPrediction.TerrainPitch += (targetPitch - (localPrediction.TerrainPitch or 0)) * blendAlpha
-	localPrediction.TerrainRoll += (targetRoll - (localPrediction.TerrainRoll or 0)) * blendAlpha
-
-	return CFrame.Angles(localPrediction.TerrainPitch, 0, localPrediction.TerrainRoll)
 end
 
 local function find_local_horse_visual(horseId)
@@ -1353,6 +1289,7 @@ local function get_prediction_movement(horseId)
 		TrotSpeed = type(movement) == "table" and movement.TrotSpeed or 18,
 		CanterSpeed = type(movement) == "table" and movement.CanterSpeed or 22,
 		SprintSpeed = type(movement) == "table" and movement.SprintSpeed or 26,
+		Acceleration = type(movement) == "table" and movement.Acceleration or 0.8,
 		TurnRate = type(movement) == "table" and movement.TurnRate or 0.8,
 		Jump = type(movement) == "table" and movement.Jump or (HorseMountConfig.HorseJumpBaseStat or 0.78),
 	}
@@ -1407,24 +1344,8 @@ local function is_sprint_input_active()
 	) or false
 end
 
-local function clear_local_jump_charge()
-	localPrediction.JumpCharging = false
-	localPrediction.JumpChargeStartedAt = 0
-	localPrediction.JumpChargeAlpha = 0
-end
-
-local function get_local_jump_charge_alpha(now)
-	local minChargeSeconds = math.max(HorseMountConfig.HorseJumpChargeMinSeconds or 0.12, 0)
-	local maxChargeSeconds = math.max(HorseMountConfig.HorseJumpChargeMaxSeconds or 0.65, minChargeSeconds + 0.01)
-	local startedAt = localPrediction.JumpChargeStartedAt or 0
-	local elapsed = math.max(0, (now or os.clock()) - startedAt)
-	local clampedElapsed = math.clamp(elapsed, 0, maxChargeSeconds)
-	local chargeAlpha = math.clamp(
-		(clampedElapsed - minChargeSeconds) / math.max(maxChargeSeconds - minChargeSeconds, 0.001),
-		0,
-		1
-	)
-	return chargeAlpha, clampedElapsed
+local function is_gallop_active()
+	return mountedState.Active and localPrediction.HorizontalState.Mode == "Gallop"
 end
 
 local function get_local_jump_grounded_position()
@@ -1433,7 +1354,26 @@ local function get_local_jump_grounded_position()
 		return nil, nil, nil
 	end
 
-	local targetGroundOffset = get_target_ground_offset(localPrediction.GroundOffset, is_sprint_input_active())
+	local targetGroundOffset = get_target_ground_offset(
+		localPrediction.GroundOffset,
+		localPrediction.HorizontalState.Mode == "Gallop"
+	)
+	local groundProbe = localPrediction.GroundProbe
+	if groundProbe then
+		local sample = groundProbe:Update(
+			HorseMountConfig.HorseProbeIntervalSeconds or 0.05,
+			mountRoot.Position,
+			localPrediction.CurrentYaw,
+			localPrediction.GroundOffset
+		)
+		if sample.GroundY then
+			return horseVisual, mountRoot, Vector3.new(
+				mountRoot.Position.X,
+				sample.GroundY + targetGroundOffset + (HorseMountConfig.GroundClearance or 0),
+				mountRoot.Position.Z
+			)
+		end
+	end
 	local groundedPosition = resolve_ground_position(
 		mountRoot.Position,
 		{ horseVisual, localPlayer.Character },
@@ -1451,12 +1391,12 @@ local function is_local_mount_grounded()
 	return math.abs(mountRoot.Position.Y - groundedPosition.Y) <= (HorseMountConfig.HorseJumpGroundTolerance or 0.75)
 end
 
-local function can_begin_local_jump_charge(now)
+local function can_begin_local_jump(now)
 	if not mountedState.Active or mountedState.TransitionMode ~= nil then
 		return false
 	end
 
-	if localPrediction.JumpAirborne == true or localPrediction.JumpCharging == true then
+	if localPrediction.JumpAirborne == true then
 		return false
 	end
 
@@ -1485,34 +1425,22 @@ local function get_local_jump_expected_air_seconds(verticalVelocity)
 	return math.clamp(estimatedAirSeconds, 0.05, maxAirSeconds)
 end
 
-local function start_local_jump_charge()
+local function request_local_jump()
 	local now = os.clock()
-	if not can_begin_local_jump_charge(now) then
+	if math.abs(localPrediction.CurrentSpeed or 0)
+		<= (HorseMountConfig.HorseJumpDismountSpeedThreshold or 0.25)
+	then
+		task.defer(request_dismount)
 		return
 	end
 
-	localPrediction.JumpCharging = true
-	localPrediction.JumpChargeStartedAt = now
-	localPrediction.JumpChargeAlpha = 0
-end
-
-local function release_local_jump_charge()
-	if localPrediction.JumpCharging ~= true then
+	if not can_begin_local_jump(now) then
 		return
 	end
 
-	local now = os.clock()
-	local chargeAlpha, heldSeconds = get_local_jump_charge_alpha(now)
-	clear_local_jump_charge()
-
-	if heldSeconds < math.max(HorseMountConfig.HorseJumpChargeMinSeconds or 0.12, 0) then
-		return
-	end
-
-	if not can_begin_local_jump_charge(now) then
-		return
-	end
-
+	local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
+	local sprintSpeed = math.max(tonumber(movement.SprintSpeed) or 26, 0.01)
+	local chargeAlpha = math.clamp(math.abs(localPrediction.CurrentSpeed or 0) / sprintSpeed, 0, 1)
 	local takeoffVelocity = get_local_jump_takeoff_velocity(chargeAlpha)
 	localPrediction.JumpAirborne = true
 	localPrediction.JumpVerticalVelocity = takeoffVelocity
@@ -1526,20 +1454,12 @@ local function release_local_jump_charge()
 	send_mount_input(true)
 end
 
-local function cancel_local_jump_charge()
-	clear_local_jump_charge()
-end
-
 local function bind_jump_action()
 	ContextActionService:BindActionAtPriority(
 		JUMP_ACTION_NAME,
 		function(_, inputState)
 			if inputState == Enum.UserInputState.Begin then
-				start_local_jump_charge()
-			elseif inputState == Enum.UserInputState.End then
-				release_local_jump_charge()
-			elseif inputState == Enum.UserInputState.Cancel then
-				cancel_local_jump_charge()
+				request_local_jump()
 			end
 
 			return Enum.ContextActionResult.Sink
@@ -1554,7 +1474,39 @@ end
 
 local function unbind_jump_action()
 	ContextActionService:UnbindAction(JUMP_ACTION_NAME)
-	cancel_local_jump_charge()
+end
+
+local function request_local_rear()
+	if not mountedState.Active or mountedState.TransitionMode ~= nil or not is_local_mount_grounded() then
+		return
+	end
+
+	if HorseMovementState.RequestRear(localPrediction.HorizontalState, HorseMountConfig, os.clock()) then
+		localPrediction.CurrentSpeed = 0
+		localPrediction.RearPendingRequest = true
+		send_mount_input(true)
+	end
+end
+
+local function bind_rear_action()
+	ContextActionService:BindActionAtPriority(
+		REAR_ACTION_NAME,
+		function(_, inputState)
+			if inputState == Enum.UserInputState.Begin then
+				request_local_rear()
+			end
+			return Enum.ContextActionResult.Sink
+		end,
+		true,
+		3000,
+		Enum.KeyCode.J,
+		Enum.KeyCode.ButtonY
+	)
+	ContextActionService:SetTitle(REAR_ACTION_NAME, "Rear")
+end
+
+local function unbind_rear_action()
+	ContextActionService:UnbindAction(REAR_ACTION_NAME)
 end
 
 local function reset_local_prediction()
@@ -1565,16 +1517,12 @@ local function reset_local_prediction()
 	localPrediction.AlignOrientation = nil
 	localPrediction.CurrentYaw = mountedState.CameraYaw
 	localPrediction.CurrentSpeed = 0
-	localPrediction.ForwardHeldTime = 0
 	localPrediction.TerrainPitch = 0
 	localPrediction.TerrainRoll = 0
 	localPrediction.LastMoveDirection = nil
 	localPrediction.GroundOffset = 0
 	localPrediction.Position = nil
 	localPrediction.Movement = nil
-	localPrediction.JumpCharging = false
-	localPrediction.JumpChargeStartedAt = 0
-	localPrediction.JumpChargeAlpha = 0
 	localPrediction.JumpPendingRequest = nil
 	localPrediction.JumpPendingLanded = false
 	localPrediction.JumpVerticalVelocity = 0
@@ -1582,6 +1530,14 @@ local function reset_local_prediction()
 	localPrediction.JumpCooldownEndsAt = 0
 	localPrediction.JumpStartedAt = 0
 	localPrediction.JumpExpectedAirSeconds = 0
+	localPrediction.HorizontalState = HorseMovementState.Create()
+	if localPrediction.GroundProbe then
+		localPrediction.GroundProbe:Reset()
+	end
+	localPrediction.GroundProbe = nil
+	localPrediction.TurnLean = 0
+	localPrediction.RearPitch = 0
+	localPrediction.RearPendingRequest = false
 end
 
 local function stop_mount_movement_sound()
@@ -1624,7 +1580,7 @@ end
 
 local function update_mount_movement_sound()
 	local mountRoot = localPrediction.MountRoot
-	local currentSpeed = localPrediction.CurrentSpeed or 0
+	local currentSpeed = math.abs(localPrediction.CurrentSpeed or 0)
 	if not mountedState.Active or mountedState.TransitionMode ~= nil or not mountRoot or currentSpeed <= MOUNT_MOVEMENT_MIN_SPEED then
 		stop_mount_movement_sound()
 		return
@@ -1636,7 +1592,7 @@ local function update_mount_movement_sound()
 	end
 
 	local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
-	if is_sprint_input_active() then
+	if localPrediction.HorizontalState.Mode == "Gallop" then
 		sound.PlaybackSpeed = MOUNT_RUN_PLAYBACK_SPEED
 	else
 		local walkingSpeed = math.max(movement.WalkSpeed or 14, MOUNT_MOVEMENT_MIN_SPEED)
@@ -1665,10 +1621,18 @@ ensure_local_prediction = function()
 		localPrediction.AlignOrientation = nil
 		localPrediction.Position = nil
 		localPrediction.CurrentSpeed = 0
-		localPrediction.ForwardHeldTime = 0
 		localPrediction.LastMoveDirection = nil
 		localPrediction.GroundOffset = horseVisual and get_ground_offset(horseVisual) or 0
 		localPrediction.Movement = get_prediction_movement(mountedState.HorseId)
+		localPrediction.HorizontalState = HorseMovementState.Create()
+		localPrediction.TurnLean = 0
+		localPrediction.RearPitch = 0
+		localPrediction.GroundProbe = HorseGroundProbe.new(Workspace, HorseMountConfig)
+		local ignoreList = { horseVisual }
+		if localPlayer.Character then
+			ignoreList[#ignoreList + 1] = localPlayer.Character
+		end
+		localPrediction.GroundProbe:SetIgnore(ignoreList)
 	end
 
 	if not horseVisual then
@@ -1685,6 +1649,17 @@ ensure_local_prediction = function()
 			localPrediction.CurrentYaw = build_angle_y(mountRoot.CFrame)
 			localPrediction.Position = mountRoot.Position
 			localPrediction.LastMoveDirection = mountRoot.CFrame.LookVector
+			if localPrediction.GroundProbe then
+				local ignoreList = { horseVisual, mountRoot }
+				if localPlayer.Character then
+					ignoreList[#ignoreList + 1] = localPlayer.Character
+				end
+				local mountSeat = mountRoot.Parent and mountRoot.Parent:FindFirstChild(MOUNT_SEAT_NAME)
+				if mountSeat then
+					ignoreList[#ignoreList + 1] = mountSeat
+				end
+				localPrediction.GroundProbe:SetIgnore(ignoreList)
+			end
 		end
 	end
 
@@ -1708,137 +1683,90 @@ local function update_local_mount_prediction(deltaTime)
 	end
 
 	local movement = localPrediction.Movement or get_prediction_movement(mountedState.HorseId)
-	local currentYaw = localPrediction.CurrentYaw
-	local targetYaw = currentYaw
-	local turnRateAlpha = math.clamp((movement.TurnRate or 0.8) - 0.65, 0, 0.25) / 0.25
-	local maxTurnSpeedDegrees = HorseMountConfig.TurnSpeedBaseDegrees + (HorseMountConfig.TurnSpeedScaleDegrees * turnRateAlpha)
-	if localPrediction.JumpCharging == true then
-		localPrediction.JumpChargeAlpha = select(1, get_local_jump_charge_alpha(os.clock()))
-	end
-
 	local inputX, inputZ = get_move_vector()
-	local inputMagnitude = math.sqrt((inputX * inputX) + (inputZ * inputZ))
-	if inputMagnitude > 1 then
-		inputX /= inputMagnitude
-		inputZ /= inputMagnitude
-	end
-
 	local forwardAmount = math.max(0, -inputZ)
 	local backwardAmount = math.max(0, inputZ)
-	local currentSpeed = localPrediction.CurrentSpeed
-	local walkSpeed = movement.WalkSpeed or 14
-	local sprintSpeed = movement.SprintSpeed or 26
-	local startForwardSpeed = math.max(movement.TrotSpeed or 18, movement.CanterSpeed or 22)
-	local sprinting = is_sprint_input_active()
-	local cameraOrientation = CFrame.Angles(0, mountedState.CameraYaw, 0)
-	local desiredMoveVector = (cameraOrientation.RightVector * inputX) + (cameraOrientation.LookVector * (-inputZ))
-	local desiredMoveDirection = nil
-
-	if desiredMoveVector.Magnitude > 0.001 then
-		desiredMoveDirection = desiredMoveVector.Unit
-	end
-
-	if desiredMoveDirection then
-		local directionScale = math.max(forwardAmount, backwardAmount, math.abs(inputX), 0.35)
-
-		if sprinting then
-			local wasForwarding = localPrediction.ForwardHeldTime > 0
-			localPrediction.ForwardHeldTime = math.min(
-				HorseMountConfig.ForwardAccelerationSeconds,
-				localPrediction.ForwardHeldTime + deltaTime
-			)
-
-			local forwardAlpha = math.clamp(
-				localPrediction.ForwardHeldTime / HorseMountConfig.ForwardAccelerationSeconds,
-				0,
-				1
-			)
-			local forwardTargetSpeed = startForwardSpeed + ((sprintSpeed - startForwardSpeed) * forwardAlpha)
-
-			if not wasForwarding and currentSpeed < startForwardSpeed then
-				currentSpeed = startForwardSpeed
-			else
-				currentSpeed = move_towards(
-					currentSpeed,
-					forwardTargetSpeed,
-					HorseMountConfig.SidewaysAccelerationPerSecond * deltaTime
-				)
-			end
-		else
-			localPrediction.ForwardHeldTime = math.max(
-				0,
-				localPrediction.ForwardHeldTime - (deltaTime * HorseMountConfig.ForwardDecayPerSecond)
-			)
-
-			currentSpeed = move_towards(
-				currentSpeed,
-				walkSpeed * directionScale,
-				HorseMountConfig.SidewaysAccelerationPerSecond * deltaTime
-			)
-		end
-
-		targetYaw = build_yaw_from_direction(desiredMoveDirection)
-	else
-		localPrediction.ForwardHeldTime = math.max(
-			0,
-			localPrediction.ForwardHeldTime - (deltaTime * HorseMountConfig.ForwardDecayPerSecond)
-		)
-
-		currentSpeed = move_towards(
-			currentSpeed,
-			0,
-			HorseMountConfig.PassiveBrakingPerSecond * deltaTime
-		)
-	end
-
-	localPrediction.CurrentSpeed = math.max(0, currentSpeed)
-
-	local angleDelta = wrap_angle(targetYaw - currentYaw)
-	currentYaw += math.clamp(angleDelta, -math.rad(maxTurnSpeedDegrees) * deltaTime, math.rad(maxTurnSpeedDegrees) * deltaTime)
-	localPrediction.CurrentYaw = wrap_angle(currentYaw)
-
-	local yawOrientation = CFrame.Angles(0, localPrediction.CurrentYaw, 0)
-	if desiredMoveDirection and desiredMoveDirection.Magnitude > 0.001 then
-		localPrediction.LastMoveDirection = desiredMoveDirection
-	end
-
-	local moveDirection = localPrediction.LastMoveDirection
-	if not moveDirection or moveDirection.Magnitude <= 0 then
-		moveDirection = yawOrientation.LookVector
-		localPrediction.LastMoveDirection = moveDirection
-	end
-
 	local currentPosition = mountRoot.Position
-	local orientation = yawOrientation * build_terrain_tilt(
+	local groundProbe = localPrediction.GroundProbe
+	local probeSample = groundProbe and groundProbe:Update(
 		deltaTime,
 		currentPosition,
-		{ horseVisual, localPlayer.Character },
+		localPrediction.CurrentYaw,
+		localPrediction.GroundOffset
+	) or {
+		GroundY = nil,
+		Pitch = 0,
+		Roll = 0,
+		ObstacleSpeedAlpha = 1,
+	}
+
+	local horizontalState = localPrediction.HorizontalState
+	HorseMovementState.Step(horizontalState, {
+		Forward = forwardAmount,
+		Backward = backwardAmount,
+		Sprinting = is_sprint_input_active(),
+		ObstacleSpeedAlpha = if localPrediction.JumpAirborne then 1 else probeSample.ObstacleSpeedAlpha,
+	}, movement, HorseMountConfig, deltaTime, os.clock())
+	localPrediction.CurrentSpeed = horizontalState.Speed
+
+	local sprintSpeed = math.max(tonumber(movement.SprintSpeed) or 26, 0.01)
+	local speedAlpha = math.clamp(math.abs(horizontalState.Speed) / sprintSpeed, 0, 1)
+	local turnRateAlpha = math.clamp(((movement.TurnRate or 0.8) - 0.65) / 0.25, 0, 1)
+	local maxTurnSpeedDegrees = (HorseMountConfig.HorseTurnSpeedBaseDegrees or 65)
+		+ ((HorseMountConfig.HorseTurnSpeedScaleDegrees or 55) * turnRateAlpha)
+	local turnAtRest = math.clamp(HorseMountConfig.HorseTurnAtRestMultiplier or 0.18, 0, 1)
+	local turnSpeedAlpha = turnAtRest + ((1 - turnAtRest) * speedAlpha)
+	local reverseSign = if horizontalState.Speed < 0 then -1 else 1
+	localPrediction.CurrentYaw = wrap_angle(
 		localPrediction.CurrentYaw
+		- (inputX * reverseSign * math.rad(maxTurnSpeedDegrees) * turnSpeedAlpha * math.min(deltaTime, 0.1))
 	)
+
+	local terrainBlendAlpha = 1 - math.exp(-(HorseMountConfig.TerrainTiltResponsiveness or 8) * deltaTime)
+	local targetPitch = if localPrediction.JumpAirborne then 0 else probeSample.Pitch
+	local targetRoll = if localPrediction.JumpAirborne then 0 else probeSample.Roll
+	localPrediction.TerrainPitch += (targetPitch - localPrediction.TerrainPitch) * terrainBlendAlpha
+	localPrediction.TerrainRoll += (targetRoll - localPrediction.TerrainRoll) * terrainBlendAlpha
+
+	local targetTurnLean = -inputX * speedAlpha * math.rad(HorseMountConfig.HorseTurnLeanDegrees or 8)
+	local leanBlendAlpha = 1 - math.exp(-(HorseMountConfig.HorseTurnLeanResponsiveness or 7) * deltaTime)
+	localPrediction.TurnLean += (targetTurnLean - localPrediction.TurnLean) * leanBlendAlpha
+	local targetRearPitch = HorseMovementState.IsRearActive(horizontalState, os.clock())
+		and math.rad(HorseMountConfig.HorseRearPitchDegrees or 24)
+		or 0
+	local rearBlendAlpha = 1 - math.exp(-(HorseMountConfig.HorseRearPoseResponsiveness or 9) * deltaTime)
+	localPrediction.RearPitch += (targetRearPitch - localPrediction.RearPitch) * rearBlendAlpha
+	local yawOrientation = CFrame.Angles(0, localPrediction.CurrentYaw, 0)
+	local orientation = yawOrientation * CFrame.Angles(
+		localPrediction.TerrainPitch + localPrediction.RearPitch,
+		0,
+		localPrediction.TerrainRoll + localPrediction.TurnLean
+	)
+	local moveDirection = yawOrientation.LookVector
+	localPrediction.LastMoveDirection = moveDirection
 	local verticalVelocity = 0
 	if localPrediction.JumpAirborne == true then
 		localPrediction.JumpVerticalVelocity = (localPrediction.JumpVerticalVelocity or 0)
 			- ((HorseMountConfig.HorseJumpGravity or 58) * deltaTime)
 		update_local_horse_jump_animation_speed()
 
-		if HorseMountConfig.StickMountedHorseToGround == true then
-			local targetGroundOffset = get_target_ground_offset(localPrediction.GroundOffset, sprinting)
-			local groundedPosition = resolve_ground_position(
-				currentPosition,
-				{ horseVisual, localPlayer.Character },
-				targetGroundOffset
+		if HorseMountConfig.StickMountedHorseToGround == true and probeSample.GroundY then
+			local targetGroundOffset = get_target_ground_offset(
+				localPrediction.GroundOffset,
+				horizontalState.Mode == "Gallop"
 			)
+			local groundedY = probeSample.GroundY + targetGroundOffset + (HorseMountConfig.GroundClearance or 0)
 			local landingTolerance = HorseMountConfig.HorseJumpLandTolerance or 0.45
 
 			if localPrediction.JumpVerticalVelocity <= 0
-				and currentPosition.Y <= (groundedPosition.Y + landingTolerance)
+				and currentPosition.Y <= (groundedY + landingTolerance)
 			then
 				localPrediction.JumpAirborne = false
 				localPrediction.JumpVerticalVelocity = 0
 				localPrediction.JumpStartedAt = 0
 				localPrediction.JumpExpectedAirSeconds = 0
 				localPrediction.JumpPendingLanded = true
-				local verticalError = groundedPosition.Y - currentPosition.Y
+				local verticalError = groundedY - currentPosition.Y
 				verticalVelocity = math.clamp(
 					verticalError * (HorseMountConfig.GroundStickResponsiveness or 16),
 					-(HorseMountConfig.GroundStickMaxVelocity or 48),
@@ -1851,14 +1779,13 @@ local function update_local_mount_prediction(deltaTime)
 		else
 			verticalVelocity = localPrediction.JumpVerticalVelocity
 		end
-	elseif HorseMountConfig.StickMountedHorseToGround == true then
-		local targetGroundOffset = get_target_ground_offset(localPrediction.GroundOffset, sprinting)
-		local groundedPosition = resolve_ground_position(
-			currentPosition,
-			{ horseVisual, localPlayer.Character },
-			targetGroundOffset
+	elseif HorseMountConfig.StickMountedHorseToGround == true and probeSample.GroundY then
+		local targetGroundOffset = get_target_ground_offset(
+			localPrediction.GroundOffset,
+			horizontalState.Mode == "Gallop"
 		)
-		local verticalError = groundedPosition.Y - currentPosition.Y
+		local groundedY = probeSample.GroundY + targetGroundOffset + (HorseMountConfig.GroundClearance or 0)
+		local verticalError = groundedY - currentPosition.Y
 		verticalVelocity = math.clamp(
 			verticalError * (HorseMountConfig.GroundStickResponsiveness or 16),
 			-(HorseMountConfig.GroundStickMaxVelocity or 48),
@@ -1866,7 +1793,7 @@ local function update_local_mount_prediction(deltaTime)
 		)
 	end
 
-	linearVelocity.VectorVelocity = (moveDirection * localPrediction.CurrentSpeed) + Vector3.new(0, verticalVelocity, 0)
+	linearVelocity.VectorVelocity = (moveDirection * horizontalState.Speed) + Vector3.new(0, verticalVelocity, 0)
 	alignOrientation.CFrame = orientation
 	localPrediction.Position = currentPosition
 end
@@ -1877,13 +1804,11 @@ local function update_local_horse_animation()
 		return
 	end
 
-	local moveX, moveZ = get_move_vector()
-	local inputMagnitude = math.sqrt((moveX * moveX) + (moveZ * moveZ))
-	local moving = (localPrediction.CurrentSpeed or 0) > 0.25
-		or inputMagnitude > (HorseMountConfig.ForwardInputDeadzone or 0.05)
+	local horizontalMode = localPrediction.HorizontalState.Mode
+	local moving = math.abs(localPrediction.CurrentSpeed or 0) > 0.25
 	local mode = "Idle"
 	if moving then
-		mode = is_sprint_input_active() and "Run" or "Walk"
+		mode = horizontalMode == "Gallop" and "Run" or "Walk"
 	end
 
 	set_local_horse_animation_mode(horseVisual, mode)
@@ -1894,7 +1819,7 @@ local function update_local_horse_animation()
 			or (movement.WalkSpeed or 14)
 		local playbackSpeed = 1
 		if mode ~= "Idle" and referenceSpeed > 0 then
-			playbackSpeed = math.clamp((localPrediction.CurrentSpeed or 0) / referenceSpeed, 0.7, 1.25)
+			playbackSpeed = math.clamp(math.abs(localPrediction.CurrentSpeed or 0) / referenceSpeed, 0.7, 1.25)
 		end
 		adjust_local_track_speed(localHorseAnimationState.Tracks[mode], playbackSpeed)
 	end
@@ -1907,7 +1832,8 @@ local function cancel_camera_transition() cameraController:cancelCameraTransitio
 local function restore_camera() cameraController:releaseCameraAfterDismount() end
 local function hand_over_to_default_camera() cameraController:handOverToDefaultCamera() end
 local function update_camera_transition(deltaTime) cameraController:updateCameraTransition(deltaTime, mountedState, get_character_root_part) end
-local function update_camera_fov(deltaTime) cameraController:updateCameraFov(deltaTime, mountedState, localPrediction, get_prediction_movement, is_sprint_input_active) end
+local function update_camera_fov(deltaTime) cameraController:updateCameraFov(deltaTime, mountedState, localPrediction, get_prediction_movement, is_gallop_active) end
+local function update_camera_motion(deltaTime) cameraController:updateCameraMotion(deltaTime, mountedState, localPrediction, get_prediction_movement) end
 
 send_mount_input = function(forceSend)
 	if not mountedState.Active then
@@ -1916,14 +1842,15 @@ send_mount_input = function(forceSend)
 
 	local now = os.clock()
 	local moveX, moveZ = get_move_vector()
-	local sprinting = is_sprint_input_active()
+	local sprinting = localPrediction.HorizontalState.Mode == "Gallop"
 	local jumpRequested = localPrediction.JumpPendingRequest
 	local jumpLanded = localPrediction.JumpPendingLanded == true
+	local rearRequested = localPrediction.RearPendingRequest == true
 
 	local yawChanged = math.abs(mountedState.CameraYaw - lastSentCameraYaw) >= 0.01
 	local moveChanged = math.abs(moveX - lastSentMoveX) >= 0.01 or math.abs(moveZ - lastSentMoveZ) >= 0.01
 	local sprintChanged = sprinting ~= lastSentSprinting
-	local jumpChanged = jumpRequested ~= nil or jumpLanded
+	local jumpChanged = jumpRequested ~= nil or jumpLanded or rearRequested
 
 	if not forceSend
 		and now - lastInputSentAt < HorseMountConfig.InputSendInterval
@@ -1941,18 +1868,32 @@ send_mount_input = function(forceSend)
 	lastSentCameraYaw = mountedState.CameraYaw
 	lastSentSprinting = sprinting
 
+	inputSequence += 1
+	pendingInputs[inputSequence] = {
+		SentAt = now,
+		Speed = localPrediction.CurrentSpeed,
+	}
+	local expiredSequence = inputSequence - 64
+	if expiredSequence > 0 then
+		pendingInputs[expiredSequence] = nil
+	end
+
 	Net.Event.HorseMountInput:Fire({
+		Sequence = inputSequence,
 		MoveX = moveX,
 		MoveZ = moveZ,
 		CameraYaw = mountedState.CameraYaw,
 		Sprinting = sprinting,
+		GaitMode = localPrediction.HorizontalState.Mode,
 		JumpRequested = jumpRequested ~= nil,
 		JumpChargeAlpha = jumpRequested or 0,
 		JumpLanded = jumpLanded,
+		RearRequested = rearRequested,
 	})
 
 	localPrediction.JumpPendingRequest = nil
 	localPrediction.JumpPendingLanded = false
+	localPrediction.RearPendingRequest = false
 end
 
 sync_mount_state_from_server = function(statePayload)
@@ -1969,6 +1910,7 @@ sync_mount_state_from_server = function(statePayload)
 		table.clear(mountTransitionCollisionStates)
 		bind_dismount_action()
 		bind_jump_action()
+		bind_rear_action()
 		bind_sprint_action()
 		mountedState.TransitionMode = nil
 		clear_transition_root_targets()
@@ -1979,6 +1921,8 @@ sync_mount_state_from_server = function(statePayload)
 				mountedState.CameraYaw = get_control_start_yaw()
 			end
 			reset_local_prediction()
+			inputSequence = 0
+			table.clear(pendingInputs)
 			prepare_camera_for_mount()
 			send_mount_input(true)
 		end
@@ -1994,6 +1938,7 @@ sync_mount_state_from_server = function(statePayload)
 		reset_local_prediction()
 		unbind_dismount_action()
 		unbind_jump_action()
+		unbind_rear_action()
 		unbind_sprint_action()
 		stop_local_rider_tracks(0.08)
 		if previousTransitionMode == "Dismounting" then
@@ -2011,6 +1956,7 @@ sync_mount_state_from_server = function(statePayload)
 		clear_transition_root_targets()
 		unbind_dismount_action()
 		unbind_jump_action()
+		unbind_rear_action()
 		unbind_sprint_action()
 		stop_local_rider_tracks(0.08)
 		restore_camera()
@@ -2063,6 +2009,7 @@ request_dismount = function()
 	requestInFlight = true
 	unbind_dismount_action()
 	unbind_jump_action()
+	unbind_rear_action()
 	unbind_sprint_action()
 
 	local success, response = pcall(function()
@@ -2081,6 +2028,7 @@ request_dismount = function()
 		if mountedState.Active then
 			bind_dismount_action()
 			bind_jump_action()
+			bind_rear_action()
 			bind_sprint_action()
 		end
 	end
@@ -2109,6 +2057,36 @@ end)
 
 Net.Event.HorseMountState:Connect(function(payload)
 	if type(payload) ~= "table" then
+		return
+	end
+	if payload.Kind == "MovementState" then
+		local acknowledgedSequence = tonumber(payload.LastProcessedSequence)
+		if acknowledgedSequence then
+			for sequence in pendingInputs do
+				if sequence <= acknowledgedSequence then
+					pendingInputs[sequence] = nil
+				end
+			end
+		end
+
+		local authoritativeSpeed = tonumber(payload.Speed)
+		if mountedState.Active
+			and payload.CorrectionRequired == true
+			and is_finite_number(authoritativeSpeed)
+		then
+			HorseMovementState.ReconcileSpeed(
+				localPrediction.HorizontalState,
+				authoritativeSpeed,
+				HorseMountConfig.HorseReconcileSpeedThreshold or 5,
+				HorseMountConfig.HorseReconcileBlendAlpha or 0.2
+			)
+			localPrediction.HorizontalState.Mode = HorseMovementState.ClassifySpeed(
+				localPrediction.HorizontalState.Speed,
+				localPrediction.Movement or get_prediction_movement(mountedState.HorseId),
+				HorseMovementState.IsRearActive(localPrediction.HorizontalState, os.clock())
+			)
+			localPrediction.CurrentSpeed = localPrediction.HorizontalState.Speed
+		end
 		return
 	end
 
@@ -2178,6 +2156,7 @@ Net.Event.HorseMountState:Connect(function(payload)
 				or nil
 			unbind_dismount_action()
 			unbind_jump_action()
+			unbind_rear_action()
 			unbind_sprint_action()
 			set_local_horse_animation_mode(localPrediction.HorseVisual, "Idle")
 			start_camera_transition("Dismounting", transitionDuration)
@@ -2236,6 +2215,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	update_mount_movement_sound()
 
 	update_camera_fov(deltaTime)
+	update_camera_motion(deltaTime)
 	update_local_rider_animation()
 
 	send_mount_input(false)

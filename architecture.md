@@ -90,6 +90,43 @@ state, and restored the closed state.
 
 See [docs/ui-runtime.md](docs/ui-runtime.md).
 
+## Horse runtime migration
+
+The horse refactor has started with the mount domain. The new
+`ServerStorage.Modules.Horse.Mount` boundary contains strict modules for rig
+resolution, minimal physics assembly, and mount transaction state. The legacy
+`HorseMountService` still orchestrates mount gameplay, but now owns its remote,
+heartbeat, and code-lifecycle subscriptions through a Trove and exposes an
+idempotent `Destroy` method.
+
+The runtime mount root no longer welds every visual part or replaces the
+horse model's authored `PrimaryPart`. It connects to the authored root and
+preserves existing Motor6Ds and constraints; only disconnected legacy pieces
+receive compatibility welds. Mount and dismount are locked across the complete
+`Preparing -> Mounting -> Mounted -> Dismounting` transaction.
+
+Current assets still lack the semantic rider anchor required to follow the
+animated back. This milestone deliberately retains the old rigid rider offset
+until the assets receive that contract and presentation can be migrated
+without binding character physics directly to a Bone.
+
+Mounted locomotion now has a shared deterministic state machine under
+`ReplicatedStorage.Modules.Game.Horse.Mount.Movement`. It ports the supplied
+reference place's persistent speed, progressive gait changes, forward
+double-tap, brake-before-reverse, horse-relative steering, rear, obstacle
+response, terrain alignment, and camera motion while preserving each current
+horse's effective stats and the existing constraint assembly. A cached probe
+reduces terrain and obstacle work to seven raycasts at 20 Hz.
+
+Mount input carries monotonic sequences. The server rejects replayed inputs,
+continues to enforce observed speed, and acknowledges the latest processed
+sequence with observed speed and gait. Client speed reconciliation is only
+requested after an actual server rollback, so normal constraint lag does not
+change the selected gait. Full fixed-step position simulation is not claimed;
+network ownership remains a documented compatibility boundary.
+
+See [docs/horse-runtime.md](docs/horse-runtime.md).
+
 ## Player join flow
 
 1. All components bind their code-event subscriptions during `Init`.
@@ -131,6 +168,11 @@ Studio.
 - Centralized modal UI state without changing the existing visual animator.
 - Added unit tests for lifecycle, signals, manifests, network contracts, and
   UI routing, plus a server bootstrap integration test.
+- Started the horse refactor with a validated rig adapter, minimal mount
+  assembly, transition locking, lifecycle cleanup, and mount-domain tests.
+- Ported reference-style mounted locomotion into a shared state machine,
+  bounded probe, sequenced input protocol, server acknowledgements, and
+  deterministic movement tests without changing horse data ownership.
 
 ## Upstream compatibility integration
 
@@ -150,7 +192,7 @@ The generated Rojo sourcemap was rebuilt from this combined tree.
 
 - `rojo build default.project.json` succeeds after the migration.
 - `git diff --check` reports no whitespace errors.
-- Studio unit suite: 17 run, 17 passed, 0 failed.
+- Studio unit suite: 31 run, 31 passed, 0 failed.
 - Studio bootstrap integration: `Success = true`.
 - Studio readiness: server and client both ready with no failure attribute.
 - Studio UI smoke test: 14 routes registered; Inventory and Settings open/close
@@ -180,9 +222,10 @@ The generated Rojo sourcemap was rebuilt from this combined tree.
 2. Add a client-safe player-state projection and tests that prove server-only
    profile fields cannot replicate.
 3. Add service `Destroy` coverage and rate limiting at network boundaries.
-4. Then begin the horse-system refactor: ownership/stable allocation, status
-   decay, world visuals, care actions, roaming, and mount behavior as separate
-   subdomains.
+4. Continue the horse-system refactor with authored rider anchors, fixed-step
+   movement authority, additional gait/rear animation assets, ownership/stable
+   allocation, status decay, world visuals, care actions, and roaming as
+   separate subdomains.
 
 ProfileStore itself remains out of scope: its session-lock semantics are
 valuable and the current problem is ownership around it, not the library.

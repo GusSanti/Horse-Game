@@ -77,6 +77,9 @@ function HorseMountCamera.new(localPlayer, horseMountConfig)
 		previousCameraMinZoomDistance = nil,
 		cachedPlayerCameras = nil,
 		cameraReleaseToken = 0,
+		cameraBobTime = 0,
+		cameraBobHumanoid = nil,
+		cameraBobBaseOffset = nil,
 		cameraTransitionState = {
 			Active = false,
 			Mode = nil,
@@ -362,6 +365,7 @@ end
 function HorseMountCamera:releaseCameraAfterDismount()
 	local camera = Workspace.CurrentCamera
 	self:cancelCameraTransition()
+	self:resetCameraMotion()
 	self:restoreZoomLimits()
 
 	local targetCameraType = self.previousCameraType
@@ -426,6 +430,44 @@ function HorseMountCamera:updateCameraFov(deltaTime, mountedState, localPredicti
 
 	local blendAlpha = 1 - math.exp(-(self.config.MountedFovSmoothness or 8) * deltaTime)
 	camera.FieldOfView = camera.FieldOfView + ((targetFov - camera.FieldOfView) * blendAlpha)
+end
+
+function HorseMountCamera:resetCameraMotion()
+	local humanoid = self.cameraBobHumanoid
+	if humanoid and humanoid.Parent and self.cameraBobBaseOffset then
+		humanoid.CameraOffset = self.cameraBobBaseOffset
+	end
+	self.cameraBobTime = 0
+	self.cameraBobHumanoid = nil
+	self.cameraBobBaseOffset = nil
+end
+
+function HorseMountCamera:updateCameraMotion(deltaTime, mountedState, localPrediction, getPredictionMovement)
+	if not mountedState.Active then
+		self:resetCameraMotion()
+		return
+	end
+
+	local humanoid = self:getDefaultCameraSubject()
+	if not humanoid then
+		self:resetCameraMotion()
+		return
+	end
+	if self.cameraBobHumanoid ~= humanoid then
+		self:resetCameraMotion()
+		self.cameraBobHumanoid = humanoid
+		self.cameraBobBaseOffset = humanoid.CameraOffset
+	end
+
+	local movement = localPrediction.Movement or getPredictionMovement(mountedState.HorseId)
+	local sprintSpeed = math.max(tonumber(movement.SprintSpeed) or 26, 0.01)
+	local speedAlpha = math.clamp(math.abs(localPrediction.CurrentSpeed or 0) / sprintSpeed, 0, 1)
+	local amplitude = math.max(tonumber(self.config.HorseCameraBobAmplitude) or 0.08, 0) * speedAlpha
+	local frequency = math.max(tonumber(self.config.HorseCameraBobFrequency) or 7, 0)
+	self.cameraBobTime += math.max(deltaTime, 0) * frequency * (0.55 + (speedAlpha * 0.45))
+
+	local baseOffset = self.cameraBobBaseOffset or Vector3.zero
+	humanoid.CameraOffset = baseOffset + Vector3.new(0, math.sin(self.cameraBobTime * math.pi * 2) * amplitude, 0)
 end
 
 return HorseMountCamera
