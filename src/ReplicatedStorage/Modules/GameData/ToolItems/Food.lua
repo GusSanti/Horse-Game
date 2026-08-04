@@ -194,6 +194,8 @@ return {
 	crafted_food({
 		ItemId = "pineapple_pie",
 		DisplayName = "Pineapple Pie",
+		ToolGrip = CFrame.new(0, -0.08, -0.5)
+			* CFrame.Angles(math.rad(-15), math.rad(10), 0),
 		Description = "A sweet pineapple pie baked with fresh fruit and wheat.",
 		SortOrder = 90,
 		Effects = {

@@ -32,6 +32,7 @@ local RuntimeManifest = {
 		Entry("HorseStarterReveal", "Hud", "HorseStarterReveal"),
 		Entry("HorseRoulette", "Hud", "HorseRoulette"),
 		Entry("HorseRace", "Hud", "HorseRace"),
+		Entry("StablePromptChoices", "Hud", "StablePromptChoices"),
 		Entry("HorseMount", "Hud", "HorseMount"),
 		Entry("AdminPanel", "Hud", "AdminPanel"),
 		Entry("FruitViewportCapture", "Hud", "FruitViewportCapture"),

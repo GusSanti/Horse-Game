@@ -20,7 +20,10 @@ local CONFIG = table.freeze({
 	HorseAccelerationBaseStat = 0.8,
 	HorseBrakePerSecond = 20,
 	HorseReverseAccelerationPerSecond = 8,
+	HorseReverseCoastDragPerSecond = 10,
+	HorseReverseStopEpsilon = 0.15,
 	HorseCoastDragPerSecond = 0,
+	HorseDismountBrakePerSecond = 14,
 	HorseDoubleTapWindowSeconds = 0.28,
 	HorseDoubleTapMinReleaseSeconds = 0.04,
 	HorseDoubleTapBoostSeconds = 0.4,
@@ -32,11 +35,12 @@ local CONFIG = table.freeze({
 	HorseRearMaxStartSpeed = 0.75,
 })
 
-local function Step(State: any, Forward: number, Backward: number, Now: number): ()
+local function Step(State: any, Forward: number, Backward: number, Now: number, Stopping: boolean?): ()
 	StateMachine.Step(State, {
 		Forward = Forward,
 		Backward = Backward,
 		Sprinting = false,
+		Stopping = Stopping == true,
 		ObstacleSpeedAlpha = 1,
 	}, MOVEMENT, CONFIG, 0.1, Now)
 end
@@ -79,8 +83,7 @@ return function(t: any): ()
 		t.expect.falsy(State.Mode == "Gallop")
 	end)
 
-	-- Backward input consumes positive speed before applying reverse speed.
-	t.test("brakes before transitioning into reverse", function(): ()
+	t.test("requires a fresh backward press after braking", function(): ()
 		local State: any = StateMachine.Create()
 		State.Speed = 10
 		for Index: number = 1, 5 do
@@ -89,8 +92,33 @@ return function(t: any): ()
 		t.expect.equal(State.Speed, 0)
 
 		Step(State, 0, 1, 0.6)
+		t.expect.equal(State.Speed, 0)
+		Step(State, 0, 0, 0.7)
+		Step(State, 0, 1, 0.8)
 		t.expect.truthy(State.Speed < 0)
 		t.expect.equal(State.Mode, "Backward")
+	end)
+
+	t.test("stops reverse drift after backward input is released", function(): ()
+		local State: any = StateMachine.Create()
+		State.Speed = -4
+		for Index: number = 1, 4 do
+			Step(State, 0, 0, Index * 0.1)
+		end
+
+		t.expect.equal(State.Speed, 0)
+		t.expect.equal(State.Mode, "Idle")
+	end)
+
+	t.test("uses the stopping brake without changing direction", function(): ()
+		local State: any = StateMachine.Create()
+		State.Speed = 7
+		for Index: number = 1, 5 do
+			Step(State, 1, 0, Index * 0.1, true)
+		end
+
+		t.expect.equal(State.Speed, 0)
+		t.expect.equal(State.Mode, "Idle")
 	end)
 
 	-- Effective horse speed thresholds map to the public locomotion modes.

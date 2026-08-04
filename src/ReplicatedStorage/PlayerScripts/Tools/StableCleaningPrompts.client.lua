@@ -555,14 +555,11 @@ function queue_refresh()
 				local prompt = Instance.new("ProximityPrompt")
 				prompt.Name = "StableCleaningPrompt"
 				prompt.ActionText = dirtDefinition.ActionText
-				prompt.ObjectText = ("%s  |  %s"):format(
-					dirtDefinition.DisplayName,
-					StableCleaningConfig.GetPenaltySummary(dirtTypeId)
-				)
+				prompt.ObjectText = dirtDefinition.DisplayName
 				prompt.HoldDuration = dirtDefinition.HoldDuration
 				prompt.MaxActivationDistance = StableCleaningConfig.MaxCleanDistance
 				prompt.RequiresLineOfSight = false
-				prompt.Style = Enum.ProximityPromptStyle.Default
+				prompt.Style = Enum.ProximityPromptStyle.Custom
 				prompt.Parent = promptParent
 
 				prompt.Triggered:Connect(function()

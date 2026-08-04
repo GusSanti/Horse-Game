@@ -40,6 +40,7 @@ local EXPECTED_FUNCTIONS: { string } = {
 	"RestoreEquippedHorseNeeds",
 	"RollHorseRoulette",
 	"SellFruit",
+	"StableSlotAction",
 	"TeleportToArea",
 	"UpdateInventoryLoadout",
 	"UpdatePlayerSetting",
@@ -67,9 +68,10 @@ return function(t: any): ()
 	end)
 
 	t.test("exposes stable domain aliases", function(): ()
-	t.expect.equal(Network.Admin.GetItemCatalog, Network.Functions.AdminGetItemCatalog)
-	t.expect.equal(Network.Horse.UseTool, Network.Functions.UseHorseTool)
-	t.expect.equal(Network.Horse.BrushAnimation, Network.Events.HorseBrushAnimation)
-	t.expect.equal(Network.Horse.AcknowledgeReveal, Network.Events.HorseRevealAcknowledged)
+		t.expect.equal(Network.Admin.GetItemCatalog, Network.Functions.AdminGetItemCatalog)
+		t.expect.equal(Network.Horse.UseTool, Network.Functions.UseHorseTool)
+		t.expect.equal(Network.Horse.StableSlotAction, Network.Functions.StableSlotAction)
+		t.expect.equal(Network.Horse.BrushAnimation, Network.Events.HorseBrushAnimation)
+		t.expect.equal(Network.Horse.AcknowledgeReveal, Network.Events.HorseRevealAcknowledged)
 	end)
 end
