@@ -25,6 +25,7 @@ local FarmingShopService: any = require(FarmingModules:WaitForChild("FarmingShop
 local HayBaleService: any = require(HorseModules:WaitForChild("HayBaleService"))
 local HorseIndexService: any = require(HorseModules:WaitForChild("HorseIndexService"))
 local HorseMountService: any = require(HorseModules:WaitForChild("HorseMountService"))
+local ObstacleService: any = require(HorseModules:WaitForChild("ObstacleService"))
 local HorseRoamingService: any = require(HorseModules:WaitForChild("HorseRoamingService"))
 local HorseSaddleAssetService: any = require(HorseModules:WaitForChild("HorseSaddleAssetService"))
 local HorseService: any = require(HorseModules:WaitForChild("HorseService"))
@@ -81,6 +82,7 @@ local SERVICES: { ServiceDefinition } = {
 	{ Name = "RaceService", Service = RaceService },
 	{ Name = "HorseRoamingService", Service = HorseRoamingService },
 	{ Name = "HorseMountService", Service = HorseMountService },
+	{ Name = "ObstacleService", Service = ObstacleService },
 	{ Name = "HayBaleService", Service = HayBaleService },
 	{ Name = "WaterTankService", Service = WaterTankService },
 	{ Name = "WellWaterService", Service = WellWaterService },

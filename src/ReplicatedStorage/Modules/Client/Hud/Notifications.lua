@@ -22,9 +22,12 @@ local DENY_BUTTON_NAMES = { "Deny" }
 local DIALOGUE_OPEN_ANIM = "drop"
 local DIALOGUE_OPEN_TIME = 0.28
 local DIALOGUE_OPEN_OFFSET = 52
+local DIALOGUE_HUD_FADE_EXCLUSIONS = "HUDFR"
 
 local activeNotificationId = nil
 local buttonConnections = {}
+local cachedMainframe = nil
+local cachedDialogueReferences = nil
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -65,6 +68,10 @@ local function find_named_instance(root: Instance?, aliases: {string}, className
 end
 
 local function get_mainframe(): Instance?
+	if cachedMainframe and cachedMainframe.Parent then
+		return cachedMainframe
+	end
+
 	local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
 	if not playerGui then
 		return nil
@@ -75,17 +82,28 @@ local function get_mainframe(): Instance?
 		return nil
 	end
 
-	return mainUi:FindFirstChild(MAINFRAME_NAME) or mainUi:FindFirstChild(MAINFRAME_NAME, true)
+	cachedMainframe = mainUi:FindFirstChild(MAINFRAME_NAME) or mainUi:FindFirstChild(MAINFRAME_NAME, true)
+	return cachedMainframe
 end
 
 local function get_dialogue_references()
+	if cachedDialogueReferences
+		and cachedDialogueReferences.Dialogue.Parent
+		and cachedDialogueReferences.AcceptButton
+		and cachedDialogueReferences.AcceptButton.Parent
+		and cachedDialogueReferences.DenyButton
+		and cachedDialogueReferences.DenyButton.Parent
+	then
+		return cachedDialogueReferences
+	end
+
 	local mainframe = get_mainframe()
 	local dialogue = find_named_instance(mainframe, DIALOGUE_FRAME_NAMES, "GuiObject")
 	if not dialogue then
 		return nil
 	end
 
-	return {
+	cachedDialogueReferences = {
 		Dialogue = dialogue :: GuiObject,
 		Title = find_named_instance(dialogue, TITLE_NAMES, "TextLabel") :: TextLabel?,
 		TitleShadow = find_named_instance(dialogue, TITLE_SHADOW_NAMES, "TextLabel") :: TextLabel?,
@@ -93,6 +111,7 @@ local function get_dialogue_references()
 		AcceptButton = find_named_instance(dialogue, ACCEPT_BUTTON_NAMES, "GuiButton") :: GuiButton?,
 		DenyButton = find_named_instance(dialogue, DENY_BUTTON_NAMES, "GuiButton") :: GuiButton?,
 	}
+	return cachedDialogueReferences
 end
 
 local function ensure_dialogue_animation(dialogue: GuiObject): ()
@@ -106,6 +125,12 @@ local function ensure_dialogue_animation(dialogue: GuiObject): ()
 
 	if dialogue:GetAttribute("open_offset_px") == nil then
 		dialogue:SetAttribute("open_offset_px", DIALOGUE_OPEN_OFFSET)
+	end
+
+	-- Notifications overlay the HUD; fading every HUD descendant creates dozens
+	-- of transient tweens and can stall low-end clients when a dialogue appears.
+	if dialogue:GetAttribute("HudFadeExclusions") == nil then
+		dialogue:SetAttribute("HudFadeExclusions", DIALOGUE_HUD_FADE_EXCLUSIONS)
 	end
 end
 
@@ -249,6 +274,11 @@ function Notifications.HideDialogue(id): boolean
 
 	activeNotificationId = nil
 	return refs ~= nil
+end
+
+local initialReferences = get_dialogue_references()
+if initialReferences then
+	ensure_dialogue_animation(initialReferences.Dialogue)
 end
 
 return Notifications

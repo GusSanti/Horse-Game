@@ -2,8 +2,8 @@
 
 ------------------//VARIABLES
 local SoapCleaningDictionary = {
-	ActionName = "SoapCleaningMode",
 	InstructionText = "Hold and drag the mouse over the horse",
+	StageInstructionFormat = "Scrub the %s",
 	RinseInstructionText = "Move the shower across the horse",
 	CompleteText = "All clean",
 	FinishingText = "Horse cleaned",
@@ -31,7 +31,6 @@ local SoapCleaningDictionary = {
 	MinimumMouseDragDistance = 1,
 	ProgressStepDuration = 0.2,
 	ProgressGainPerStep = 1,
-	ProgressTweenTime = 0.08,
 	BubbleSpawnDistance = 0.22,
 	BubbleCountMin = 1,
 	BubbleCountMax = 1,
@@ -48,9 +47,6 @@ local SoapCleaningDictionary = {
 	CameraLerpSpeed = 9,
 	TopCameraHeightMultiplier = 1.25,
 	TopCameraSideRatio = 0.3,
-	ProgressStudsOffset = 2.6,
-	ProgressBarWidth = 208,
-	ProgressBarHeight = 14,
 	RinseTitleText = "Rinse",
 	RinseCoverageSegments = 36,
 	RinseCoverageWidthRatio = 0.14,
@@ -58,7 +54,7 @@ local SoapCleaningDictionary = {
 	RinseBubbleClearWidthRatio = 0.18,
 	RinseBubbleMinimumClearWidth = 0.8,
 	RinseBubbleFadeTime = 0.12,
-	ShowerObjectName = "Shower",
+	ShowerObjectName = "Shower2",
 	ShowerHeightOffset = 1.4,
 	ShowerFollowLerpSpeed = 18,
 	FinishDelay = 0.2,

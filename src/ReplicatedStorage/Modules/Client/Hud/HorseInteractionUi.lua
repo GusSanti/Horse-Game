@@ -1,25 +1,13 @@
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local localPlayer = Players.LocalPlayer
-local Notifications = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("Notifications"))
+local hudModules = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Client"):WaitForChild("Hud")
+local HorseTaskBar = require(hudModules:WaitForChild("HorseTaskBar"))
+local HudRefs = require(hudModules:WaitForChild("HudRefs"))
+local Notifications = require(hudModules:WaitForChild("Notifications"))
 
 local HorseInteractionUi = {}
 
-local MAIN_UI_NAME = "MainUI"
-local MAINFRAME_NAME = "MainframeFR"
-
-local CONFIRMATION_FRAME_NAMES = { "ConfirmationFR" }
-local DIALOGUE_FRAME_NAMES = { "DialogueFR" }
-local TASKS_FRAME_NAMES = { "TasksFR" }
-local FEEDING_FRAME_NAMES = { "FeedingFR", "LoadingFR" }
-
-local FEEDING_TEXT_NAMES = { "FeedingHorseTX" }
-local FEEDING_TEXT_SHADOW_NAMES = { "FeedingHorseShadowTX" }
-local TIMER_TEXT_NAMES = { "TimerTX" }
-local TIMER_TEXT_SHADOW_NAMES = { "TimerShadowTX" }
-
-local BAR_NAMES = { "BarBG" }
+HorseInteractionUi.TaskVariant = HorseTaskBar.Variant
 
 local STAT_LABELS = {
 	Hunger = "Hunger",
@@ -28,201 +16,6 @@ local STAT_LABELS = {
 	Health = "Health",
 	Cleanliness = "Cleanliness",
 }
-
-local cachedRefs = nil
-
-local function normalize_key(value: string?): string?
-	if type(value) ~= "string" then
-		return nil
-	end
-
-	local normalizedValue = string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
-	if normalizedValue == "" then
-		return nil
-	end
-
-	return normalizedValue
-end
-
-local function matches_alias(instance: Instance, aliases: {string}): boolean
-	local normalizedName = normalize_key(instance.Name)
-	if not normalizedName then
-		return false
-	end
-
-	for _, alias in ipairs(aliases) do
-		if normalize_key(alias) == normalizedName then
-			return true
-		end
-	end
-
-	return false
-end
-
-local function find_named_instance(root: Instance?, aliases: {string}, className: string?, recursive: boolean?): Instance?
-	if not root then
-		return nil
-	end
-
-	for _, child in ipairs(root:GetChildren()) do
-		if matches_alias(child, aliases) and (not className or child:IsA(className)) then
-			return child
-		end
-	end
-
-	if recursive == false then
-		return nil
-	end
-
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if matches_alias(descendant, aliases) and (not className or descendant:IsA(className)) then
-			return descendant
-		end
-	end
-
-	return nil
-end
-
-local function find_text_label(root: Instance?, aliases: {string}): TextLabel?
-	local instance = find_named_instance(root, aliases, "TextLabel")
-	if instance then
-		return instance :: TextLabel
-	end
-
-	return nil
-end
-
-local function find_gui_object(root: Instance?, aliases: {string}, recursive: boolean?): GuiObject?
-	local instance = find_named_instance(root, aliases, "GuiObject", recursive)
-	if instance then
-		return instance :: GuiObject
-	end
-
-	return nil
-end
-
-local function get_player_gui(): PlayerGui?
-	return localPlayer:FindFirstChildOfClass("PlayerGui")
-end
-
-local function get_mainframe_root(): Instance?
-	local playerGui = get_player_gui()
-	if not playerGui then
-		return nil
-	end
-
-	local mainUi = playerGui:FindFirstChild(MAIN_UI_NAME) or playerGui:FindFirstChild(MAIN_UI_NAME, true)
-	if not mainUi then
-		return nil
-	end
-
-	return mainUi:FindFirstChild(MAINFRAME_NAME) or mainUi:FindFirstChild(MAINFRAME_NAME, true)
-end
-
-local function find_progress_gradient(root: Instance?): UIGradient?
-	if not root then
-		return nil
-	end
-
-	local directGradient = root:FindFirstChildWhichIsA("UIGradient")
-	if directGradient then
-		directGradient.Rotation = 0
-		return directGradient
-	end
-
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("UIGradient") then
-			descendant.Rotation = 0
-			return descendant
-		end
-	end
-
-	return nil
-end
-
-local function find_bar_fill(root: Instance?): GuiObject?
-	if not root then
-		return nil
-	end
-
-	local fallback = nil
-
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("GuiObject") and matches_alias(descendant, BAR_NAMES) then
-			local parent = descendant.Parent
-			if parent and matches_alias(parent, BAR_NAMES) and descendant:FindFirstChildWhichIsA("UIGradient", true) then
-				return descendant
-			end
-
-			fallback = fallback or descendant
-		end
-	end
-
-	return fallback
-end
-
-local function get_refs()
-	local mainframe = get_mainframe_root()
-	if not mainframe then
-		cachedRefs = nil
-		return nil
-	end
-
-	local dialogue = find_gui_object(mainframe, DIALOGUE_FRAME_NAMES, true)
-	local tasks = find_gui_object(mainframe, TASKS_FRAME_NAMES, true)
-	local feeding = find_gui_object(tasks or mainframe, FEEDING_FRAME_NAMES, true)
-	local progressBarFill = find_bar_fill(feeding)
-
-	cachedRefs = {
-		Dialogue = dialogue,
-		Tasks = tasks,
-		Feeding = feeding,
-		FeedingText = find_text_label(feeding, FEEDING_TEXT_NAMES),
-		FeedingTextShadow = find_text_label(feeding, FEEDING_TEXT_SHADOW_NAMES),
-		TimerText = find_text_label(feeding, TIMER_TEXT_NAMES),
-		TimerTextShadow = find_text_label(feeding, TIMER_TEXT_SHADOW_NAMES),
-		ProgressGradient = find_progress_gradient(progressBarFill) or find_progress_gradient(feeding),
-		ProgressBarFill = progressBarFill,
-	}
-
-	return cachedRefs
-end
-
-local function hide_confirmation_root(): ()
-	local mainframe = get_mainframe_root()
-	if not mainframe then
-		return
-	end
-
-	local confirmation = find_gui_object(mainframe, CONFIRMATION_FRAME_NAMES, true)
-	if confirmation then
-		confirmation.Visible = false
-	end
-end
-
-local function set_visible(guiObject: GuiObject?, isVisible: boolean): ()
-	if guiObject then
-		guiObject.Visible = isVisible
-	end
-end
-
-local function is_descendant_of(instance: Instance?, ancestor: Instance?): boolean
-	if not instance or not ancestor then
-		return false
-	end
-
-	return instance ~= ancestor and instance:IsDescendantOf(ancestor)
-end
-
-local function set_text_pair(primary: TextLabel?, shadow: TextLabel?, text: string): ()
-	if primary then
-		primary.Text = text
-	end
-
-	if shadow then
-		shadow.Text = text
-	end
-end
 
 local function format_number(value: number): string
 	local roundedValue = math.floor((value * 10) + 0.5) / 10
@@ -372,7 +165,7 @@ end
 local function build_action_label(itemDefinition, actionText: string?): string
 	local resolvedActionText = actionText or itemDefinition.PromptActionText or "Use"
 	local itemName = itemDefinition.DisplayName or resolvedActionText
-	local normalizedAction = normalize_key(resolvedActionText)
+	local normalizedAction = HudRefs.NormalizeKey(resolvedActionText)
 
 	if normalizedAction == "feed" then
 		return ("Feeding %s..."):format(itemName)
@@ -397,44 +190,6 @@ local function build_action_label(itemDefinition, actionText: string?): string
 	return ("%s %s..."):format(resolvedActionText, itemName)
 end
 
-local function build_progress_sequence(alpha: number): NumberSequence
-	local clampedAlpha = math.clamp(alpha, 0, 1)
-	local edgeWidth = 0.015
-
-	if clampedAlpha <= 0 then
-		return NumberSequence.new(1)
-	end
-
-	if clampedAlpha >= 1 then
-		return NumberSequence.new(0)
-	end
-
-	local leftEdge = math.max(0, clampedAlpha - edgeWidth)
-	local rightEdge = math.min(1, clampedAlpha + edgeWidth)
-
-	return NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0),
-		NumberSequenceKeypoint.new(leftEdge, 0),
-		NumberSequenceKeypoint.new(rightEdge, 1),
-		NumberSequenceKeypoint.new(1, 1),
-	})
-end
-
-local function apply_progress(alpha: number): ()
-	local refs = get_refs()
-	if not refs then
-		return
-	end
-
-	if refs.ProgressGradient then
-		refs.ProgressGradient.Transparency = build_progress_sequence(alpha)
-	end
-
-	if refs.ProgressBarFill and not refs.ProgressGradient then
-		refs.ProgressBarFill.Size = UDim2.fromScale(math.clamp(alpha, 0, 1), 1)
-	end
-end
-
 function HorseInteractionUi.BuildDialogueTitle(itemDefinition): string
 	if type(itemDefinition) ~= "table" then
 		return "Horse Care"
@@ -456,11 +211,7 @@ function HorseInteractionUi.ShowDialogue(config): boolean
 	config.title = config.title or "Horse Care"
 	config.details = config.details or "This item improves your horse."
 
-	local refs = get_refs()
-	if refs then
-		set_visible(refs.Tasks, false)
-		set_visible(refs.Feeding, false)
-	end
+	HorseTaskBar.HideAllFrames()
 
 	return Notifications.ShowDialogue(config)
 end
@@ -470,52 +221,15 @@ function HorseInteractionUi.HideDialogue(): ()
 end
 
 function HorseInteractionUi.ShowTask(config): boolean
-	local refs = get_refs()
-	if not refs or not refs.Feeding then
-		return false
-	end
-
-	local taskLivesInsideDialogue = is_descendant_of(refs.Tasks, refs.Dialogue) or is_descendant_of(refs.Feeding, refs.Dialogue)
-
-	hide_confirmation_root()
-	set_visible(refs.Dialogue, taskLivesInsideDialogue)
-	set_visible(refs.Tasks, true)
-	set_visible(refs.Feeding, true)
-
-	HorseInteractionUi.UpdateTask(config or {})
-	return true
+	return HorseTaskBar.Show(config)
 end
 
 function HorseInteractionUi.UpdateTask(config): ()
-	local refs = get_refs()
-	if not refs then
-		return
-	end
-
-	local actionText = config.text or "Caring for your horse..."
-	local timerText = config.timerText or ""
-	local progressAlpha = math.clamp(config.progress or 0, 0, 1)
-
-	set_text_pair(refs.FeedingText, refs.FeedingTextShadow, actionText)
-	set_text_pair(refs.TimerText, refs.TimerTextShadow, timerText)
-	apply_progress(progressAlpha)
+	HorseTaskBar.Update(config)
 end
 
-function HorseInteractionUi.HideTask(): ()
-	local refs = get_refs()
-	if not refs then
-		return
-	end
-
-	local taskLivesInsideDialogue = is_descendant_of(refs.Tasks, refs.Dialogue) or is_descendant_of(refs.Feeding, refs.Dialogue)
-
-	hide_confirmation_root()
-	set_visible(refs.Feeding, false)
-	set_visible(refs.Tasks, false)
-	if taskLivesInsideDialogue then
-		set_visible(refs.Dialogue, false)
-	end
-	apply_progress(0)
+function HorseInteractionUi.HideTask(config): ()
+	HorseTaskBar.Hide(config)
 end
 
 return HorseInteractionUi

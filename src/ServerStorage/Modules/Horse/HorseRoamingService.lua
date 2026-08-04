@@ -15,6 +15,7 @@ local ToolDictionary = require(Dictionary:WaitForChild("ToolDictionary"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCareService = require(script.Parent:WaitForChild("HorseCareService"))
 local HorseMountGeometry = require(script.Parent:WaitForChild("HorseMountGeometry"))
+local HorseRoamingHold = require(script.Parent:WaitForChild("HorseRoamingHold"))
 local HorseService = require(script.Parent:WaitForChild("HorseService"))
 
 local PLOT_VALUE_NAME = ToolDictionary.PlotValueName
@@ -212,6 +213,7 @@ local function stop_state(state, preserveVisualState: boolean?): ()
 	end
 
 	state.Active = false
+	HorseRoamingHold.Clear(state)
 	unregister_state(state)
 
 	local visual = state.Visual
@@ -222,12 +224,30 @@ local function stop_state(state, preserveVisualState: boolean?): ()
 end
 
 local function wait_while_active(state, duration: number): boolean
-	local deadline = os.clock() + math.max(0, duration)
-	while is_active(state) and os.clock() < deadline do
-		RunService.Heartbeat:Wait()
+	local remainingTime = math.max(0, duration)
+	while is_active(state) and remainingTime > 0 do
+		local deltaTime = RunService.Heartbeat:Wait()
+		if not HorseRoamingHold.IsHeld(state) then
+			remainingTime -= deltaTime
+		end
 	end
 
 	return is_active(state)
+end
+
+local function wait_while_held(state): number
+	if not HorseRoamingHold.IsHeld(state) then
+		return 0
+	end
+
+	local startedAt = os.clock()
+	set_behavior(state, "Idle")
+
+	while is_active(state) and HorseRoamingHold.IsHeld(state) do
+		RunService.Heartbeat:Wait()
+	end
+
+	return os.clock() - startedAt
 end
 
 local function anchor_visual(visual: Instance): ()
@@ -335,6 +355,10 @@ local function turn_to(state, targetYaw: number): boolean
 	local maxTurnSpeed = math.rad(HorseRoamingConfig.TurnSpeedDegrees)
 
 	while is_active(state) do
+		if wait_while_held(state) > 0 then
+			set_behavior(state, "Looking")
+		end
+
 		local angleDelta = wrap_angle(targetYaw - currentYaw)
 		if math.abs(angleDelta) <= math.rad(1) then
 			break
@@ -356,6 +380,15 @@ local function move_to_point(state, targetPosition: Vector3): boolean
 	local currentYaw = get_yaw(state.Visual:GetPivot())
 
 	while is_active(state) do
+		local heldDuration = wait_while_held(state)
+		if heldDuration > 0 then
+			if state.MovementDeadline then
+				state.MovementDeadline += heldDuration
+			end
+
+			set_behavior(state, "Walking")
+		end
+
 		if state.MovementDeadline and os.clock() >= state.MovementDeadline then
 			return false
 		end
@@ -522,6 +555,8 @@ local function run_behavior(state): ()
 	-- After the optional exit walk, normal roaming always begins with another
 	-- visible walk rather than waiting at PlayerSpawn.
 	while is_active(state) do
+		wait_while_held(state)
+
 		if not walk_somewhere(state) or not idle(state) then
 			break
 		end
@@ -778,6 +813,37 @@ function HorseRoamingService.TakeControl(visual: Instance?, preserveVisualState:
 	-- the hop-on transition. The AI is still unregistered immediately.
 	stop_state(state, preserveVisualState)
 	return true
+end
+
+function HorseRoamingService.SetInteractionHold(player: Player, horseId: string, active: boolean): boolean
+	if type(horseId) ~= "string" or horseId == "" then
+		return false
+	end
+
+	local playerStates = activeByPlayer[player]
+	local state = playerStates and playerStates[horseId] or nil
+	if not state then
+		return false
+	end
+
+	HorseRoamingHold.Set(state, active)
+
+	if active then
+		set_behavior(state, "Idle")
+	end
+
+	return true
+end
+
+function HorseRoamingService.ReleaseInteractionHolds(player: Player): ()
+	local playerStates = activeByPlayer[player]
+	if not playerStates then
+		return
+	end
+
+	for _, state in playerStates do
+		HorseRoamingHold.Set(state, false)
+	end
 end
 
 function HorseRoamingService.Release(player: Player, horseId: string, visual: Instance, options): (boolean, string)

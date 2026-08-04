@@ -1451,6 +1451,14 @@ function HudAnim.set_defaults(options)
 	end
 end
 
+function HudAnim.preload_sfx()
+	if SFX and type(SFX.preload_defaults) == "function" then
+		return SFX.preload_defaults()
+	end
+
+	return true
+end
+
 function HudAnim.apply_defaults_to_buttons(root, extra)
 	if not root then
 		return

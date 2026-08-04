@@ -2,6 +2,7 @@ local SoundController = {}
 SoundController.__index = SoundController
 
 -- SERVICES
+local ContentProvider = game:GetService("ContentProvider")
 local SoundService = game:GetService("SoundService")
 local RunService = game:GetService("RunService")
 
@@ -59,6 +60,7 @@ local activeSFX = {}
 local musicEndedConnection = nil
 local net = nil
 local remoteSFXConnection = nil
+local gameSFXPreloaded = false
 
 -- FUNCTIONS
 local function sanitize_boolean(value, fallback)
@@ -338,6 +340,31 @@ end
 local function initialize()
 	createSoundGroups()
 	ensure_remote_sfx_event()
+end
+
+function SoundController.PreloadGameSFX()
+	if gameSFXPreloaded then
+		return true
+	end
+
+	local preloadTargets = {}
+	local includedSoundIds = {}
+	for _, definition in pairs(GAME_SFX) do
+		if not includedSoundIds[definition.SoundId] then
+			includedSoundIds[definition.SoundId] = true
+			preloadTargets[#preloadTargets + 1] = createSound(definition.SoundId, SoundService, sfxGroup)
+		end
+	end
+
+	local success, errorValue = pcall(function()
+		ContentProvider:PreloadAsync(preloadTargets)
+	end)
+	for _, sound in ipairs(preloadTargets) do
+		sound:Destroy()
+	end
+
+	gameSFXPreloaded = success
+	return success, errorValue
 end
 
 function SoundController.PlayGameSFX(effectName, parent, volume, pitch)

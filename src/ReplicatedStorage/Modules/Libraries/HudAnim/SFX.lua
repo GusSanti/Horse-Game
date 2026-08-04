@@ -136,13 +136,13 @@ local function preload_defaults()
 		end
 	end
 
-	if #sounds > 0 then
-		task.spawn(function()
-			pcall(function()
-				ContentProvider:PreloadAsync(sounds)
-			end)
-		end)
+	if #sounds == 0 then
+		return true
 	end
+
+	return pcall(function()
+		ContentProvider:PreloadAsync(sounds)
+	end)
 end
 
 ------------------//MAIN FUNCTIONS
@@ -155,7 +155,11 @@ function SFX.set_defaults(opts)
 		defaults[k] = v
 	end
 
-	preload_defaults()
+	task.spawn(preload_defaults)
+end
+
+function SFX.preload_defaults()
+	return preload_defaults()
 end
 
 function SFX.play_for(inst, key)
@@ -180,6 +184,6 @@ function SFX.play_for(inst, key)
 end
 
 ------------------//INIT
-preload_defaults()
+task.spawn(preload_defaults)
 
 return SFX

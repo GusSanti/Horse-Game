@@ -11,12 +11,15 @@ local localPlayer: Player = Players.LocalPlayer
 local modules: Folder = ReplicatedStorage:WaitForChild("Modules")
 local dictionary: Folder = modules:WaitForChild("Dictionary")
 
+local hudModules: Folder = modules:WaitForChild("Client"):WaitForChild("Hud")
+
 local toolDictionary = require(dictionary:WaitForChild("ToolDictionary"))
 local soapCleaningDictionary = require(dictionary:WaitForChild("SoapCleaningDictionary"))
+local HorseTaskBar = require(hudModules:WaitForChild("HorseTaskBar"))
 local SoapClientProgress = require(script.Parent:WaitForChild("SoapClientProgress"))
 
 local IGNORE_REFRESH_ATTRIBUTE: string = toolDictionary.IgnoreRefreshAttribute
-local ACTION_NAME: string = soapCleaningDictionary.ActionName
+local TASK_VARIANT: string = HorseTaskBar.Variant.Cleaning
 local STAGE_ORDER: {string} = soapCleaningDictionary.StageOrder
 local STAGE_LABELS = soapCleaningDictionary.StageLabels
 local STAGE_PROGRESS_GOAL: number = soapCleaningDictionary.StageProgressGoal
@@ -25,7 +28,6 @@ local MINIMUM_SCRUB_DISTANCE: number = soapCleaningDictionary.MinimumScrubDistan
 local MINIMUM_MOUSE_DRAG_DISTANCE: number = soapCleaningDictionary.MinimumMouseDragDistance
 local PROGRESS_STEP_DURATION: number = soapCleaningDictionary.ProgressStepDuration
 local PROGRESS_GAIN_PER_STEP: number = soapCleaningDictionary.ProgressGainPerStep
-local PROGRESS_TWEEN_TIME: number = soapCleaningDictionary.ProgressTweenTime
 local BUBBLE_SPAWN_DISTANCE: number = soapCleaningDictionary.BubbleSpawnDistance
 local BUBBLE_COUNT_MIN: number = soapCleaningDictionary.BubbleCountMin
 local BUBBLE_COUNT_MAX: number = soapCleaningDictionary.BubbleCountMax
@@ -42,9 +44,6 @@ local CAMERA_DEPTH_RATIO: number = soapCleaningDictionary.CameraDepthRatio
 local CAMERA_LERP_SPEED: number = soapCleaningDictionary.CameraLerpSpeed
 local TOP_CAMERA_HEIGHT_MULTIPLIER: number = soapCleaningDictionary.TopCameraHeightMultiplier
 local TOP_CAMERA_SIDE_RATIO: number = soapCleaningDictionary.TopCameraSideRatio
-local PROGRESS_STUDS_OFFSET: number = soapCleaningDictionary.ProgressStudsOffset
-local PROGRESS_BAR_WIDTH: number = soapCleaningDictionary.ProgressBarWidth
-local PROGRESS_BAR_HEIGHT: number = soapCleaningDictionary.ProgressBarHeight
 local FINISH_DELAY: number = soapCleaningDictionary.FinishDelay
 local EFFECTS_FOLDER_NAME: string = soapCleaningDictionary.EffectsFolderName
 local MOUSE_HITBOX_NAME: string = soapCleaningDictionary.MouseHitboxName
@@ -54,6 +53,7 @@ local OBJECTS_FOLDER_NAME: string = soapCleaningDictionary.ObjectsFolderName
 local BUBBLE_OBJECT_NAME: string = soapCleaningDictionary.BubbleObjectName
 local SHOWER_OBJECT_NAME: string = soapCleaningDictionary.ShowerObjectName
 local INSTRUCTION_TEXT: string = soapCleaningDictionary.InstructionText
+local STAGE_INSTRUCTION_FORMAT: string = soapCleaningDictionary.StageInstructionFormat
 local RINSE_INSTRUCTION_TEXT: string = soapCleaningDictionary.RinseInstructionText
 local COMPLETE_TEXT: string = soapCleaningDictionary.CompleteText
 local FINISHING_TEXT: string = soapCleaningDictionary.FinishingText
@@ -111,10 +111,6 @@ local function warn_missing_asset(assetName: string, fallbackName: string): ()
 		assetName,
 		fallbackName
 	))
-end
-
-local function get_player_gui(): PlayerGui?
-	return localPlayer:FindFirstChildOfClass("PlayerGui")
 end
 
 local function get_horse_pivot(horseVisual: Instance): CFrame
@@ -230,17 +226,20 @@ local function get_progress_title(session): string
 		return RINSE_TITLE_TEXT
 	end
 
-	local stageName = get_stage_name(session)
-	return ("%s  %d/%d"):format(get_stage_label(stageName), session.stageIndex, #STAGE_ORDER)
+	return ("%d/%d"):format(session.stageIndex, #STAGE_ORDER)
 end
 
-local function get_task_text(session): string
+local function get_instruction_text(session): string
 	if session.phase == "Rinse" then
-		return "Rinsing your horse..."
+		return RINSE_INSTRUCTION_TEXT
 	end
 
-	local stageName = get_stage_name(session)
-	return ("Cleaning %s side..."):format(string.lower(get_stage_label(stageName)))
+	local stageLabel = get_stage_label(get_stage_name(session))
+	if stageLabel == "" then
+		return INSTRUCTION_TEXT
+	end
+
+	return STAGE_INSTRUCTION_FORMAT:format(string.lower(stageLabel))
 end
 
 local function get_focus_position(session): Vector3
@@ -281,36 +280,23 @@ local function get_stage_camera_cframe(session): CFrame
 end
 
 local progressContext = {
-	TweenService = TweenService,
-	actionName = ACTION_NAME,
-	progressStudsOffset = PROGRESS_STUDS_OFFSET,
-	progressBarWidth = PROGRESS_BAR_WIDTH,
-	progressBarHeight = PROGRESS_BAR_HEIGHT,
-	progressTweenTime = PROGRESS_TWEEN_TIME,
+	taskVariant = TASK_VARIANT,
 	instructionText = INSTRUCTION_TEXT,
-	getPlayerGui = get_player_gui,
+	getInstructionText = get_instruction_text,
 	getProgressGoal = get_progress_goal,
 	getProgressTitle = get_progress_title,
 }
 
-local function update_progress_ui(session, shouldTween: boolean?): ()
-	SoapClientProgress.updateProgressUi(session, progressContext, shouldTween)
-
-	if type(session.updateTask) == "function" then
-		local progressGoal = math.max(get_progress_goal(session), 1)
-		local progressAlpha = math.clamp(session.stageProgress / progressGoal, 0, 1)
-		local progressPercent = math.floor((progressAlpha * 100) + 0.5)
-
-		session.updateTask({
-			text = get_task_text(session),
-			progress = progressAlpha,
-			timerText = ("%d%%"):format(progressPercent),
-		})
-	end
+local function update_progress_ui(session): ()
+	SoapClientProgress.update(session, progressContext)
 end
 
-local function create_progress_gui(session): boolean
-	return SoapClientProgress.createProgressGui(session, progressContext)
+local function show_progress_ui(session): boolean
+	return SoapClientProgress.show(session, progressContext)
+end
+
+local function hide_progress_ui(session): ()
+	SoapClientProgress.hide(session, progressContext)
 end
 
 local function get_bubble_template(): Instance?
@@ -865,7 +851,7 @@ local function mark_rinse_coverage(session, showerLocalZ: number): ()
 
 	if changed then
 		session.stageProgress = session.rinsedSegmentCount
-		update_progress_ui(session, true)
+		update_progress_ui(session)
 	end
 end
 
@@ -892,10 +878,6 @@ local function start_rinse_phase(session): ()
 	session.lastMousePosition = nil
 	session.targetCameraCFrame = get_stage_camera_cframe(session)
 
-	if session.instructionLabel then
-		session.instructionLabel.Text = RINSE_INSTRUCTION_TEXT
-	end
-
 	create_shower(session)
 	update_progress_ui(session)
 end
@@ -914,9 +896,7 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 	restore_character_visibility(session)
 	restore_camera(session)
 
-	if type(session.hideTask) == "function" then
-		session.hideTask()
-	end
+	hide_progress_ui(session)
 
 	if type(session.finishInteraction) == "function" then
 		session.finishInteraction(shouldRefreshPrompts)
@@ -942,25 +922,10 @@ complete_session = function(session): ()
 	session.lastBubblePosition = nil
 	session.lastMousePosition = nil
 
-	if session.titleLabel then
-		session.titleLabel.Text = FINISHING_TEXT
-	end
-
-	if session.progressLabel then
-		session.progressLabel.Text = "100.0%"
-	end
-
-	if session.instructionLabel then
-		session.instructionLabel.Text = COMPLETE_TEXT
-	end
-
-	if type(session.updateTask) == "function" then
-		session.updateTask({
-			text = "Finishing horse care...",
-			progress = 1,
-			timerText = "100%",
-		})
-	end
+	session.completed = true
+	session.instructionText = COMPLETE_TEXT
+	session.statusText = FINISHING_TEXT
+	update_progress_ui(session)
 
 	task.delay(FINISH_DELAY, function()
 		if activeSession ~= session or session.closed then
@@ -1181,6 +1146,7 @@ function SoapClient.start(context): boolean
 		hideTask = context.hideTask,
 		mouse = localPlayer:GetMouse(),
 		phase = "Soap",
+		completed = false,
 		stageIndex = 1,
 		stageProgress = 0,
 		progressGoal = STAGE_PROGRESS_GOAL,
@@ -1204,17 +1170,9 @@ function SoapClient.start(context): boolean
 	hide_character(session)
 	create_effects_folder(session)
 	create_mouse_hitbox(session)
-	if not create_progress_gui(session) then
+	if not show_progress_ui(session) then
 		finish_session(session, true)
 		return false
-	end
-
-	if type(session.showTask) == "function" then
-		session.showTask({
-			text = get_task_text(session),
-			progress = 0,
-			timerText = "0%",
-		})
 	end
 
 	session.connections[#session.connections + 1] = UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)

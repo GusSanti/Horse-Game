@@ -5,6 +5,7 @@ local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage"
 local Trove: any = require(
 	ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Libraries"):WaitForChild("Trove")
 )
+local InteractionHold: any = require(script.InteractionHold)
 local Reveal: any = require(script.Reveal)
 local ToolUse: any = require(script.ToolUse)
 
@@ -21,6 +22,7 @@ function HorseRuntime:Init(): ()
 	self.Trove = Trove.new()
 	Reveal.Bind(self.Trove)
 	ToolUse.Bind(self.Trove)
+	InteractionHold.Bind(self.Trove)
 end
 
 function HorseRuntime:Destroy(): ()

@@ -9,8 +9,10 @@ local EXPECTED_EVENTS: { string } = {
 	"DataUtilityChanged",
 	"HorseBrushAnimation",
 	"HorseIndexStateChanged",
+	"HorseInteractionHold",
 	"HorseMountInput",
 	"HorseMountState",
+	"ObstacleFeedback",
 	"PlayGameSFX",
 	"RaceState",
 	"TeleportToStable",
@@ -70,6 +72,8 @@ return function(t: any): ()
 	t.expect.equal(Network.Admin.GetItemCatalog, Network.Functions.AdminGetItemCatalog)
 	t.expect.equal(Network.Horse.UseTool, Network.Functions.UseHorseTool)
 	t.expect.equal(Network.Horse.BrushAnimation, Network.Events.HorseBrushAnimation)
+	t.expect.equal(Network.Horse.InteractionHold, Network.Events.HorseInteractionHold)
+	t.expect.equal(Network.Horse.ObstacleFeedback, Network.Events.ObstacleFeedback)
 	t.expect.equal(Network.Horse.AcknowledgeReveal, Network.Events.HorseRevealAcknowledged)
 	end)
 end

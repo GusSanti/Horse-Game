@@ -37,6 +37,7 @@ local refreshQueued: boolean = false
 local activePromptToken: number = 0
 local clientInteractionActive: boolean = false
 local activeTimedSession = nil
+local activeHoldHorseId: string? = nil
 local queue_refresh
 
 ------------------//FUNCTIONS
@@ -154,8 +155,31 @@ local function get_client_handler(definition): any
 	return handler
 end
 
+local function release_interaction_hold(): ()
+	if not activeHoldHorseId then
+		return
+	end
+
+	activeHoldHorseId = nil
+	Network.Horse.InteractionHold:Fire(nil, false)
+end
+
+local function engage_interaction_hold(horseId: string): ()
+	if type(horseId) ~= "string" or horseId == "" then
+		return
+	end
+
+	if activeHoldHorseId == horseId then
+		return
+	end
+
+	activeHoldHorseId = horseId
+	Network.Horse.InteractionHold:Fire(horseId, true)
+end
+
 local function finish_client_interaction(shouldRefreshPrompts: boolean): ()
 	clientInteractionActive = false
+	release_interaction_hold()
 	HorseInteractionUi.HideDialogue()
 
 	if shouldRefreshPrompts ~= false then
@@ -377,6 +401,8 @@ end
 local function start_tool_interaction(context): ()
 	local clientHandler = context.clientHandler
 
+	engage_interaction_hold(context.horseId)
+
 	if clientHandler and type(clientHandler.start) == "function" then
 		local started = false
 		local startSuccess, startResult = pcall(function()
@@ -578,6 +604,7 @@ localPlayer.CharacterAdded:Connect(bind_character)
 localPlayer.CharacterRemoving:Connect(function()
 	disconnect_all(characterConnections)
 	clientInteractionActive = false
+	release_interaction_hold()
 	HorseInteractionUi.HideDialogue()
 	HorseInteractionUi.HideTask()
 	queue_refresh()

@@ -22,6 +22,15 @@ local sellerRoot = nil
 local scrollingFrame = nil
 local templateSource = nil
 local cardConnections = {}
+local cardCache = {}
+local sellerHudAnimBound = false
+local renderedShopId = nil
+local renderedCategory = nil
+local sellerTabsRoot = nil
+local sellerTabButtons = {}
+local sellerCloseButton = nil
+local sellerRestockButton = nil
+local sellerTitle = nil
 local zoneState = {
 	Cowboy = false,
 	Doctor = false,
@@ -152,11 +161,13 @@ local function update_shop_title(shopId)
 		return
 	end
 
-	local background = find_named(sellerRoot, SHOP_TITLE_BACKGROUND_NAMES, "GuiObject")
-	local title = background and find_text_instance(background, SHOP_TITLE_LABEL_NAMES)
-		or find_text_instance(sellerRoot, SHOP_TITLE_LABEL_NAMES)
+	if not (sellerTitle and sellerTitle.Parent) then
+		local background = find_named(sellerRoot, SHOP_TITLE_BACKGROUND_NAMES, "GuiObject")
+		sellerTitle = background and find_text_instance(background, SHOP_TITLE_LABEL_NAMES)
+			or find_text_instance(sellerRoot, SHOP_TITLE_LABEL_NAMES)
+	end
 
-	set_text_instance_text(title, get_shop_display_name(shopId))
+	set_text_instance_text(sellerTitle, get_shop_display_name(shopId))
 end
 
 local function set_button_text(button, value)
@@ -308,20 +319,31 @@ local function populate_icon(card, item)
 	viewport.BackgroundTransparency = 1
 end
 
-local function disconnect_cards()
+local function clear_card_cache()
 	for _, connection in ipairs(cardConnections) do connection:Disconnect() end
 	table.clear(cardConnections)
-	if scrollingFrame then
-		for _, child in ipairs(scrollingFrame:GetChildren()) do
-			if child:GetAttribute("NpcSellerCard") then child:Destroy() end
+	for _, entry in pairs(cardCache) do
+		if entry.Card and entry.Card.Parent then
+			entry.Card:Destroy()
+		end
+	end
+	table.clear(cardCache)
+	renderedShopId = nil
+	renderedCategory = nil
+end
+
+local function hide_cached_cards()
+	for _, entry in pairs(cardCache) do
+		if entry.Card and entry.Card.Parent then
+			entry.Card.Visible = false
 		end
 	end
 end
 
-local function get_items()
+local function get_items_for_shop(shopId, category)
 	local items = {}
-	for _, item in ipairs(ToolItemCatalog.GetItemsForShop(activeShopId) or {}) do
-		if (item.ShopCategory or item.ToolCategory) == activeCategory then table.insert(items, item) end
+	for _, item in ipairs(ToolItemCatalog.GetItemsForShop(shopId) or {}) do
+		if (item.ShopCategory or item.ToolCategory) == category then table.insert(items, item) end
 	end
 	return items
 end
@@ -340,48 +362,105 @@ local function update_canvas_size()
 	scrollingFrame.CanvasSize = UDim2.fromOffset(0, contentHeight)
 end
 
-local function render()
+local render
+
+local function get_card_cache_key(shopId, itemId)
+	return tostring(shopId) .. ":" .. tostring(itemId)
+end
+
+local function update_card_affordability(entry, horseshoes)
+	if not entry.BuyButton then
+		return
+	end
+
+	entry.BuyButton.Active = horseshoes >= entry.Price
+	entry.BuyButton.AutoButtonColor = entry.BuyButton.Active
+end
+
+local function get_or_create_card(shopId, item, horseshoes)
+	local cacheKey = get_card_cache_key(shopId, item.ItemId)
+	local cachedEntry = cardCache[cacheKey]
+	if cachedEntry and cachedEntry.Card and cachedEntry.Card.Parent then
+		update_card_affordability(cachedEntry, horseshoes)
+		return cachedEntry
+	end
+
+	local card = templateSource:Clone()
+	card.Name = item.ItemId
+	card:SetAttribute("NpcSellerCard", true)
+	card.Visible = false
+	card.LayoutOrder = item.SortOrder or 0
+	local name = find_label(card, { "ItemNameTX", "NameTX", "Name" })
+	local price = find_label(card, { "ValueTX", "PriceTX", "Price" })
+	local stock = find_label(card, { "StockCountTX", "StockTX", "CountTX" })
+	if name then name.Text = item.DisplayName end
+	if price then price.Text = "$" .. tostring(item.Price or 0) end
+	if stock then stock.Visible = false end
+	populate_icon(card, item)
+
+	local entry = {
+		Card = card,
+		BuyButton = find_button(card, { "PurchaseBT", "BuyBT", "Buy" }),
+		Price = item.Price or 0,
+	}
+	cardCache[cacheKey] = entry
+	update_card_affordability(entry, horseshoes)
+
+	if entry.BuyButton then
+		local connection = entry.BuyButton.Activated:Connect(function()
+			local response = Net.Function.BuyNpcShopItem:Call(shopId, item.ItemId)
+			if response and response.Success and activeShopId == shopId then
+				render()
+			end
+		end)
+		table.insert(cardConnections, connection)
+	end
+
+	-- Parent only after the card is fully configured. This avoids repeated layout
+	-- and viewport invalidations while each property is populated.
+	card.Parent = scrollingFrame
+	return entry
+end
+
+render = function()
 	if not (sellerRoot and scrollingFrame and templateSource and activeShopId and activeCategory) then return end
-	disconnect_cards()
-	local restock = find_button(sellerRoot, { "RestyockBT", "RestockBT", "ReestockBT" })
+	local selectionChanged = renderedShopId ~= activeShopId or renderedCategory ~= activeCategory
+	if selectionChanged then
+		hide_cached_cards()
+	end
+	local restock = sellerRestockButton
 	if restock then
 		restock.Visible = activeShopId == "Cowboy" and activeCategory ~= "Water"
 	end
 	local horseshoes = tonumber(DataUtility.client.get("Currencies.Horseshoes")) or 0
-	for _, item in ipairs(get_items()) do
-		local card = templateSource:Clone()
-		card.Name = item.ItemId
-		card:SetAttribute("NpcSellerCard", true)
-		card.Visible = true
-		card.LayoutOrder = item.SortOrder or 0
-		card.Parent = scrollingFrame
-		local name = find_label(card, { "ItemNameTX", "NameTX", "Name" })
-		local price = find_label(card, { "ValueTX", "PriceTX", "Price" })
-		local stock = find_label(card, { "StockCountTX", "StockTX", "CountTX" })
-		if name then name.Text = item.DisplayName end
-		if price then price.Text = "$" .. tostring(item.Price or 0) end
-		if stock then stock.Visible = false end
-		populate_icon(card, item)
-		local buy = find_button(card, { "PurchaseBT", "BuyBT", "Buy" })
-		if buy then
-			buy.Active = horseshoes >= (item.Price or 0)
-			buy.AutoButtonColor = buy.Active
-			local connection = buy.Activated:Connect(function()
-				local response = Net.Function.BuyNpcShopItem:Call(activeShopId, item.ItemId)
-				if response and response.Success then render() end
-			end)
-			table.insert(cardConnections, connection)
+	for _, item in ipairs(get_items_for_shop(activeShopId, activeCategory)) do
+		local entry = get_or_create_card(activeShopId, item, horseshoes)
+		if selectionChanged then
+			entry.Card.Visible = true
 		end
 	end
-	update_canvas_size()
-	task.defer(update_canvas_size)
+	if selectionChanged then
+		renderedShopId = activeShopId
+		renderedCategory = activeCategory
+		update_canvas_size()
+		task.defer(update_canvas_size)
+	end
 end
 
 local function bind_seller()
 	if sellerRoot and sellerRoot.Parent and scrollingFrame and templateSource then return true end
+	if next(cardCache) then
+		clear_card_cache()
+	end
 	sellerRoot = nil
 	scrollingFrame = nil
 	templateSource = nil
+	sellerHudAnimBound = false
+	sellerTabsRoot = nil
+	table.clear(sellerTabButtons)
+	sellerCloseButton = nil
+	sellerRestockButton = nil
+	sellerTitle = nil
 	sellerRoot = find_named(playerGui, { "Seller" }, "GuiObject")
 	if not sellerRoot then return false end
 	scrollingFrame = find_named(sellerRoot, { "ListScrollingFrame", "ScrollingFrame", "ScrollFrame", "Scroll" }, "ScrollingFrame")
@@ -400,23 +479,40 @@ local function bind_seller()
 	for _, descendant in ipairs(templateSource:GetDescendants()) do
 		if descendant:IsA("LocalScript") or descendant:IsA("Script") then descendant:Destroy() end
 	end
+	sellerTabsRoot = find_named(sellerRoot, { "BuySellSeedsFR", "Tabs", "TabButtons" }, "GuiObject") or sellerRoot
+	for _, child in ipairs(sellerTabsRoot:GetDescendants()) do
+		if child:IsA("GuiButton") and is_tab_button_candidate(child) then
+			table.insert(sellerTabButtons, child)
+		end
+	end
+	table.sort(sellerTabButtons, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+	sellerCloseButton = find_button(sellerRoot, { "CloseBT", "ExitBT", "Close" })
+	sellerRestockButton = find_button(sellerRoot, { "RestyockBT", "RestockBT", "ReestockBT" })
+	local titleBackground = find_named(sellerRoot, SHOP_TITLE_BACKGROUND_NAMES, "GuiObject")
+	sellerTitle = titleBackground and find_text_instance(titleBackground, SHOP_TITLE_LABEL_NAMES)
+		or find_text_instance(sellerRoot, SHOP_TITLE_LABEL_NAMES)
 	return true
 end
 
 local function bind_seller_hud_anim()
-	if not sellerRoot then
+	if not sellerRoot or sellerHudAnimBound then
 		return
 	end
 
+	sellerHudAnimBound = true
+	-- Position-only motion keeps the opening feedback without resizing, fading,
+	-- or rebuilding the card and viewport tree on every animation frame.
 	sellerRoot:SetAttribute("UIOpen", true)
+	sellerRoot:SetAttribute("open_anim", "slide_down")
+	sellerRoot:SetAttribute("open_offset_px", 18)
+	sellerRoot:SetAttribute("open_t", 0.18)
+	sellerRoot:SetAttribute("open_fade", false)
 	pcall(function()
 		HudAnim.bind(sellerRoot)
-		HudAnim.apply_defaults_to_buttons(sellerRoot)
-		HudAnim.bind_all(sellerRoot)
 	end)
 end
 
-local function set_seller_visible(isVisible, animate)
+local function set_seller_visible(isVisible, _animate)
 	if not sellerRoot then
 		return
 	end
@@ -424,7 +520,7 @@ local function set_seller_visible(isVisible, animate)
 	bind_seller_hud_anim()
 
 	if HudAnim.set_visible then
-		HudAnim.set_visible(sellerRoot, isVisible == true, animate ~= false)
+		HudAnim.set_visible(sellerRoot, isVisible == true, _animate ~= false)
 	else
 		sellerRoot.Visible = isVisible == true
 	end
@@ -432,21 +528,19 @@ end
 
 local function open_shop(shopId)
 	local tabs = SHOP_TABS[shopId]
+	if activeShopId == shopId and sellerRoot and sellerRoot.Parent and sellerRoot.Visible then
+		return
+	end
 	if not tabs or not bind_seller() then return end
 	activeShopId = shopId
 	activeCategory = tabs[1].Category
 	update_shop_title(shopId)
 	set_seller_visible(true, not sellerRoot.Visible)
-	local tabsRoot = find_named(sellerRoot, { "BuySellSeedsFR", "Tabs", "TabButtons" }, "GuiObject") or sellerRoot
+	local tabsRoot = sellerTabsRoot or sellerRoot
 	if tabsRoot ~= sellerRoot then
 		tabsRoot.Visible = shopId ~= "Doctor"
 	end
-	local buttons = {}
-	for _, child in ipairs(tabsRoot:GetDescendants()) do
-		if child:IsA("GuiButton") and is_tab_button_candidate(child) then table.insert(buttons, child) end
-	end
-	table.sort(buttons, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
-	for index, button in ipairs(buttons) do
+	for index, button in ipairs(sellerTabButtons) do
 		local tab = tabs[index]
 		button.Visible = tab ~= nil
 		if tab then
@@ -455,20 +549,23 @@ local function open_shop(shopId)
 			if button:GetAttribute("NpcSellerTabBound") ~= true then
 				button:SetAttribute("NpcSellerTabBound", true)
 				button.Activated:Connect(function()
-					activeCategory = button:GetAttribute("NpcSellerCategory")
-					render()
+					local nextCategory = button:GetAttribute("NpcSellerCategory")
+					if nextCategory ~= activeCategory then
+						activeCategory = nextCategory
+						render()
+					end
 				end)
 			end
 		end
 	end
-	local close = find_button(sellerRoot, { "CloseBT", "ExitBT", "Close" })
+	local close = sellerCloseButton
 	if close and close:GetAttribute("NpcSellerCloseBound") ~= true then
 		close:SetAttribute("NpcSellerCloseBound", true)
 		close.Activated:Connect(function()
 			set_seller_visible(false, true)
 		end)
 	end
-	local restock = find_button(sellerRoot, { "RestyockBT", "RestockBT", "ReestockBT" })
+	local restock = sellerRestockButton
 	if restock then
 		restock.Visible = shopId == "Cowboy" and activeCategory ~= "Water"
 		if restock:GetAttribute("NpcSellerRestockBound") ~= true then
@@ -485,7 +582,24 @@ local function open_shop(shopId)
 	render()
 end
 
+local function prewarm_cleaning_cards()
+	if not bind_seller() then
+		return
+	end
+
+	local horseshoes = tonumber(DataUtility.client.get("Currencies.Horseshoes")) or 0
+	for _, item in ipairs(get_items_for_shop("Noob", "Misc")) do
+		local entry = get_or_create_card("Noob", item, horseshoes)
+		entry.Card.Visible = true
+		RunService.Heartbeat:Wait()
+	end
+	renderedShopId = "Noob"
+	renderedCategory = "Misc"
+	bind_seller_hud_anim()
+end
+
 DataUtility.client.ensure_remotes()
+prewarm_cleaning_cards()
 ProximityPromptService.PromptTriggered:Connect(function(prompt)
 	local shopId = prompt:GetAttribute("NpcShopId")
 	if type(shopId) == "string" then open_shop(shopId) end

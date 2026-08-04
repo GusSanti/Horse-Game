@@ -23,6 +23,8 @@ local HorseRoamingConfig = {
 	WalkSpeed = 6.5,
 	TurnSpeedDegrees = 95,
 
+	MaxInteractionHoldSeconds = 90,
+
 	IdleDuration = NumberRange.new(2.5, 6),
 	LookPauseDuration = NumberRange.new(0.6, 1.4),
 	LookAngleDegrees = NumberRange.new(22, 55),

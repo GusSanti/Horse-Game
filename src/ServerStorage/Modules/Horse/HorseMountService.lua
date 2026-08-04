@@ -1946,6 +1946,19 @@ local function update_active_mounts(deltaTime)
 	end
 end
 
+function HorseMountService.GetMovementSample(player)
+	local mountState = activeMountsByPlayer[player]
+	local mountRoot = mountState and mountState.MountRoot or nil
+	if not mountRoot or not mountRoot.Parent then
+		return nil, false, 0, 0
+	end
+
+	return mountRoot,
+		mountState.IsJumping == true,
+		tonumber(mountState.JumpStartedAt) or 0,
+		tonumber(mountState.JumpExpectedAirSeconds) or 0
+end
+
 function HorseMountService.Init()
 	if serviceTrove then
 		return
