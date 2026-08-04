@@ -2,8 +2,6 @@
 
 ------------------//VARIABLES
 local ToolDictionary = {
-	ToolRemotesFolderName = "ToolRemotes",
-	UseHorseToolRemoteName = "UseHorseTool",
 	PlotValueName = "Plot",
 	HorseFolderName = "HorseFolder",
 	VisualHorseAttribute = "IsStableVisualHorse",

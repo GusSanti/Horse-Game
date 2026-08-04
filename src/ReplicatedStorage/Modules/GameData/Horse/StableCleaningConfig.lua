@@ -1,8 +1,5 @@
 local StableCleaningConfig = {
 	TargetType = "StableDirt",
-	RemoteFolderName = "StableCleaning",
-	CleanRemoteName = "CleanStableDirt",
-
 	DirtFolderName = "StableDirt",
 	DirtAttribute = "IsStableDirt",
 	DirtIdAttribute = "StableDirtId",

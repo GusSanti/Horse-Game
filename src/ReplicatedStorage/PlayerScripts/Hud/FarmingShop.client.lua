@@ -1078,3 +1078,5 @@ task.defer(function()
 		warn("[FarmingShop] inicializacao falhou: " .. tostring(errorMessage))
 	end
 end)
+
+script:SetAttribute("RuntimeReady", true)

@@ -22,3 +22,5 @@ for _ = 1, MAX_ATTEMPTS do
 
 	task.wait(1)
 end
+
+script:SetAttribute("RuntimeReady", true)

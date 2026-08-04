@@ -396,3 +396,5 @@ end)
 
 ------------------//INIT
 bind_plot(plotValue.Value)
+
+script:SetAttribute("RuntimeReady", true)

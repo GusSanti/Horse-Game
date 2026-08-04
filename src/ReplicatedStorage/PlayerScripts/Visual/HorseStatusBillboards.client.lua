@@ -484,3 +484,5 @@ if HorseStatusBillboardConfig.Enabled then
 else
 	destroy_all_billboards()
 end
+
+script:SetAttribute("RuntimeReady", true)

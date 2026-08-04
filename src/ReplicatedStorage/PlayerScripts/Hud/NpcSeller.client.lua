@@ -481,3 +481,5 @@ RunService.Heartbeat:Connect(function(deltaTime)
 end)
 
 DataUtility.client.bind("Currencies.Horseshoes", render)
+
+script:SetAttribute("RuntimeReady", true)

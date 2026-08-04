@@ -157,14 +157,32 @@ end
 
 local function create_function_wrapper(name)
 	local wrapper = {}
+	local responderVersion = 0
 
-	function wrapper:Respond(fn)
+	function wrapper:Respond(fn, trove)
 		local remote = get_remote("Function", name)
+		responderVersion += 1
+		local ownedVersion = responderVersion
 
 		if IS_SERVER then
 			remote.OnServerInvoke = fn
 		else
 			remote.OnClientInvoke = fn
+		end
+
+		if trove and type(trove.Add) == "function" then
+			trove:Add(function()
+				if responderVersion ~= ownedVersion then
+					return
+				end
+
+				responderVersion += 1
+				if IS_SERVER then
+					remote.OnServerInvoke = nil
+				else
+					remote.OnClientInvoke = nil
+				end
+			end)
 		end
 
 		return fn

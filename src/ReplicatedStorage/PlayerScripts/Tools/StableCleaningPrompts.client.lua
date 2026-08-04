@@ -7,13 +7,10 @@ local Modules = ReplicatedStorage:WaitForChild("Modules")
 local GameData = Modules:WaitForChild("GameData")
 local GameModules = Modules:WaitForChild("Game")
 
-local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
+local Network = require(Modules:WaitForChild("Network"))
 local StableCleaningConfig = require(GameData:WaitForChild("Horse"):WaitForChild("StableCleaningConfig"))
 local ToolRegistry = require(GameModules:WaitForChild("Tools"):WaitForChild("Registry"))
 
-local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName)
-local stableCleaningRemotes = gameplayRemotes:WaitForChild(StableCleaningConfig.RemoteFolderName)
-local cleanDirtRemote = stableCleaningRemotes:WaitForChild(StableCleaningConfig.CleanRemoteName)
 local plotValue = localPlayer:WaitForChild("Plot")
 
 local CLEAN_ANIMATION_ID = "rbxassetid://118212823724658"
@@ -360,7 +357,7 @@ local function request_clean(tool: Tool, horseId: string, dirtId: string, target
 	end
 
 	local callSucceeded, wasCleaned = pcall(function()
-		return cleanDirtRemote:InvokeServer(tool, horseId, dirtId)
+		return Network.Horse.CleanStableDirt:Call(tool, horseId, dirtId)
 	end)
 
 	return finish_request(callSucceeded and wasCleaned == true)
@@ -471,3 +468,5 @@ if localPlayer.Character then
 end
 
 queue_refresh()
+
+script:SetAttribute("RuntimeReady", true)

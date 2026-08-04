@@ -397,3 +397,5 @@ end)
 if ENABLED then
 	bind_plot(plotValue.Value)
 end
+
+script:SetAttribute("RuntimeReady", true)

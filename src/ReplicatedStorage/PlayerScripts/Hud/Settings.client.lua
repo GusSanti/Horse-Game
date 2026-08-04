@@ -908,3 +908,5 @@ rootTrove:Add(playerGui.DescendantRemoving:Connect(function(instance)
 end))
 
 try_bind_ui()
+
+script:SetAttribute("RuntimeReady", true)

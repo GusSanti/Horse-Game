@@ -2240,3 +2240,5 @@ RunService.RenderStepped:Connect(function(deltaTime)
 
 	send_mount_input(false)
 end)
+
+script:SetAttribute("RuntimeReady", true)

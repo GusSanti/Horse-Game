@@ -15,6 +15,7 @@ local toolModules: Folder = gameModules:WaitForChild("Tools")
 local clientFolder: Folder = toolModules:WaitForChild("Client")
 
 local HorseInteractionUi = require(hudModules:WaitForChild("HorseInteractionUi"))
+local Network = require(modules:WaitForChild("Network"))
 local ToolItemCatalog = require(gameData:WaitForChild("ToolItemCatalog"))
 local toolDictionary = require(dictionary:WaitForChild("ToolDictionary"))
 local toolRegistry = require(toolModules:WaitForChild("Registry"))
@@ -23,13 +24,9 @@ local VISUAL_HORSE_ATTRIBUTE: string = toolDictionary.VisualHorseAttribute
 local HORSE_ID_ATTRIBUTE: string = toolDictionary.HorseIdAttribute
 local PLOT_VALUE_NAME: string = toolDictionary.PlotValueName
 local HORSE_FOLDER_NAME: string = toolDictionary.HorseFolderName
-local REMOTE_FOLDER_NAME: string = toolDictionary.ToolRemotesFolderName
-local USE_HORSE_TOOL_REMOTE_NAME: string = toolDictionary.UseHorseToolRemoteName
 local IGNORE_REFRESH_ATTRIBUTE: string = toolDictionary.IgnoreRefreshAttribute
 
 ------------------//VARIABLES
-local remotesFolder: Folder = ReplicatedStorage:WaitForChild(REMOTE_FOLDER_NAME)
-local useHorseToolRemote: RemoteFunction = remotesFolder:WaitForChild(USE_HORSE_TOOL_REMOTE_NAME)
 local plotValue: ObjectValue = localPlayer:WaitForChild(PLOT_VALUE_NAME)
 
 local characterConnections: {RBXScriptConnection} = {}
@@ -171,7 +168,7 @@ local function begin_client_interaction(): ()
 end
 
 local function invoke_server_use(tool: Tool?, itemId: string, horseId: string): (boolean, string?)
-	local success, reason = useHorseToolRemote:InvokeServer(tool, itemId, horseId)
+	local success, reason = Network.Horse.UseTool:Call(tool, itemId, horseId)
 
 	print(("[HorseToolPrompts] InvokeServer tool=%s itemId=%s horseId=%s success=%s reason=%s"):format(
 		tool and tool.Name or "nil",
@@ -592,3 +589,5 @@ if localPlayer.Character then
 end
 
 bind_plot(plotValue.Value)
+
+script:SetAttribute("RuntimeReady", true)

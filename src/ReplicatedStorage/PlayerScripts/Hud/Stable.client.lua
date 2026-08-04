@@ -1168,3 +1168,5 @@ end)
 
 try_bind_ui()
 try_bind_go_stable_button()
+
+script:SetAttribute("RuntimeReady", true)

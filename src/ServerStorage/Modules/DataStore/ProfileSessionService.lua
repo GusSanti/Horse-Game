@@ -45,6 +45,10 @@ function ProfileSessionService.AddMessageHandler(handlerId: string, fn)
 	messageHandlers[handlerId] = fn
 end
 
+function ProfileSessionService.RemoveMessageHandler(handlerId: string)
+	messageHandlers[handlerId] = nil
+end
+
 function ProfileSessionService.SendMessageToUserId(userId: number, message)
 	if not activeStore then
 		return false

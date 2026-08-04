@@ -12,7 +12,7 @@ local Utility = Modules:WaitForChild("Utility")
 local HudModules = ClientModules:WaitForChild("Hud")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
+local Network = require(Modules:WaitForChild("Network"))
 local AdminPanelView = require(HudModules:WaitForChild("AdminPanelView"))
 local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 
@@ -64,57 +64,24 @@ local SPIN_DELAYS = {
 	0.65, 0.82,
 }
 
--- All admin remotes are resolved lazily so a slow server start does not
--- block the entire LocalScript and break the M-key toggle.
-local _adminRemotesFolder = nil
-local _adminRemotesFolderResolved = false
-local _cachedRemotes = {}
-
-local function get_admin_remotes_folder()
-	if _adminRemotesFolderResolved then
-		return _adminRemotesFolder
-	end
-	local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName, 15)
-	if gameplayRemotes then
-		_adminRemotesFolder = gameplayRemotes:WaitForChild(NetworkConfig.Admin.FolderName, 15)
-	end
-	_adminRemotesFolderResolved = true
-	return _adminRemotesFolder
-end
-
-local function get_admin_remote(remoteName)
-	if _cachedRemotes[remoteName] then
-		return _cachedRemotes[remoteName]
-	end
-	local folder = get_admin_remotes_folder()
-	if not folder then
-		return nil
-	end
-	local remote = folder:WaitForChild(remoteName, 10)
-	if remote then
-		_cachedRemotes[remoteName] = remote
-	end
-	return remote
-end
-
 local function get_catalog_remote()
-	return get_admin_remote(NetworkConfig.Admin.GetItemCatalog)
+	return Network.Admin.GetItemCatalog
 end
 
 local function get_request_item_remote()
-	return get_admin_remote(NetworkConfig.Admin.RequestItemTool)
+	return Network.Admin.RequestItemTool
 end
 
 local function get_roulette_state_remote()
-	return get_admin_remote(NetworkConfig.Admin.GetHorseRouletteState)
+	return Network.Admin.GetHorseRouletteState
 end
 
 local function get_roulette_roll_remote()
-	return get_admin_remote(NetworkConfig.Admin.RollHorseRoulette)
+	return Network.Admin.RollHorseRoulette
 end
 
 local function get_restore_equipped_horse_needs_remote()
-	return get_admin_remote(NetworkConfig.Admin.RestoreEquippedHorseNeeds)
+	return Network.Admin.RestoreEquippedHorseNeeds
 end
 
 local hasAccess = false
@@ -250,7 +217,7 @@ local function invoke_remote(remote, ...)
 	end
 
 	local success, response = pcall(function(...)
-		return remote:InvokeServer(...)
+		return remote:Call(...)
 	end, ...)
 
 	return success, response
@@ -1375,3 +1342,5 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		toggle_panel()
 	end
 end)
+
+script:SetAttribute("RuntimeReady", true)

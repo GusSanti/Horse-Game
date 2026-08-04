@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Utils = require(script.Utils)
 local SFX = require(script.SFX)
@@ -11,11 +12,11 @@ local Close = require(script.Close)
 local Fade = require(script.Fade)
 local Stagger = require(script.Stagger)
 local Punch = require(script.Punch)
+local UIRouter = require(
+	ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("UIRouter")
+)
 
 local HudAnim = {}
-
-local localPlayer = Players.LocalPlayer
-local playerGui = localPlayer and localPlayer:WaitForChild("PlayerGui") or nil
 
 local BUTTON_SUFFIX = "BT"
 local MAIN_UI_NAME = "MainUI"
@@ -72,6 +73,11 @@ local hudFadeTweens = setmetatable({}, { __mode = "k" })
 
 local bind_instance
 local sync_hud_visibility_for_frame
+
+local function get_player_gui()
+	local localPlayer = Players.LocalPlayer
+	return localPlayer and localPlayer:FindFirstChildOfClass("PlayerGui") or nil
+end
 
 local function has_true_attribute(instance, attributeName)
 	local current = instance
@@ -256,6 +262,7 @@ local function get_or_create_state(instance)
 		Closing = false,
 		TransitionToken = 0,
 		IgnoreVisibleChanges = 0,
+		IgnoreRouteVisibleChanges = 0,
 		LastVisible = instance:IsA("GuiObject") and instance.Visible or nil,
 		ActiveTweenCount = 0,
 		Tweens = {},
@@ -264,6 +271,8 @@ local function get_or_create_state(instance)
 		BoundOpen = false,
 		BoundAutoOpenButton = false,
 		BoundExitButton = false,
+		RouteRegistered = false,
+		RouteCleanup = nil,
 	}
 
 	states[instance] = state
@@ -477,7 +486,12 @@ local function set_visible_silent(instance, state, isVisible)
 		return
 	end
 
-	state.IgnoreVisibleChanges += 1
+	if state.BoundOpen then
+		state.IgnoreVisibleChanges += 1
+	end
+	if state.RouteRegistered then
+		state.IgnoreRouteVisibleChanges += 1
+	end
 	instance.Visible = isVisible
 	state.LastVisible = isVisible
 end
@@ -734,6 +748,60 @@ local function request_close(instance, state, force)
 	)
 end
 
+local function is_modal_frame(instance)
+	return instance
+		and instance:IsA("GuiObject")
+		and instance.Parent ~= nil
+		and instance.Parent.Name == FRAMES_CONTAINER_NAME
+end
+
+local function register_modal_route(instance, state)
+	if state.RouteRegistered or not is_modal_frame(instance) then
+		return
+	end
+
+	state.RouteRegistered = true
+	state.RouteCleanup = UIRouter.Register(instance.Name, {
+		Layer = "Modal",
+		Exclusive = true,
+		SetOpen = function(isOpen, animate)
+			if states[instance] ~= state or not instance.Parent then
+				return
+			end
+
+			if has_true_attribute(instance, IGNORE_HUD_ANIM_ATTRIBUTE) then
+				instance.Visible = isOpen
+				return
+			end
+
+			if animate == false or instance:GetAttribute("UIOpen") ~= true then
+				reset_transition(instance, state)
+				set_visible_silent(instance, state, isOpen)
+				if sync_hud_visibility_for_frame then
+					sync_hud_visibility_for_frame(
+						instance,
+						get_number_attribute(instance, "hud_fade_t", DEFAULTS.hud_fade_t),
+						if isOpen then instance else nil
+					)
+				end
+			elseif isOpen then
+				play_open(instance, state, true)
+			else
+				request_close(instance, state, true)
+			end
+		end,
+	}, instance.Visible)
+
+	state.Connections[#state.Connections + 1] = instance:GetPropertyChangedSignal("Visible"):Connect(function()
+		if state.IgnoreRouteVisibleChanges > 0 then
+			state.IgnoreRouteVisibleChanges -= 1
+			return
+		end
+
+		UIRouter.Sync(instance.Name, instance.Visible)
+	end)
+end
+
 local function bind_open_animation(instance, state)
 	if state.BoundOpen or instance:GetAttribute("UIOpen") ~= true then
 		return
@@ -812,6 +880,7 @@ local function find_main_ui(instance)
 		return ancestor
 	end
 
+	local playerGui = get_player_gui()
 	if playerGui then
 		return playerGui:FindFirstChild(MAIN_UI_NAME) or playerGui:FindFirstChild(MAIN_UI_NAME, true)
 	end
@@ -1219,8 +1288,12 @@ local function show_target_frame(target)
 		return
 	end
 
-	hide_sibling_frames_without_animation(target)
 	bind_instance(target)
+	if UIRouter.Open(target.Name, true) then
+		return
+	end
+
+	hide_sibling_frames_without_animation(target)
 
 	local targetState = states[target]
 	if targetState and targetState.Closing then
@@ -1307,8 +1380,10 @@ local function bind_exit_button(button, state)
 			target.Visible = false
 		else
 			bind_instance(target)
-			local targetState = states[target] or get_or_create_state(target)
-			request_close(target, targetState, true)
+			if not UIRouter.Close(target.Name, true) then
+				local targetState = states[target] or get_or_create_state(target)
+				request_close(target, targetState, true)
+			end
 		end
 
 		task.defer(function()
@@ -1330,14 +1405,16 @@ bind_instance = function(instance)
 	local isButton = instance:IsA("GuiButton")
 	local hasButtonAnimation = isButton and should_animate_button(instance)
 	local hasOpenAnimation = instance:GetAttribute("UIOpen") == true
+	local hasModalRoute = is_modal_frame(instance)
 	local hasAutoButton = isButton
 		and (CLOSE_BUTTON_NAMES[instance.Name] or (is_hud_button(instance) and get_target_frame_name(instance)))
 
-	if not hasButtonAnimation and not hasOpenAnimation and not hasAutoButton then
+	if not hasButtonAnimation and not hasOpenAnimation and not hasAutoButton and not hasModalRoute then
 		return
 	end
 
 	local state = get_or_create_state(instance)
+	register_modal_route(instance, state)
 
 	if isButton then
 		if CLOSE_BUTTON_NAMES[instance.Name] then
@@ -1433,6 +1510,11 @@ function HudAnim.unbind(instance)
 	end
 
 	states[instance] = nil
+	if state.RouteCleanup then
+		state.RouteCleanup()
+		state.RouteCleanup = nil
+		state.RouteRegistered = false
+	end
 	state.TransitionToken += 1
 	cancel_state_tweens(state)
 	disconnect_connections(state.Connections)
@@ -1479,6 +1561,9 @@ function HudAnim.play_open(instance)
 	end
 
 	bind_instance(instance)
+	if is_modal_frame(instance) and UIRouter.Open(instance.Name, true) then
+		return
+	end
 	local state = states[instance] or get_or_create_state(instance)
 	play_open(instance, state, true)
 end
@@ -1489,6 +1574,9 @@ function HudAnim.play_close(instance)
 	end
 
 	bind_instance(instance)
+	if is_modal_frame(instance) and UIRouter.Close(instance.Name, true) then
+		return
+	end
 	local state = states[instance] or get_or_create_state(instance)
 	request_close(instance, state, true)
 end
@@ -1500,6 +1588,14 @@ function HudAnim.set_visible(instance, isVisible, animate)
 
 	bind_instance(instance)
 	local state = states[instance] or get_or_create_state(instance)
+	if is_modal_frame(instance) and UIRouter.IsRegistered(instance.Name) then
+		if isVisible then
+			UIRouter.Open(instance.Name, animate ~= false)
+		else
+			UIRouter.Close(instance.Name, animate ~= false)
+		end
+		return
+	end
 
 	if animate == false then
 		reset_transition(instance, state)

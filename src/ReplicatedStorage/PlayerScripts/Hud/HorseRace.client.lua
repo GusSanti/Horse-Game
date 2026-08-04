@@ -1261,3 +1261,5 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	update_visibility()
 	update_dynamic_text()
 end)
+
+script:SetAttribute("RuntimeReady", true)

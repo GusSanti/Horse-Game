@@ -552,3 +552,5 @@ rootTrove:Add(Workspace.DescendantRemoving:Connect(function(instance)
 end))
 
 try_bind_interface()
+
+script:SetAttribute("RuntimeReady", true)

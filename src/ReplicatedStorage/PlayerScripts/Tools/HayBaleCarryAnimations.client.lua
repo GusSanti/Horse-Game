@@ -530,3 +530,5 @@ localPlayer.CharacterAdded:Connect(bind_character)
 if localPlayer.Character then
 	bind_character(localPlayer.Character)
 end
+
+script:SetAttribute("RuntimeReady", true)

@@ -8,3 +8,5 @@ local SoundController = require(Utility:WaitForChild("SoundUtility"))
 SoundController.PlayMusicQueue({
 	"rbxassetid://109380353547781",
 }, true)
+
+script:SetAttribute("RuntimeReady", true)

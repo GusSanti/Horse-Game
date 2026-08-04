@@ -2307,3 +2307,5 @@ if localPlayer.Character then
 else
 	queue_refresh()
 end
+
+script:SetAttribute("RuntimeReady", true)

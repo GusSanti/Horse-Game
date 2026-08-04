@@ -25,3 +25,5 @@ ExpressivePrompts.Config.GuiOffsetSpringSpeed.Value = 25
 ExpressivePrompts.Config.GuiOffsetSpringDampening.Value = 0.4
 
 ExpressivePrompts.Init()
+
+script:SetAttribute("RuntimeReady", true)

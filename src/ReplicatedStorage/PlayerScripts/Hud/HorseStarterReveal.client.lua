@@ -14,10 +14,10 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local Trove = require(Libraries:WaitForChild("Trove"))
+local Network = require(Modules:WaitForChild("Network"))
 local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
-local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 
 local MAIN_UI_NAMES = { "MainUI" }
 local MAINFRAME_NAMES = { "MainFrameFR", "MainframeFR" }
@@ -57,10 +57,6 @@ local rewardOverlay = nil
 local rewardViewport = nil
 local rewardNameLabel = nil
 local rewardNatureLabel = nil
-
-local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName)
-local horseRemotes = gameplayRemotes:WaitForChild(NetworkConfig.Horse.FolderName)
-local acknowledgeRevealRemote = horseRemotes:WaitForChild(NetworkConfig.Horse.AcknowledgeReveal)
 
 local function normalize_key(value)
 	if type(value) ~= "string" then
@@ -476,7 +472,7 @@ local function acknowledge_reveal(horseId)
 		return
 	end
 
-	acknowledgeRevealRemote:FireServer(horseId)
+	Network.Horse.AcknowledgeReveal:Fire(horseId)
 end
 
 local function reset_wheel_rotation(ui)
@@ -804,3 +800,5 @@ rootTrove:Add(function()
 	uiTrove:Destroy()
 	hide_reward_gui()
 end)
+
+script:SetAttribute("RuntimeReady", true)

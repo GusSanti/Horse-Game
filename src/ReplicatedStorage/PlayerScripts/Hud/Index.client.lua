@@ -884,3 +884,5 @@ task.defer(function()
 		warn("[Index] initialization failed: " .. tostring(errorMessage))
 	end
 end)
+
+script:SetAttribute("RuntimeReady", true)

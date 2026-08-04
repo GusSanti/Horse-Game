@@ -10,7 +10,7 @@ local GameModules = Modules:WaitForChild("Game")
 local Utility = Modules:WaitForChild("Utility")
 
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
-local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
+local Network = require(Modules:WaitForChild("Network"))
 local QuestService = require(script.Parent.Parent:WaitForChild("Quest"):WaitForChild("QuestService"))
 local StableCleaningConfig = require(GameData:WaitForChild("Horse"):WaitForChild("StableCleaningConfig"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
@@ -751,36 +751,6 @@ local function clean_dirt(player: Player, tool: Instance?, horseId: string, dirt
 	return true, response
 end
 
-local function ensure_clean_remote(): RemoteFunction
-	local gameplayFolder = ReplicatedStorage:FindFirstChild(NetworkConfig.GameplayFolderName)
-	if not gameplayFolder then
-		gameplayFolder = Instance.new("Folder")
-		gameplayFolder.Name = NetworkConfig.GameplayFolderName
-		gameplayFolder.Parent = ReplicatedStorage
-	end
-
-	local remoteFolder = gameplayFolder:FindFirstChild(StableCleaningConfig.RemoteFolderName)
-	if not remoteFolder then
-		remoteFolder = Instance.new("Folder")
-		remoteFolder.Name = StableCleaningConfig.RemoteFolderName
-		remoteFolder.Parent = gameplayFolder
-	end
-
-	local remote = remoteFolder:FindFirstChild(StableCleaningConfig.CleanRemoteName)
-	if remote and not remote:IsA("RemoteFunction") then
-		remote:Destroy()
-		remote = nil
-	end
-
-	if not remote then
-		remote = Instance.new("RemoteFunction")
-		remote.Name = StableCleaningConfig.CleanRemoteName
-		remote.Parent = remoteFolder
-	end
-
-	return remote
-end
-
 function StableCleaningService.PlayerReady(player: Player)
 	process_spawns(player, os.time())
 	StableCleaningService.SyncPlayerVisuals(player)
@@ -792,7 +762,7 @@ function StableCleaningService.Init()
 	end
 
 	initialized = true
-	ensure_clean_remote().OnServerInvoke = clean_dirt
+	Network.Horse.CleanStableDirt:Respond(clean_dirt)
 
 	Players.PlayerRemoving:Connect(function(player)
 		activeRequestByPlayer[player] = nil

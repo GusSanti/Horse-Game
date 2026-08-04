@@ -17,9 +17,9 @@ local Utility = Modules:WaitForChild("Utility")
 local Trove = require(Libraries:WaitForChild("Trove"))
 local HorseInteractionUi = require(HudModules:WaitForChild("HorseInteractionUi"))
 local HorseViewportRenderer = require(HudModules:WaitForChild("HorseViewportRenderer"))
+local Network = require(Modules:WaitForChild("Network"))
 local DataUtility = require(Utility:WaitForChild("DataUtility"))
 local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
-local NetworkConfig = require(GameData:WaitForChild("NetworkConfig"))
 
 local MAIN_UI_NAMES = { "MainUI" }
 local MAINFRAME_NAMES = { "MainFrameFR", "MainframeFR" }
@@ -69,10 +69,6 @@ local rouletteState = {
 
 local update_spin_button
 local play_spin
-
-local _adminRemotesFolder = nil
-local _adminRemotesFolderResolved = false
-local _cachedRemotes = {}
 
 local function normalize_key(value)
 	if type(value) ~= "string" then
@@ -180,50 +176,18 @@ local function invoke_remote(remote, ...)
 	end
 
 	local success, response = pcall(function(...)
-		return remote:InvokeServer(...)
+		return remote:Call(...)
 	end, ...)
 
 	return success, response
 end
 
-local function get_admin_remotes_folder()
-	if _adminRemotesFolderResolved then
-		return _adminRemotesFolder
-	end
-
-	local gameplayRemotes = ReplicatedStorage:WaitForChild(NetworkConfig.GameplayFolderName, 15)
-	if gameplayRemotes then
-		_adminRemotesFolder = gameplayRemotes:WaitForChild(NetworkConfig.Admin.FolderName, 15)
-	end
-
-	_adminRemotesFolderResolved = true
-	return _adminRemotesFolder
-end
-
-local function get_admin_remote(remoteName)
-	if _cachedRemotes[remoteName] then
-		return _cachedRemotes[remoteName]
-	end
-
-	local folder = get_admin_remotes_folder()
-	if not folder then
-		return nil
-	end
-
-	local remote = folder:WaitForChild(remoteName, 10)
-	if remote then
-		_cachedRemotes[remoteName] = remote
-	end
-
-	return remote
-end
-
 local function get_roulette_state_remote()
-	return get_admin_remote(NetworkConfig.Admin.GetHorseRouletteState)
+	return Network.Admin.GetHorseRouletteState
 end
 
 local function get_roulette_roll_remote()
-	return get_admin_remote(NetworkConfig.Admin.RollHorseRoulette)
+	return Network.Admin.RollHorseRoulette
 end
 
 local function has_access()
@@ -1218,3 +1182,5 @@ rootTrove:Add(function()
 	hide_dialogue()
 	hide_reward_gui()
 end)
+
+script:SetAttribute("RuntimeReady", true)

@@ -808,3 +808,5 @@ rootTrove:Add(Players.PlayerRemoving:Connect(function(player)
 end))
 
 try_bind_ui()
+
+script:SetAttribute("RuntimeReady", true)

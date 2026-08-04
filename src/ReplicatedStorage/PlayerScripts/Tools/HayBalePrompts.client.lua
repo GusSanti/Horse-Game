@@ -283,3 +283,5 @@ end
 
 bind_plot(plotValue.Value)
 queue_refresh()
+
+script:SetAttribute("RuntimeReady", true)

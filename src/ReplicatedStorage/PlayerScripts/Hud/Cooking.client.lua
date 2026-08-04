@@ -1789,3 +1789,5 @@ rootTrove:Connect(RunService.Heartbeat, function(deltaTime)
 
 	refresh_dynamic_ui()
 end)
+
+script:SetAttribute("RuntimeReady", true)
