@@ -2,7 +2,7 @@ local Shared = require(script.Parent:WaitForChild("Shared"))
 
 return {
 	Shared.CreateWater({
-		ShopId = "Cowboy",
+		ShopId = false,
 		ItemId = "fresh_bucket",
 		DisplayName = "Fresh Bucket",
 		IconImage = "rbxassetid://120519406655185",

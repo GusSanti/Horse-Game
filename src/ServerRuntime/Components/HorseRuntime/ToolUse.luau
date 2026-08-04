@@ -12,11 +12,52 @@ local HorseService: any = require(
 )
 
 local ActiveUseByPlayer: { [Player]: boolean } = {}
+local ActiveBrushAnimationByPlayer: { [Player]: string } = {}
 local ToolUse = {}
 
 local function IsToolEquippedByPlayer(Player: Player, ToolValue: Tool): boolean
 	local Character: Model? = Player.Character
 	return Character ~= nil and ToolValue.Parent == Character
+end
+
+local function StopBrushAnimation(Player: Player, HorseId: any): ()
+	local ActiveHorseId: string? = ActiveBrushAnimationByPlayer[Player]
+	if not ActiveHorseId or HorseId ~= ActiveHorseId then
+		return
+	end
+
+	ActiveBrushAnimationByPlayer[Player] = nil
+	HorseService.StopBrushAnimation(Player, ActiveHorseId)
+end
+
+local function StartBrushAnimation(Player: Player, ToolValue: Instance?, HorseId: any): ()
+	if not ToolValue or not ToolValue:IsA("Tool") or type(HorseId) ~= "string" or HorseId == "" then
+		return
+	end
+	if not IsToolEquippedByPlayer(Player, ToolValue) then
+		return
+	end
+
+	local Definition: any, ResolvedItemId: string? = ToolRegistry.resolve_definition_from_tool(ToolValue)
+	if not Definition or ResolvedItemId ~= "horse_brush" then
+		return
+	end
+
+	local Horse: any, ResolvedHorseId: string? = HorseService.GetPlayerHorse(Player, HorseId)
+	if not Horse or not ResolvedHorseId then
+		return
+	end
+
+	StopBrushAnimation(Player, ActiveBrushAnimationByPlayer[Player])
+	local Started: boolean = HorseService.PlayBrushAnimation(Player, ResolvedHorseId)
+	if not Started then
+		return
+	end
+
+	ActiveBrushAnimationByPlayer[Player] = ResolvedHorseId
+	task.delay(3, function(): ()
+		StopBrushAnimation(Player, ResolvedHorseId)
+	end)
 end
 
 local function UseHorseTool(
@@ -94,11 +135,23 @@ end
 
 function ToolUse.Bind(TroveValue: any): ()
 	Network.Horse.UseTool:Respond(UseHorseTool, TroveValue)
+	Network.Horse.BrushAnimation:Connect(function(Player: Player, ToolValue: Instance?, HorseId: any, IsStarting: any): ()
+		if IsStarting == true then
+			StartBrushAnimation(Player, ToolValue, HorseId)
+		else
+			StopBrushAnimation(Player, HorseId)
+		end
+	end, TroveValue)
 	TroveValue:Connect(Framework.RuntimeEvents.PlayerRemoving, function(Player: Player): ()
 		ActiveUseByPlayer[Player] = nil
+		StopBrushAnimation(Player, ActiveBrushAnimationByPlayer[Player])
 	end)
 	TroveValue:Add(function(): ()
 		table.clear(ActiveUseByPlayer)
+		for Player: Player, HorseId: string in ActiveBrushAnimationByPlayer do
+			HorseService.StopBrushAnimation(Player, HorseId)
+		end
+		table.clear(ActiveBrushAnimationByPlayer)
 	end)
 end
 

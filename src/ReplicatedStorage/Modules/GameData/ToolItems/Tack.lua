@@ -11,7 +11,7 @@ return {
 		Tags = { "Bridle", "Starter" },
 	}),
 	Shared.CreateTack({
-		ShopId = "Noob",
+		ShopId = "Cowboy",
 		ItemId = "starter_saddle",
 		DisplayName = "Starter Saddle",
 		Description = "A basic reusable saddle that gives a small speed bonus.",
@@ -25,7 +25,7 @@ return {
 		Tags = { "Saddle", "Starter" },
 	}),
 	Shared.CreateTack({
-		ShopId = "Noob",
+		ShopId = "Cowboy",
 		ItemId = "trail_saddle",
 		DisplayName = "Trail Saddle",
 		Description = "A comfortable saddle for long rides with better control and stamina.",
@@ -41,7 +41,7 @@ return {
 		Tags = { "Saddle", "Trail" },
 	}),
 	Shared.CreateTack({
-		ShopId = "Noob",
+		ShopId = "Cowboy",
 		ItemId = "western_saddle",
 		DisplayName = "Western Saddle",
 		Description = "A sturdy reusable saddle with a balanced mounted speed bonus.",
@@ -57,7 +57,7 @@ return {
 		Tags = { "Saddle", "Western" },
 	}),
 	Shared.CreateTack({
-		ShopId = "Noob",
+		ShopId = "Cowboy",
 		ItemId = "endurance_saddle",
 		DisplayName = "Endurance Saddle",
 		Description = "A padded saddle built for stamina and smooth cross-country riding.",
@@ -74,7 +74,7 @@ return {
 		Tags = { "Saddle", "Endurance" },
 	}),
 	Shared.CreateTack({
-		ShopId = "Noob",
+		ShopId = "Cowboy",
 		ItemId = "english_saddle",
 		DisplayName = "English Saddle",
 		Description = "A light reusable saddle tuned for fast riding and racing.",
@@ -91,7 +91,7 @@ return {
 		Tags = { "Saddle", "English", "Race" },
 	}),
 	Shared.CreateTack({
-		ShopId = "Noob",
+		ShopId = "Cowboy",
 		ItemId = "racing_saddle",
 		DisplayName = "Racing Saddle",
 		Description = "An ultra-light saddle made for maximum sprint performance.",
@@ -108,7 +108,7 @@ return {
 		Tags = { "Saddle", "Racing", "Race" },
 	}),
 	Shared.CreateTack({
-		ShopId = "Noob",
+		ShopId = "Cowboy",
 		ItemId = "royal_saddle",
 		DisplayName = "Royal Saddle",
 		Description = "A prestigious saddle with strong all-around riding bonuses.",

@@ -6,8 +6,10 @@ local Modules: Folder = ReplicatedStorage:WaitForChild("Modules") :: Folder
 local Net: any = require(Modules:WaitForChild("Libraries"):WaitForChild("Net"))
 
 local Events = table.freeze({
+	AreaUnlocked = Net.Event.AreaUnlocked,
 	DataChanged = Net.Event.DataUtilityChanged,
 	HorseIndexStateChanged = Net.Event.HorseIndexStateChanged,
+	HorseBrushAnimation = Net.Event.HorseBrushAnimation,
 	HorseMountInput = Net.Event.HorseMountInput,
 	HorseMountState = Net.Event.HorseMountState,
 	HorseRevealAcknowledged = Net.Event.AcknowledgeReveal,
@@ -40,8 +42,10 @@ local Functions = table.freeze({
 	PlantSeed = Net.Function.PlantSeed,
 	RaceAction = Net.Function.RaceAction,
 	SellFruit = Net.Function.SellFruit,
+	TeleportToArea = Net.Function.TeleportToArea,
 	UpdateInventoryLoadout = Net.Function.UpdateInventoryLoadout,
 	UpdatePlayerSetting = Net.Function.UpdatePlayerSetting,
+	UpgradeStable = Net.Function.UpgradeStable,
 	UseHorseTool = Net.Function.UseHorseTool,
 	WaterPlant = Net.Function.WaterPlant,
 })
@@ -58,6 +62,7 @@ local Network = {
 	}),
 	Horse = table.freeze({
 		AcknowledgeReveal = Events.HorseRevealAcknowledged,
+		BrushAnimation = Events.HorseBrushAnimation,
 		CleanStableDirt = Functions.CleanStableDirt,
 		UseTool = Functions.UseHorseTool,
 	}),

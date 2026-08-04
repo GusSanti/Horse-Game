@@ -47,6 +47,10 @@ local ProfileTemplate = {
 		},
 	},
 
+	Teleports = {
+		UnlockedAreas = {},
+	},
+
 	Horses = {
 		EquippedHorseId = "",
 		NextHorseInstanceId = 0,

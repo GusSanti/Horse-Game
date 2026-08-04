@@ -163,6 +163,10 @@ local function destroy_stable_animation_state(visual: Instance): ()
 		stop_stable_animation_track(track)
 		track:Destroy()
 	end
+	stop_stable_animation_track(state.BrushTrack)
+	if state.BrushTrack then
+		state.BrushTrack:Destroy()
+	end
 	for _, animation in state.Animations do
 		animation:Destroy()
 	end
@@ -193,6 +197,9 @@ end
 local function sync_stable_animation(visual: Instance): ()
 	local state = stableAnimationStates[visual]
 	if not state then
+		return
+	end
+	if state.BrushActive then
 		return
 	end
 
@@ -251,11 +258,18 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 		visual:SetAttribute(SERVER_ANIMATIONS_READY_ATTRIBUTE, false)
 		return
 	end
+	local brushTrack, brushAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseBrushAnimationId)
+	if brushTrack then
+		brushTrack.Priority = Enum.AnimationPriority.Action
+		brushTrack.Looped = true
+	end
 
 	local state = {
 		Mode = nil,
 		Tracks = { Idle = idleTrack, Walk = walkTrack },
-		Animations = { idleAnimation, walkAnimation },
+		BrushTrack = brushTrack,
+		BrushActive = false,
+		Animations = { idleAnimation, walkAnimation, brushAnimation },
 		Connections = {},
 	}
 	stableAnimationStates[visual] = state
@@ -295,6 +309,68 @@ function HorseService.RegisterHorseVisual(visual: Instance?): ()
 			set_part_collision_group(descendant, HORSE_COLLISION_GROUP)
 		end
 	end)
+end
+
+local function get_player_horse_visual(player: Player, horseId: string): Instance?
+	local plotValue = player:FindFirstChild("Plot")
+	if not plotValue or not plotValue:IsA("ObjectValue") or not plotValue.Value then
+		return nil
+	end
+
+	local horseFolder = plotValue.Value:FindFirstChild(HORSE_FOLDER_NAME)
+	if not horseFolder then
+		return nil
+	end
+
+	for _, visual: Instance in horseFolder:GetDescendants() do
+		if visual:GetAttribute(VISUAL_HORSE_ATTRIBUTE) == true
+			and visual:GetAttribute(HORSE_ID_ATTRIBUTE) == horseId
+		then
+			return visual
+		end
+	end
+
+	return nil
+end
+
+function HorseService.PlayBrushAnimation(player: Player, horseId: string): (boolean, string)
+	local visual = get_player_horse_visual(player, horseId)
+	if not visual then
+		return false, "HorseVisualMissing"
+	end
+	if is_visual_horse_mounted(visual) then
+		return false, "HorseMounted"
+	end
+
+	local state = stableAnimationStates[visual]
+	local brushTrack = state and state.BrushTrack
+	if not brushTrack then
+		return false, "BrushAnimationMissing"
+	end
+
+	state.BrushActive = true
+	for _, track in state.Tracks do
+		stop_stable_animation_track(track)
+	end
+	pcall(function()
+		brushTrack:Stop(0)
+		brushTrack:Play(HorseMountConfig.AnimationFadeTime or 0.12, 1, 1)
+	end)
+
+	return true, "BrushAnimationPlaying"
+end
+
+function HorseService.StopBrushAnimation(player: Player, horseId: string): ()
+	local visual = get_player_horse_visual(player, horseId)
+	local state = visual and stableAnimationStates[visual] or nil
+	if not state or not state.BrushActive then
+		return
+	end
+
+	state.BrushActive = false
+	stop_stable_animation_track(state.BrushTrack)
+	state.Mode = nil
+	sync_stable_animation(visual)
 end
 
 function HorseService.Init(): ()

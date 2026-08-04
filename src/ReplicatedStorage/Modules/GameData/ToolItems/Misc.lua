@@ -2,7 +2,7 @@ local Shared = require(script.Parent:WaitForChild("Shared"))
 
 return {
 	Shared.CreateMisc({
-		ShopId = "Cowboy",
+		ShopId = "Noob",
 		ItemId = "soap",
 		DisplayName = "Soap",
 		IconImage = "rbxassetid://84292972231295",
@@ -22,7 +22,7 @@ return {
 		Tags = { "Cleaning", "Soap" },
 	}),
 	Shared.CreateMisc({
-		ShopId = "Cowboy",
+		ShopId = "Noob",
 		ItemId = "horse_brush",
 		DisplayName = "Horse Brush",
 		IconImage = "rbxassetid://92561730155272",
