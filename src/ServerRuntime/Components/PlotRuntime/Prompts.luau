@@ -70,11 +70,6 @@ local function GetSlotPrompt(Plot: Instance, SlotName: string): ProximityPrompt?
 	return Prompt
 end
 
-function Prompts.new(
-	AssignedPlotByPlayer: any,
-	SyncPlotHorses: (Player) -> (),
-	SyncPlotDoors: (Player, boolean?) -> ()
-): any
 local function EnsureFreeHorsePart(SlotFolder: Instance): BasePart?
 	local Existing: Instance? = SlotFolder:FindFirstChild(HorseRoamingConfig.FreeHorsePartName)
 	if Existing then
@@ -225,11 +220,15 @@ local function DebugAction(Player: Player, Action: string, SlotName: string, Cod
 	print(`[StablePromptDebug] player={Player.Name} action={Action} slot={SlotName} code={Code}`)
 end
 
-function Prompts.new(AssignedPlotByPlayer: any, SyncPlotHorses: (Player) -> ()): any
+function Prompts.new(
+	AssignedPlotByPlayer: any,
+	SyncPlotHorses: (Player) -> (),
+	SyncPlotDoors: ((Player, boolean?) -> ())?
+): any
 	return setmetatable({
 		_AssignedPlots = AssignedPlotByPlayer,
 		_SyncHorses = SyncPlotHorses,
-		_SyncDoors = SyncPlotDoors,
+		_SyncDoors = SyncPlotDoors or function() end,
 		_PlotTroves = {},
 		_HorseMountPromptBindings = {},
 	}, Prompts)
@@ -313,17 +312,6 @@ function Prompts:_BindHorseMountPrompt(Player: Player, Prompt: ProximityPrompt):
 			return
 		end
 
-		local Success: boolean = HorseRoamingService.ToggleHorseFree(Player, HorseId)
-		if not Success then
-			self._SyncHorses(Player)
-		end
-		self._SyncDoors(Player, true)
-		self:RefreshSlots(Player)
-		return {
-			Success = Success,
-			Code = if Success then "Updated" else "Unavailable",
-			IsFree = HorseRoamingService.IsHorseFree(Player, HorseId),
-		}
 		Prompt.Enabled = false
 		local Response: any = HorseMountService.Mount(Player, {
 			HorseId = HorseId,
@@ -426,6 +414,7 @@ function Prompts:_Bind(Player: Player, PlotTrove: any, Plot: Instance): ()
 				if Code == "Returned" then
 					self._SyncHorses(Player)
 				end
+				self._SyncDoors(Player, true)
 				DebugAction(Player, "ToggleFree", SlotName, Code)
 				self:RefreshHorseInteractions(Player)
 			end)

@@ -21,11 +21,11 @@ local LEVEL_CONFIGS: {[number]: any} = {
 	},
 	[2] = {
 		Slots = {
-			Slot1 = { Position = Vector3.new(459.834, -24.636, 672.816) },
-			Slot2 = { Position = Vector3.new(445.051, -24.636, 672.816) },
+			Slot1 = { Mode = "Slide", Position = Vector3.new(459.834, -24.636, 672.816) },
+			Slot2 = { Mode = "Slide", Position = Vector3.new(445.051, -24.636, 672.816) },
 		},
 		Main = {
-			Door = { Angle = -90 },
+			Door = { Angle = 90 },
 		},
 	},
 	[3] = {
@@ -35,24 +35,35 @@ local LEVEL_CONFIGS: {[number]: any} = {
 			Slot3 = { Angle = -90 },
 		},
 		Main = {
-			Door1 = { Angle = -90 },
-			Door2 = { Angle = 90 },
+			Door1 = { Angle = 90 },
+			Door2 = { Angle = -90 },
 		},
 	},
 	[4] = {
 		Slots = {
-			Slot1 = { Angle = -90 },
-			Slot2 = { Angle = -90 },
-			Slot3 = { Angle = -90 },
+			Slot1 = { Angle = 90 },
+			Slot2 = { Angle = 90 },
+			Slot3 = { Angle = 90 },
 		},
 	},
 }
 
+type DoorPartState = {
+	Part: BasePart,
+	ClosedCFrame: CFrame,
+	OpenCFrame: CFrame,
+}
+
 type DoorState = {
 	Instance: Instance,
+	Mode: string?,
 	ClosedCFrame: CFrame,
 	OpenCFrame: CFrame,
 	IsOpen: boolean,
+	PartStates: {DoorPartState},
+	PartTweens: {Tween},
+	PartCompletedConnections: {RBXScriptConnection},
+	AnimationSerial: number,
 	Tween: Tween?,
 	Value: CFrameValue?,
 	ValueConnection: RBXScriptConnection?,
@@ -86,7 +97,42 @@ local function pivot_instance(instance: Instance, cframe: CFrame): ()
 	end
 end
 
+local function get_base_parts(instance: Instance): {BasePart}
+	local parts: {BasePart} = {}
+	if instance:IsA("BasePart") then
+		table.insert(parts, instance)
+	end
+	for _index: number, descendant: Instance in instance:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+		end
+	end
+	return parts
+end
+
+local function create_part_states(door: Instance, closedCFrame: CFrame, openCFrame: CFrame): {DoorPartState}
+	local partStates: {DoorPartState} = {}
+	local openTransform: CFrame = openCFrame * closedCFrame:Inverse()
+	for _index: number, part: BasePart in get_base_parts(door) do
+		table.insert(partStates, {
+			Part = part,
+			ClosedCFrame = part.CFrame,
+			OpenCFrame = openTransform * part.CFrame,
+		})
+	end
+	return partStates
+end
+
+local function disconnect_part_animation(state: DoorState): ()
+	for _index: number, connection: RBXScriptConnection in state.PartCompletedConnections do
+		connection:Disconnect()
+	end
+	table.clear(state.PartCompletedConnections)
+	table.clear(state.PartTweens)
+end
+
 local function stop_animation(state: DoorState): ()
+	state.AnimationSerial += 1
 	local tween: Tween? = state.Tween
 	state.Tween = nil
 	if tween then
@@ -103,6 +149,11 @@ local function stop_animation(state: DoorState): ()
 	if state.Value then
 		state.Value:Destroy()
 		state.Value = nil
+	end
+	local partTweens: {Tween} = table.clone(state.PartTweens)
+	disconnect_part_animation(state)
+	for _index: number, partTween: Tween in partTweens do
+		partTween:Cancel()
 	end
 end
 
@@ -148,14 +199,75 @@ local function create_door_state(door: Instance?, definition: any): DoorState?
 	door:SetAttribute(OPEN_ATTRIBUTE, false)
 	return {
 		Instance = door,
+		Mode = definition.Mode,
 		ClosedCFrame = closedCFrame,
 		OpenCFrame = openCFrame,
 		IsOpen = false,
+		PartStates = create_part_states(door, closedCFrame, openCFrame),
+		PartTweens = {},
+		PartCompletedConnections = {},
+		AnimationSerial = 0,
 		Tween = nil,
 		Value = nil,
 		ValueConnection = nil,
 		CompletedConnection = nil,
 	}
+end
+
+local function set_part_state_cframes(state: DoorState, isOpen: boolean): boolean
+	if #state.PartStates == 0 then
+		return false
+	end
+	for _index: number, partState: DoorPartState in state.PartStates do
+		if partState.Part.Parent then
+			partState.Part.CFrame = if isOpen then partState.OpenCFrame else partState.ClosedCFrame
+		end
+	end
+	return true
+end
+
+local function animate_part_state_cframes(state: DoorState, isOpen: boolean): boolean
+	if #state.PartStates == 0 then
+		return false
+	end
+
+	local activeParts: number = 0
+	local tweenInfo: TweenInfo = TweenInfo.new(ANIMATION_DURATION, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+	state.AnimationSerial += 1
+	local animationSerial: number = state.AnimationSerial
+
+	for _index: number, partState: DoorPartState in state.PartStates do
+		local part: BasePart = partState.Part
+		if part.Parent then
+			activeParts += 1
+			local targetCFrame: CFrame = if isOpen then partState.OpenCFrame else partState.ClosedCFrame
+			local tween: Tween = TweenService:Create(part, tweenInfo, { CFrame = targetCFrame })
+			table.insert(state.PartTweens, tween)
+		end
+	end
+	if activeParts == 0 then
+		return false
+	end
+
+	local completedParts: number = 0
+	for _index: number, tween: Tween in state.PartTweens do
+		local connection: RBXScriptConnection = tween.Completed:Connect(function()
+			if state.AnimationSerial ~= animationSerial then
+				return
+			end
+			completedParts += 1
+			if completedParts < activeParts then
+				return
+			end
+			set_part_state_cframes(state, isOpen)
+			disconnect_part_animation(state)
+		end)
+		table.insert(state.PartCompletedConnections, connection)
+	end
+	for _index: number, tween: Tween in state.PartTweens do
+		tween:Play()
+	end
+	return true
 end
 
 local function set_door_open(state: DoorState, isOpen: boolean, animate: boolean): ()
@@ -167,8 +279,10 @@ local function set_door_open(state: DoorState, isOpen: boolean, animate: boolean
 
 	local targetCFrame: CFrame = if isOpen then state.OpenCFrame else state.ClosedCFrame
 	if state.IsOpen == isOpen then
-		if not state.Tween and not animate then
-			pivot_instance(door, targetCFrame)
+		if not state.Tween and #state.PartTweens == 0 and not animate then
+			if state.Mode ~= "Slide" or not set_part_state_cframes(state, isOpen) then
+				pivot_instance(door, targetCFrame)
+			end
 		end
 		return
 	end
@@ -178,7 +292,13 @@ local function set_door_open(state: DoorState, isOpen: boolean, animate: boolean
 	door:SetAttribute(OPEN_ATTRIBUTE, isOpen)
 
 	if not animate then
-		pivot_instance(door, targetCFrame)
+		if state.Mode ~= "Slide" or not set_part_state_cframes(state, isOpen) then
+			pivot_instance(door, targetCFrame)
+		end
+		return
+	end
+
+	if state.Mode == "Slide" and animate_part_state_cframes(state, isOpen) then
 		return
 	end
 
