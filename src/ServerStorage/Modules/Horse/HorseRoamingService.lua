@@ -30,6 +30,8 @@ local PLAYER_SPAWN_NAME = "PlayerSpawn"
 local HORSE_POSITION_NAME = "HorsePosition"
 
 local HorseRoamingService = {}
+local freeStateChanged = Instance.new("BindableEvent")
+HorseRoamingService.FreeStateChanged = freeStateChanged.Event
 
 local initialized = false
 local random = Random.new()
@@ -137,6 +139,7 @@ local function set_free_state(player: Player, horseId: string, isFree: boolean):
 	if not horseIds then
 		return
 	end
+	local wasFree = horseIds[horseId] == true
 
 	if isFree then
 		horseIds[horseId] = true
@@ -145,6 +148,10 @@ local function set_free_state(player: Player, horseId: string, isFree: boolean):
 		if not next(horseIds) then
 			freeHorseIdsByPlayer[player] = nil
 		end
+	end
+
+	if wasFree ~= isFree then
+		freeStateChanged:Fire(player, horseId, isFree)
 	end
 end
 
@@ -1172,6 +1179,7 @@ function HorseRoamingService.ToggleHorseFree(player: Player, horseId: string): (
 end
 
 function HorseRoamingService.ReturnPlayerHorsesToStable(player: Player): ()
+	local hadFreeHorses = freeHorseIdsByPlayer[player] ~= nil
 	local playerStates = activeByPlayer[player]
 	local states = {}
 	if playerStates then
@@ -1190,6 +1198,9 @@ function HorseRoamingService.ReturnPlayerHorsesToStable(player: Player): ()
 	end
 
 	freeHorseIdsByPlayer[player] = nil
+	if hadFreeHorses then
+		freeStateChanged:Fire(player, nil, false)
+	end
 end
 
 function HorseRoamingService.Init(): ()

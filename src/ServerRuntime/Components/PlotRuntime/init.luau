@@ -38,12 +38,14 @@ local AdminAccessService = require(ServerModules:WaitForChild("Admin"):WaitForCh
 local Trove = require(Libraries:WaitForChild("Trove"))
 local Layout = require(script.Layout)
 local Prompts = require(script.Prompts)
+local StableDoors = require(script.StableDoors)
 
 local assignedPlotByPlayer: {[Player]: PlotData} = {}
 local plotOwnerByInstance: {[Instance]: Player} = {}
 local playerTroves: {[Player]: any} = {}
 local activeLevelByPlayer: {[Player]: number} = {}
 local changingLevelByPlayer: {[Player]: boolean} = {}
+local doorRuntime: any = StableDoors.new()
 local promptRuntime: any = nil
 local disable_plot_slot_prompts: (Instance) -> ()
 
@@ -120,6 +122,11 @@ end
 local function release_plot(player: Player): ()
 	local plotData = assignedPlotByPlayer[player]
 	if plotData then
+		local level = activeLevelByPlayer[player]
+			or tonumber(plotData.instance:GetAttribute(STABLE_LEVEL_ATTRIBUTE))
+			or StableDictionary.DefaultLevel
+		doorRuntime:Sync(plotData.instance, level, {}, false)
+		doorRuntime:Forget(plotData.instance)
 		HorseService.ClearPlotHorses(plotData.instance)
 		disable_plot_slot_prompts(plotData.instance)
 
@@ -207,7 +214,31 @@ local function sync_plot_horses(player: Player): ()
 	HorseService.SyncPlotHorses(player, plotData.instance)
 end
 
-promptRuntime = Prompts.new(assignedPlotByPlayer, sync_plot_horses)
+local function sync_plot_doors(player: Player, animate: boolean?): ()
+	local plotData = assignedPlotByPlayer[player]
+	if not plotData then
+		return
+	end
+
+	local stable = DataUtility.server.get(player, "Stable")
+	local horseSlots = if type(stable) == "table" and type(stable.HorseSlots) == "table"
+		then stable.HorseSlots
+		else {}
+	local openSlots: {[string]: boolean} = {}
+	for _index: number, slotName: string in StableDictionary.HorseSlotOrder do
+		local horseId = horseSlots[slotName]
+		openSlots[slotName] = type(horseId) == "string"
+			and horseId ~= ""
+			and HorseRoamingService.IsHorseFree(player, horseId)
+	end
+
+	local level = activeLevelByPlayer[player]
+		or tonumber(plotData.instance:GetAttribute(STABLE_LEVEL_ATTRIBUTE))
+		or StableDictionary.DefaultLevel
+	doorRuntime:Sync(plotData.instance, level, openSlots, animate)
+end
+
+promptRuntime = Prompts.new(assignedPlotByPlayer, sync_plot_horses, sync_plot_doors)
 disable_plot_slot_prompts = function(plot: Instance): ()
 	promptRuntime:Disable(plot)
 end
@@ -215,7 +246,12 @@ local function refresh_plot_slot_prompts(player: Player): ()
 	promptRuntime:RefreshSlots(player)
 end
 local function rebind_plot_slot_prompts(player: Player, plot: Instance): ()
+	local level = activeLevelByPlayer[player]
+		or tonumber(plot:GetAttribute(STABLE_LEVEL_ATTRIBUTE))
+		or StableDictionary.DefaultLevel
+	doorRuntime:Bind(plot, level)
 	promptRuntime:Rebind(player, plot)
+	sync_plot_doors(player, false)
 end
 
 local function set_player_plot_level(player: Player, requestedLevel, deferDataSave: boolean?): (boolean, string)
@@ -508,6 +544,9 @@ function PlotRuntime:Init(): ()
 	end, self.Trove)
 	Network.Events.TeleportToStable:Connect(teleport_player_to_plot, self.Trove)
 	Network.Functions.UpgradeStable:Respond(purchase_stable_upgrade, self.Trove)
+	self.Trove:Connect(HorseRoamingService.FreeStateChanged, function(player: Player)
+		sync_plot_doors(player, true)
+	end)
 	self.Trove:Connect(Framework.RuntimeEvents.PlayerAdded, on_player_added)
 	self.Trove:Connect(Framework.RuntimeEvents.PlayerRemoving, on_player_removing)
 	self.Trove:Connect(Framework.RuntimeEvents.CharacterAdded, on_character_added)
@@ -522,6 +561,7 @@ function PlotRuntime:Destroy(): ()
 		on_player_removing(Player)
 	end
 	promptRuntime:Destroy()
+	doorRuntime:Destroy()
 	self.Trove:Destroy()
 	self.Trove = nil
 	table.clear(assignedPlotByPlayer)

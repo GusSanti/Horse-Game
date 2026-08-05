@@ -68,10 +68,15 @@ local function GetSlotPrompt(Plot: Instance, SlotName: string): ProximityPrompt?
 	return Prompt
 end
 
-function Prompts.new(AssignedPlotByPlayer: any, SyncPlotHorses: (Player) -> ()): any
+function Prompts.new(
+	AssignedPlotByPlayer: any,
+	SyncPlotHorses: (Player) -> (),
+	SyncPlotDoors: (Player, boolean?) -> ()
+): any
 	return setmetatable({
 		_AssignedPlots = AssignedPlotByPlayer,
 		_SyncHorses = SyncPlotHorses,
+		_SyncDoors = SyncPlotDoors,
 		_PlotTroves = {},
 		_LastActionAt = {},
 	}, Prompts)
@@ -203,6 +208,7 @@ function Prompts:Execute(Player: Player, Payload: any): any
 		if not Success then
 			self._SyncHorses(Player)
 		end
+		self._SyncDoors(Player, true)
 		self:RefreshSlots(Player)
 		return {
 			Success = Success,
