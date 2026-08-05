@@ -67,6 +67,66 @@ local function find_named_instance(root: Instance?, aliases: {string}, className
 	return nil
 end
 
+local function get_direct_gui_branch(root: GuiObject, descendant: Instance?): GuiObject?
+	if not descendant or descendant == root then
+		return nil
+	end
+
+	local current = descendant
+	while current.Parent and current.Parent ~= root do
+		current = current.Parent
+	end
+
+	if current.Parent == root and current:IsA("GuiObject") then
+		return current
+	end
+
+	return nil
+end
+
+local function build_notification_content(dialogue: GuiObject, refs): {any}
+	local tasks = find_named_instance(dialogue, TASKS_FRAME_NAMES, "GuiObject")
+	local content = {}
+	local included = {}
+
+	for _, element in ipairs({
+		refs.Title,
+		refs.TitleShadow,
+		refs.Details,
+		refs.AcceptButton,
+		refs.DenyButton,
+	}) do
+		if not element then
+			continue
+		end
+
+		local branch = get_direct_gui_branch(dialogue, element)
+		if branch and tasks and (tasks == branch or tasks:IsDescendantOf(branch)) then
+			branch = element
+		end
+		branch = branch or element
+
+		if branch:IsA("GuiObject") and not included[branch] then
+			included[branch] = true
+			content[#content + 1] = {
+				Instance = branch,
+				Visible = branch.Visible,
+			}
+		end
+	end
+
+	return content
+end
+
+local function set_notification_content_visible(refs, isVisible: boolean): ()
+	for _, contentEntry in ipairs(refs.NotificationContent or {}) do
+		local instance = contentEntry.Instance
+		if instance and instance.Parent then
+			instance.Visible = isVisible and contentEntry.Visible or false
+		end
+	end
+end
+
 local function get_mainframe(): Instance?
 	if cachedMainframe and cachedMainframe.Parent then
 		return cachedMainframe
@@ -111,6 +171,10 @@ local function get_dialogue_references()
 		AcceptButton = find_named_instance(dialogue, ACCEPT_BUTTON_NAMES, "GuiButton") :: GuiButton?,
 		DenyButton = find_named_instance(dialogue, DENY_BUTTON_NAMES, "GuiButton") :: GuiButton?,
 	}
+	cachedDialogueReferences.NotificationContent = build_notification_content(
+		cachedDialogueReferences.Dialogue,
+		cachedDialogueReferences
+	)
 	return cachedDialogueReferences
 end
 
@@ -209,6 +273,7 @@ function Notifications.ShowDialogue(config): boolean
 
 	activeNotificationId = config.id
 	ensure_dialogue_animation(refs.Dialogue)
+	set_notification_content_visible(refs, true)
 	HudAnim.play_open(refs.Dialogue)
 	SoundUtility.PlayGameSFX("Popup")
 	set_text_pair(refs.Title, refs.TitleShadow, config.title or "Notification")
@@ -265,6 +330,7 @@ function Notifications.HideDialogue(id): boolean
 	hide_confirmation_root()
 
 	if refs then
+		set_notification_content_visible(refs, false)
 		if refs.Dialogue.Visible then
 			HudAnim.play_close(refs.Dialogue)
 		else

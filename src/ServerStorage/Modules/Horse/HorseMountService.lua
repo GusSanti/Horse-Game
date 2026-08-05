@@ -1786,6 +1786,10 @@ local function mount_player(player, payload)
 	}
 end
 
+function HorseMountService.Mount(player: Player, payload: any): any
+	return mount_player(player, payload)
+end
+
 local function dismount_player(player)
 	local mountState = begin_dismount_transition(player, "Dismounted")
 	local didUnmount = mountState ~= nil
@@ -2011,7 +2015,7 @@ function HorseMountService.Init()
 	end
 
 	serviceTrove = HorseMountBindings.Bind({
-		Mount = mount_player,
+		Mount = HorseMountService.Mount,
 		Dismount = dismount_player,
 		GetState = get_player_mount_state,
 		Input = handle_mount_input,

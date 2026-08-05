@@ -477,7 +477,7 @@ local function get_animator(model)
 end
 
 local function play_idle(scene, options)
-	if not scene or not scene.Model or options and options.PlayIdle == false then
+	if not scene or not scene.Model or not options or options.PlayIdle ~= true then
 		return
 	end
 

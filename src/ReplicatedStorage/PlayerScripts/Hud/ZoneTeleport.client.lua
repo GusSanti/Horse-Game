@@ -28,7 +28,6 @@ local TELEPORT_DATA_PATH = "Teleports"
 local UNLOCKED_AREAS_PATH = "Teleports.UnlockedAreas"
 local AREA_UNLOCKED_EVENT_NAME = "AreaUnlocked"
 local UNLOCK_NOTIFICATION_ID = "ZoneTeleportUnlocked"
-local DEBUG_ATTRIBUTE = "ZoneTeleportDebug"
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
@@ -41,20 +40,6 @@ local currentUi = nil
 local templateSource = nil
 local renderQueued = false
 local teleportRequestInFlight = false
-local lastDebugMessage = nil
-
-local function debug_log(message)
-	if message == lastDebugMessage then
-		return
-	end
-
-	lastDebugMessage = message
-	script:SetAttribute(DEBUG_ATTRIBUTE, message)
-	if currentUi and currentUi.Root then
-		currentUi.Root:SetAttribute(DEBUG_ATTRIBUTE, message)
-	end
-	warn("[ZoneTeleport] " .. message)
-end
 
 local function normalize_key(value)
 	if type(value) ~= "string" then
@@ -262,15 +247,14 @@ local function render_areas()
 
 	clear_generated_cards()
 	local areas = get_unlocked_areas()
-	debug_log(("Renderizando %d área(s) desbloqueada(s)"):format(#areas))
 	for layoutOrder, area in ipairs(areas) do
 		local card = templateSource:Clone()
 		card.Name = "Teleport_" .. area.Id
 		card.LayoutOrder = layoutOrder
 		card.Visible = true
 		card:SetAttribute(GENERATED_ATTRIBUTE, true)
-		local cellTextCount = set_text(card, AREA_LABEL_NAMES, area.Name)
-		local cellShadowTextCount = set_text(card, AREA_SHADOW_LABEL_NAMES, area.Name)
+		set_text(card, AREA_LABEL_NAMES, area.Name)
+		set_text(card, AREA_SHADOW_LABEL_NAMES, area.Name)
 
 		local button = if card:IsA("GuiButton") then card else card:FindFirstChildWhichIsA("GuiButton", true)
 		if button then
@@ -279,21 +263,6 @@ local function render_areas()
 
 		card.Parent = currentUi.List
 		cardTrove:Add(card)
-		debug_log(("Clone %s: SellTX=%d, SellShadowTX=%d, texto=%q"):format(
-			area.Id,
-			cellTextCount,
-			cellShadowTextCount,
-			area.Name
-		))
-		for _, descendant in ipairs(card:GetDescendants()) do
-			if (matches_alias(descendant, { "SellTX" }) or matches_alias(descendant, { "SellShadowTX" }))
-				and (descendant:IsA("TextLabel") or descendant:IsA("TextButton") or descendant:IsA("TextBox"))
-			then
-				cardTrove:Connect(descendant:GetPropertyChangedSignal("Text"), function()
-					debug_log(("%s.%s foi alterado para %q"):format(card.Name, descendant.Name, descendant.Text))
-				end)
-			end
-		end
 		if button then
 			cardTrove:Connect(button.Activated, function()
 				request_teleport(area.Id)
@@ -339,7 +308,6 @@ local function try_bind_ui()
 	local frames = find_frames_container()
 	local root = find_gui_object(frames, TELEPORT_ROOT_NAMES, true)
 	if not root then
-		debug_log("Não encontrei Frames.Teleport na PlayerGui")
 		destroy_ui_binding()
 		return
 	end
@@ -350,7 +318,6 @@ local function try_bind_ui()
 	local list = find_gui_object(root, LIST_NAMES, true)
 	local template = find_gui_object(list, TEMPLATE_NAMES, true)
 	if not list or not template then
-		debug_log("Teleport encontrado, mas ListScrollingFrame ou TemplateButton está ausente")
 		destroy_ui_binding()
 		return
 	end
@@ -371,7 +338,6 @@ local function try_bind_ui()
 	templateSource = template:Clone()
 	templateSource.Visible = true
 	uiTrove:Add(templateSource)
-	debug_log(("UI vinculada: root=%s, template=%s"):format(root:GetFullName(), template:GetFullName()))
 
 	local teleportButton = find_teleport_button()
 	if teleportButton then
@@ -392,7 +358,6 @@ local function try_bind_ui()
 end
 
 DataUtility.client.ensure_remotes()
-debug_log("Iniciando controlador de teleporte")
 rootTrove:Add(DataUtility.client.bind(UNLOCKED_AREAS_PATH, queue_render))
 Net.Event[AREA_UNLOCKED_EVENT_NAME]:Connect(function(payload)
 	if type(payload) ~= "table" then

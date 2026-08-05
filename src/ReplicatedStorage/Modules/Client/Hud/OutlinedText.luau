@@ -75,10 +75,14 @@ end
 
 local function ResolveTransparency(TextObject: StyledText): number
 	local Override: number? = GetNumberAttribute(TextObject, TRANSPARENCY_ATTRIBUTE)
+	local BaseTransparency: number
 	if Override then
-		return math.clamp(Override, 0, 1)
+		BaseTransparency = math.clamp(Override, 0, 1)
+	else
+		BaseTransparency = 0.05
 	end
-	return 0.05
+
+	return 1 - ((1 - BaseTransparency) * (1 - TextObject.TextTransparency))
 end
 
 local function ApplyVisual(TextObject: StyledText, State: TextState): ()
@@ -170,6 +174,7 @@ function OutlinedText.bind(InstanceValue: Instance): ()
 	TextTrove:Connect(TextObject:GetPropertyChangedSignal("TextScaled"), Refresh)
 	TextTrove:Connect(TextObject:GetPropertyChangedSignal("AbsoluteSize"), Refresh)
 	TextTrove:Connect(TextObject:GetPropertyChangedSignal("FontFace"), Refresh)
+	TextTrove:Connect(TextObject:GetPropertyChangedSignal("TextTransparency"), Refresh)
 	TextTrove:Connect(TextObject:GetAttributeChangedSignal(ICON_ATTRIBUTE), Refresh)
 	TextTrove:Connect(TextObject:GetAttributeChangedSignal(IGNORE_ATTRIBUTE), Refresh)
 	TextTrove:Connect(TextObject:GetAttributeChangedSignal(THICKNESS_ATTRIBUTE), Refresh)
