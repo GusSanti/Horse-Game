@@ -59,6 +59,7 @@ local SoapCleaningDictionary = {
 	ShowerPitchDegrees = -90,
 	ShowerFollowLerpSpeed = 18,
 	StableBackgroundVisibility = 0.2,
+	StableBackgroundMaxDistance = 100,
 	FinishDelay = 0.2,
 	EffectsFolderName = "SoapEffects",
 	MouseHitboxName = "SoapMouseHitbox",

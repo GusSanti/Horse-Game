@@ -28,6 +28,9 @@ local FREE_ATTRIBUTE = ToolDictionary.FreeHorseAttribute or HorseRoamingConfig.F
 local BEHAVIOR_ATTRIBUTE = ToolDictionary.RoamingBehaviorAttribute or HorseRoamingConfig.BehaviorAttribute
 local PLAYER_SPAWN_NAME = "PlayerSpawn"
 local HORSE_POSITION_NAME = "HorsePosition"
+local STABLE_DOOR_NAME = "Door"
+local MAIN_DOOR_NAME = "MainDoor"
+local STABLE_DOOR_CLOSED_POSITION_ATTRIBUTE = "StableDoorClosedPosition"
 
 local HorseRoamingService = {}
 local freeStateChanged = Instance.new("BindableEvent")
@@ -325,6 +328,82 @@ local function resolve_ground_position(state, position: Vector3): Vector3
 	)
 end
 
+local function get_instance_position(instance: Instance?): Vector3?
+	if not instance then
+		return nil
+	end
+	if instance:IsA("BasePart") then
+		return instance.Position
+	end
+	if instance:IsA("Model") then
+		return instance:GetPivot().Position
+	end
+	return nil
+end
+
+local function get_stable_exit_target(state): Vector3
+	local currentPivot = state.Visual:GetPivot()
+	local forward = Vector3.new(currentPivot.LookVector.X, 0, currentPivot.LookVector.Z)
+	if forward.Magnitude <= 0.01 then
+		return currentPivot.Position
+	end
+	forward = forward.Unit
+
+	local exitDistance = HorseRoamingConfig.StableExitFallbackForwardDistance
+	local slot = find_stable_slot(state.Player, state.HorseId)
+	local doorPosition = get_instance_position(slot and slot:FindFirstChild(STABLE_DOOR_NAME))
+	if doorPosition then
+		local distanceToDoor = (doorPosition - currentPivot.Position):Dot(forward)
+		if distanceToDoor > 0 then
+			exitDistance = math.max(
+				exitDistance,
+				distanceToDoor + HorseRoamingConfig.StableExitDoorMargin
+			)
+		end
+	end
+
+	return resolve_ground_position(state, currentPivot.Position + (forward * exitDistance))
+end
+
+local function get_main_door_target(state): Vector3?
+	local plot = get_player_plot(state.Player)
+	local mainDoor = plot and plot:FindFirstChild(MAIN_DOOR_NAME)
+	if not mainDoor then
+		return nil
+	end
+
+	local positionSum = Vector3.zero
+	local positionCount = 0
+	for _, child in mainDoor:GetChildren() do
+		if child:IsA("Model") then
+			local closedPosition = child:GetAttribute(STABLE_DOOR_CLOSED_POSITION_ATTRIBUTE)
+			local childPosition = if typeof(closedPosition) == "Vector3"
+				then closedPosition
+				else get_instance_position(child)
+			if childPosition then
+				positionSum += childPosition
+				positionCount += 1
+			end
+		end
+	end
+
+	if positionCount == 0 then
+		return nil
+	end
+
+	return resolve_ground_position(state, positionSum / positionCount)
+end
+
+local function get_forward_target(state, distance: number): Vector3
+	local currentPivot = state.Visual:GetPivot()
+	local forward = Vector3.new(currentPivot.LookVector.X, 0, currentPivot.LookVector.Z)
+	if forward.Magnitude <= 0.01 then
+		return currentPivot.Position
+	end
+
+	return resolve_ground_position(state, currentPivot.Position + (forward.Unit * distance))
+end
+
 local function constrain_movement_step(state, currentPosition: Vector3, nextPosition: Vector3): Vector3
 	local maxDistance = HorseRoamingConfig.MaxDistanceFromPlayerSpawn
 	local currentOffset = Vector3.new(
@@ -587,9 +666,21 @@ local function graze(state): boolean
 end
 
 local function run_behavior(state): ()
-	if state.WalkToPlayerSpawnFirst == true then
-		local spawnTarget = resolve_ground_position(state, state.AnchorPosition)
-		walk_to_position(state, spawnTarget)
+	if state.WalkOutOfStableFirst == true then
+		move_to_point(state, get_stable_exit_target(state))
+		if is_active(state) then
+			local spawnTarget = resolve_ground_position(state, state.AnchorPosition)
+			walk_to_position(state, spawnTarget)
+		end
+		if is_active(state) then
+			local mainDoorTarget = get_main_door_target(state)
+			if mainDoorTarget then
+				walk_to_position(state, mainDoorTarget)
+				if is_active(state) then
+					move_to_point(state, get_forward_target(state, HorseRoamingConfig.MainDoorForwardMargin))
+				end
+			end
+		end
 		state.MovementDeadline = nil
 		if not is_active(state) then
 			return
@@ -598,8 +689,8 @@ local function run_behavior(state): ()
 		state.Visual:SetAttribute(FREE_ATTRIBUTE, HorseRoamingService.IsHorseFree(state.Player, state.HorseId))
 	end
 
-	-- After the optional exit walk, normal roaming always begins with another
-	-- visible walk rather than waiting at PlayerSpawn.
+	-- After leaving the stable, PlayerSpawn, and the optional main door, normal
+	-- roaming begins with another visible walk rather than pausing at the exit.
 	while is_active(state) do
 		wait_while_held(state)
 
@@ -737,7 +828,7 @@ local function begin_movement_state(player: Player, horseId: string, visual: Ins
 		PendingHungerGain = 0,
 		NextGrazeAt = os.clock() + random_range(HorseRoamingConfig.GrazeInterval),
 		LastNeedsUpdateAt = os.clock(),
-		WalkToPlayerSpawnFirst = options and options.WalkToPlayerSpawnFirst == true,
+		WalkOutOfStableFirst = options and options.WalkOutOfStableFirst == true,
 		MovementDeadline = options and options.MovementDeadline or nil,
 	}
 
@@ -906,7 +997,7 @@ function HorseRoamingService.Release(player: Player, horseId: string, visual: In
 	end
 
 	local movementOptions = options or {}
-	if movementOptions.WalkToPlayerSpawnFirst == true then
+	if movementOptions.WalkOutOfStableFirst == true then
 		movementOptions.InitialFreeAttribute = false
 	end
 
@@ -1167,7 +1258,7 @@ function HorseRoamingService.ToggleHorseFree(player: Player, horseId: string): (
 	end
 
 	local released, code = HorseRoamingService.Release(player, horseId, visual, {
-		WalkToPlayerSpawnFirst = true,
+		WalkOutOfStableFirst = true,
 	})
 	if not released then
 		set_free_state(player, horseId, false)

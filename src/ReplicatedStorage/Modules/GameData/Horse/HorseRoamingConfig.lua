@@ -22,6 +22,11 @@ local HorseRoamingConfig = {
 	ArrivalDistance = 0.8,
 	WalkSpeed = 6.5,
 	TurnSpeedDegrees = 95,
+	-- When released from a stall, the horse follows its authored forward direction
+	-- past the door before normal roaming begins.
+	StableExitDoorMargin = 4,
+	StableExitFallbackForwardDistance = 14,
+	MainDoorForwardMargin = 14,
 
 	MaxInteractionHoldSeconds = 90,
 

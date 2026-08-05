@@ -69,6 +69,7 @@ local SHOWER_HEIGHT_OFFSET: number = soapCleaningDictionary.ShowerHeightOffset
 local SHOWER_PITCH_DEGREES: number = soapCleaningDictionary.ShowerPitchDegrees
 local SHOWER_FOLLOW_LERP_SPEED: number = soapCleaningDictionary.ShowerFollowLerpSpeed
 local STABLE_BACKGROUND_VISIBILITY: number = soapCleaningDictionary.StableBackgroundVisibility
+local STABLE_BACKGROUND_MAX_DISTANCE: number = soapCleaningDictionary.StableBackgroundMaxDistance
 local CANCEL_KEYS = soapCleaningDictionary.CancelKeys
 local STABLES_FOLDER_NAME = "Stables"
 local OWNER_USER_ID_ATTRIBUTE = "OwnerUserId"
@@ -223,6 +224,32 @@ local function get_current_player_plot(horseVisual: Instance): Instance?
 	return nil
 end
 
+local function get_plot_position(plot: Instance): Vector3?
+	local playerSpawn = plot:FindFirstChild("PlayerSpawn")
+	if playerSpawn and playerSpawn:IsA("BasePart") then
+		return playerSpawn.Position
+	end
+
+	if plot:IsA("Model") or plot:IsA("BasePart") then
+		return plot:GetPivot().Position
+	end
+
+	local focusPart = find_focus_part(plot)
+	return if focusPart then focusPart.Position else nil
+end
+
+local function is_player_near_plot(plot: Instance): boolean
+	local character = localPlayer.Character
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	local plotPosition = get_plot_position(plot)
+
+	if not rootPart or not rootPart:IsA("BasePart") or not plotPosition then
+		return false
+	end
+
+	return (rootPart.Position - plotPosition).Magnitude <= STABLE_BACKGROUND_MAX_DISTANCE
+end
+
 local function dim_stable_part(session, instance: Instance): ()
 	if not instance:IsA("BasePart") or is_descendant_of(instance, session.horseVisual) then
 		return
@@ -238,6 +265,10 @@ end
 local function dim_current_player_stable(session): ()
 	local plot = get_current_player_plot(session.horseVisual)
 	if not plot then
+		return
+	end
+
+	if not is_player_near_plot(plot) then
 		return
 	end
 

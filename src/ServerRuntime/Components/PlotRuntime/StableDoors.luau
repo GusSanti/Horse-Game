@@ -9,6 +9,7 @@ local PIVOT_NAME: string = "Pivot"
 local OPEN_ANGLE_ATTRIBUTE: string = "OpenAngleDegrees"
 local OPEN_POSITION_ATTRIBUTE: string = "OpenPosition"
 local OPEN_ATTRIBUTE: string = "StableDoorOpen"
+local CLOSED_POSITION_ATTRIBUTE: string = "StableDoorClosedPosition"
 local ANIMATION_DURATION: number = 0.7
 
 -- Negative Y rotation is clockwise when the hinge is viewed from above.
@@ -197,6 +198,7 @@ local function create_door_state(door: Instance?, definition: any): DoorState?
 	end
 
 	door:SetAttribute(OPEN_ATTRIBUTE, false)
+	door:SetAttribute(CLOSED_POSITION_ATTRIBUTE, closedCFrame.Position)
 	return {
 		Instance = door,
 		Mode = definition.Mode,
@@ -374,11 +376,25 @@ function StableDoors:Bind(plot: Instance, level: number): ()
 	end
 
 	local mainDoor: Instance? = plot:FindFirstChild(MAIN_DOOR_NAME)
-	if mainDoor and config.Main then
-		for doorName: string, definition: any in config.Main do
-			local state: DoorState? = create_door_state(mainDoor:FindFirstChild(doorName), definition)
-			if state then
-				table.insert(plotState.Main, state)
+	if mainDoor then
+		-- Keep the authored closed locations available even when a model is not
+		-- animated by this runtime. Horse exit routing uses these locations instead
+		-- of the models' open/tweened positions.
+		for _index: number, child: Instance in mainDoor:GetChildren() do
+			if child:IsA("Model") then
+				local childCFrame: CFrame? = get_instance_cframe(child)
+				if childCFrame then
+					child:SetAttribute(CLOSED_POSITION_ATTRIBUTE, childCFrame.Position)
+				end
+			end
+		end
+
+		if config.Main then
+			for doorName: string, definition: any in config.Main do
+				local state: DoorState? = create_door_state(mainDoor:FindFirstChild(doorName), definition)
+				if state then
+					table.insert(plotState.Main, state)
+				end
 			end
 		end
 	end
