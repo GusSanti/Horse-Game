@@ -189,19 +189,22 @@ function ToolUse.Bind(TroveValue: any): ()
 			StopBrushAnimation(Player, HorseId)
 		end
 	end, TroveValue)
-	Network.Horse.FeedAnimation:Connect(function(
-		Player: Player,
-		ToolValue: Instance?,
-		HorseId: any,
-		IsStarting: any,
-		Duration: any
-	): ()
-		if IsStarting == true then
-			StartFeedAnimation(Player, ToolValue, HorseId, Duration)
-		else
-			StopFeedAnimation(Player, HorseId)
-		end
-	end, TroveValue)
+	local FeedAnimationEvent: any = Network.Horse and Network.Horse.FeedAnimation
+	if FeedAnimationEvent and type(FeedAnimationEvent.Connect) == "function" then
+		FeedAnimationEvent:Connect(function(
+			Player: Player,
+			ToolValue: Instance?,
+			HorseId: any,
+			IsStarting: any,
+			Duration: any
+		): ()
+			if IsStarting == true then
+				StartFeedAnimation(Player, ToolValue, HorseId, Duration)
+			else
+				StopFeedAnimation(Player, HorseId)
+			end
+		end, TroveValue)
+	end
 	TroveValue:Connect(Framework.RuntimeEvents.PlayerRemoving, function(Player: Player): ()
 		ActiveUseByPlayer[Player] = nil
 		StopBrushAnimation(Player, ActiveBrushAnimationByPlayer[Player])

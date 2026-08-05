@@ -13,6 +13,8 @@ local SHINE_DURATION_ATTRIBUTE: string = "ShineDuration"
 local SHINE_NAME: string = "HoverShine"
 local SHINE_TRANSPARENCY_ATTRIBUTE: string = "ShineTransparency"
 local SHINE_WIDTH_ATTRIBUTE: string = "ShineWidth"
+local SQUARE_SHINE_ATTRIBUTE: string = "SquareShine"
+local SQUARE_RATIO_TOLERANCE: number = 0.2
 local DEFAULT_SHINE_WIDTH: number = 0.14
 local DEFAULT_SHINE_HEIGHT: number = 1
 local DEFAULT_SHINE_ANGLE: number = 12
@@ -45,6 +47,27 @@ end
 
 local function IsIgnored(Button: GuiButton): boolean
 	return HasTrueAttribute(Button, IGNORE_HUD_ANIM_ATTRIBUTE) or HasTrueAttribute(Button, IGNORE_SHINE_ATTRIBUTE)
+end
+
+local function IsSquareTarget(Button: GuiButton): boolean
+	if Button:GetAttribute(SQUARE_SHINE_ATTRIBUTE) == true then
+		return true
+	end
+
+	local AbsoluteSize: Vector2 = Button.AbsoluteSize
+	local Width: number = AbsoluteSize.X
+	local Height: number = AbsoluteSize.Y
+	if Width <= 0 or Height <= 0 then
+		local Size: UDim2 = Button.Size
+		Width = math.max(math.abs(Size.X.Offset), math.abs(Size.X.Scale))
+		Height = math.max(math.abs(Size.Y.Offset), math.abs(Size.Y.Scale))
+	end
+
+	if Width <= 0 or Height <= 0 then
+		return false
+	end
+
+	return math.abs(Width - Height) / math.max(Width, Height) <= SQUARE_RATIO_TOLERANCE
 end
 
 local function GetNumberAttribute(InstanceValue: Instance, AttributeName: string, Fallback: number): number
@@ -189,7 +212,7 @@ function HoverShine.bind(InstanceValue: Instance): ()
 		return
 	end
 
-	if IsIgnored(Button) then
+	if IsIgnored(Button) or not IsSquareTarget(Button) then
 		return
 	end
 

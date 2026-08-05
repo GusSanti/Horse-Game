@@ -165,8 +165,10 @@ local function destroy_stable_animation_state(visual: Instance): ()
 		connection:Disconnect()
 	end
 	for _, track in state.Tracks do
-		stop_stable_animation_track(track)
-		track:Destroy()
+		if track then
+			stop_stable_animation_track(track)
+			track:Destroy()
+		end
 	end
 	stop_stable_animation_track(state.BrushTrack)
 	if state.BrushTrack then
@@ -177,7 +179,9 @@ local function destroy_stable_animation_state(visual: Instance): ()
 		state.FeedTrack:Destroy()
 	end
 	for _, animation in state.Animations do
-		animation:Destroy()
+		if animation then
+			animation:Destroy()
+		end
 	end
 end
 
@@ -279,6 +283,7 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 	if eatDrinkTrack then
 		eatDrinkTrack.Priority = Enum.AnimationPriority.Action
 		eatDrinkTrack.Looped = true
+	end
 	local feedTrack, feedAnimation = load_stable_animation_track(animator, HorseMountConfig.HorseFeedAnimationId)
 	if feedTrack then
 		feedTrack.Priority = Enum.AnimationPriority.Action
@@ -290,10 +295,15 @@ local function register_stable_animations(visual: Instance, animator: Animator?)
 		Tracks = { Idle = idleTrack, Walk = walkTrack, EatDrink = eatDrinkTrack },
 		BrushTrack = brushTrack,
 		BrushActive = false,
-		Animations = { idleAnimation, walkAnimation, brushAnimation, eatDrinkAnimation },
+		Animations = {
+			Idle = idleAnimation,
+			Walk = walkAnimation,
+			Brush = brushAnimation,
+			EatDrink = eatDrinkAnimation,
+			Feed = feedAnimation,
+		},
 		FeedTrack = feedTrack,
 		FeedActive = false,
-		Animations = { idleAnimation, walkAnimation, brushAnimation, feedAnimation },
 		Connections = {},
 	}
 	stableAnimationStates[visual] = state

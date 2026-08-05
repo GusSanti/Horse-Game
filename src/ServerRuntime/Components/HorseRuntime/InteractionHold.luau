@@ -43,13 +43,16 @@ local function EngageHold(Player: Player, HorseId: any): ()
 end
 
 function InteractionHold.Bind(TroveValue: any): ()
-	Network.Horse.InteractionHold:Connect(function(Player: Player, HorseId: any, IsStarting: any): ()
-		if IsStarting == true then
-			EngageHold(Player, HorseId)
-		else
-			ReleaseHold(Player)
-		end
-	end, TroveValue)
+	local InteractionHoldEvent: any = Network.Horse and Network.Horse.InteractionHold
+	if InteractionHoldEvent and type(InteractionHoldEvent.Connect) == "function" then
+		InteractionHoldEvent:Connect(function(Player: Player, HorseId: any, IsStarting: any): ()
+			if IsStarting == true then
+				EngageHold(Player, HorseId)
+			else
+				ReleaseHold(Player)
+			end
+		end, TroveValue)
+	end
 
 	TroveValue:Connect(Framework.RuntimeEvents.PlayerRemoving, function(Player: Player): ()
 		HeldHorseByPlayer[Player] = nil

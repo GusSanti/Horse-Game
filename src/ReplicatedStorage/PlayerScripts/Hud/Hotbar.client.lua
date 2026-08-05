@@ -175,6 +175,7 @@ local characterTrove = Trove.new()
 local uiTrove = Trove.new()
 local moneyButtonTrove = Trove.new()
 local IconHelper = {}
+local Binding = {}
 
 rootTrove:Add(backpackTrove)
 rootTrove:Add(characterTrove)
@@ -789,7 +790,7 @@ local function open_robux_coin_shop()
 	shopFrame.Visible = true
 end
 
-local function bind_money_add_button(targetHudRoot: Instance?)
+function Binding.bind_money_add_button(targetHudRoot: Instance?)
 	moneyButtonTrove:Clean()
 
 	local addButton = find_money_add_button(targetHudRoot)
@@ -2220,7 +2221,7 @@ queue_refresh = function()
 	task.defer(rebuild_hotbar)
 end
 
-local function bind_backpack()
+function Binding.bind_backpack()
 	backpackTrove:Clean()
 
 	local backpack = localPlayer:FindFirstChildOfClass("Backpack") or localPlayer:WaitForChild("Backpack")
@@ -2238,7 +2239,7 @@ local function bind_backpack()
 	end)
 end
 
-local function bind_character(character: Model)
+function Binding.bind_character(character: Model)
 	characterTrove:Clean()
 	stickySelectionKey = nil
 
@@ -2257,7 +2258,7 @@ local function bind_character(character: Model)
 	queue_refresh()
 end
 
-local function try_bind_hotbar()
+function Binding.try_bind_hotbar()
 	local nextUiRoot = find_ui_root()
 	local nextMain = find_main_container(nextUiRoot)
 	local nextHudRoot = find_hud_container(nextMain)
@@ -2283,7 +2284,7 @@ local function try_bind_hotbar()
 	end
 
 	update_money_display(nil, false)
-	bind_money_add_button(nextHudRoot)
+	Binding.bind_money_add_button(nextHudRoot)
 
 	if not nextUiRoot or not nextHudRoot or not nextHotbar or not nextTemplate then
 		if hotbarFrame then
@@ -2309,7 +2310,7 @@ local function try_bind_hotbar()
 	queue_refresh()
 end
 
-local function bind_ui_watchers()
+function Binding.bind_ui_watchers()
 	uiTrove:Clean()
 
 	uiTrove:Connect(playerGui.DescendantAdded, function(instance)
@@ -2326,13 +2327,13 @@ local function bind_ui_watchers()
 			or instance.Name == "MoneyTX"
 			or instance.Name == "MoneyShadowTX"
 		then
-			try_bind_hotbar()
+			Binding.try_bind_hotbar()
 		end
 	end)
 
 	uiTrove:Connect(playerGui.DescendantRemoving, function(instance)
 		if instance == uiRoot or instance == hudRoot or instance == hotbarFrame or instance == hotbarTemplate then
-			task.defer(try_bind_hotbar)
+			task.defer(Binding.try_bind_hotbar)
 			return
 		end
 
@@ -2349,7 +2350,7 @@ local function bind_ui_watchers()
 			or instance.Name == "MoneyTX"
 			or instance.Name == "MoneyShadowTX"
 		then
-			task.defer(try_bind_hotbar)
+			task.defer(Binding.try_bind_hotbar)
 		end
 	end)
 end
@@ -2386,8 +2387,8 @@ end)
 
 rootTrove:Connect(localPlayer.CharacterAdded, function(character)
 	disable_default_backpack()
-	bind_character(character)
-	task.defer(bind_backpack)
+	Binding.bind_character(character)
+	task.defer(Binding.bind_backpack)
 end)
 
 rootTrove:Connect(localPlayer.CharacterRemoving, function()
@@ -2397,9 +2398,9 @@ rootTrove:Connect(localPlayer.CharacterRemoving, function()
 end)
 
 disable_default_backpack()
-bind_backpack()
-bind_ui_watchers()
-try_bind_hotbar()
+Binding.bind_backpack()
+Binding.bind_ui_watchers()
+Binding.try_bind_hotbar()
 rootTrove:Add(DataUtility.client.bind("Currencies.Horseshoes", update_money_display))
 rootTrove:Add(DataUtility.client.bind("Inventory.Seeds", queue_refresh))
 rootTrove:Add(DataUtility.client.bind("Inventory.Fruits", queue_refresh))
@@ -2414,7 +2415,7 @@ rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_ORDER_PATH, queue_
 rootTrove:Add(DataUtility.client.bind(InventoryLoadout.HOTBAR_INITIALIZED_PATH, queue_refresh))
 
 if localPlayer.Character then
-	bind_character(localPlayer.Character)
+	Binding.bind_character(localPlayer.Character)
 else
 	queue_refresh()
 end

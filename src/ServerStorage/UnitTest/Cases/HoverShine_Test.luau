@@ -20,6 +20,7 @@ return function(t: any): ()
 	t.test("binds one reusable shine through HudAnim", function(): ()
 		local Root: Frame = Instance.new("Frame")
 		local Button: TextButton = Instance.new("TextButton")
+		Button.Size = UDim2.fromOffset(48, 48)
 		Button:SetAttribute("UIAnim", true)
 		Button.Parent = Root
 
@@ -34,6 +35,16 @@ return function(t: any): ()
 		HudAnim.unbind(Button)
 		t.expect.falsy(Button:FindFirstChild("HoverShine"))
 		Root:Destroy()
+	end)
+
+	t.test("does not bind shine to rectangular buttons", function(): ()
+		local Button: TextButton = Instance.new("TextButton")
+		Button.Size = UDim2.fromOffset(120, 48)
+
+		HoverShine.bind(Button)
+
+		t.expect.falsy(Button:FindFirstChild("HoverShine"))
+		Button:Destroy()
 	end)
 
 	t.test("leaves opted-out buttons unchanged", function(): ()
