@@ -20,9 +20,14 @@ ExpressivePrompts.Config.AspectRatioSpringDampening.Value = 0.4
 ExpressivePrompts.Config.ProgressBarYScale.Value = 0.15
 ExpressivePrompts.Config.ProgressBarColor.Value = Color3.fromRGB(255, 255, 255)
 ExpressivePrompts.Config.ProgressBarTransparency.Value = 0.15
+ExpressivePrompts.Config.ShowShimmer.Value = false
 
 ExpressivePrompts.Config.GuiOffsetSpringSpeed.Value = 25
 ExpressivePrompts.Config.GuiOffsetSpringDampening.Value = 0.4
+ExpressivePrompts.Config.ActionTextFont.Value = Enum.Font.GothamBlack
+ExpressivePrompts.Config.ObjectTextFont.Value = Enum.Font.GothamBlack
+ExpressivePrompts.Config.ActionTextSize.Value = 18
+ExpressivePrompts.Config.ObjectTextSize.Value = 13
 
 ExpressivePrompts.Init()
 

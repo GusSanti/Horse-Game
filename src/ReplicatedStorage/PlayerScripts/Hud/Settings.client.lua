@@ -41,9 +41,9 @@ local SLIDER_TWEEN_INFO = TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.Easing
 local FILL_TWEEN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local THUMB_TWEEN_INFO = TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local TRACK_PADDING_PX = 4
-local SLIDER_FILL_COLOR = Color3.fromRGB(112, 71, 42)
-local TOGGLE_ON_FILL_COLOR = Color3.fromRGB(128, 186, 96)
-local TOGGLE_OFF_FILL_COLOR = Color3.fromRGB(112, 71, 42)
+local SLIDER_FILL_COLOR = Color3.fromRGB(245, 245, 245)
+local TOGGLE_ON_FILL_COLOR = Color3.fromRGB(112, 184, 102)
+local TOGGLE_OFF_FILL_COLOR = Color3.fromRGB(176, 82, 82)
 local SLIDER_FILL_TRANSPARENCY = 0
 local DRAG_THUMB_SCALE = 1.14
 local TOGGLE_PUNCH_SCALE = 1.18
@@ -305,6 +305,14 @@ local function disable_control_animations(root)
 end
 
 local function ensure_slider_fill(record)
+	if record.Descriptor.Kind == "Toggle" then
+		local staleFill = record.Bar:FindFirstChild(GENERATED_FILL_NAME)
+		if staleFill then
+			staleFill:Destroy()
+		end
+		return nil
+	end
+
 	local existingFill = record.Bar:FindFirstChild(GENERATED_FILL_NAME)
 	if existingFill and existingFill:IsA("Frame") then
 		return existingFill
@@ -326,6 +334,33 @@ local function ensure_slider_fill(record)
 	corner.Parent = fill
 
 	return fill
+end
+
+local function ensure_toggle_visual(record)
+	if record.Descriptor.Kind ~= "Toggle" then
+		return
+	end
+
+	record.Toggle.BackgroundTransparency = 0
+	local stroke = record.Toggle:FindFirstChild("SettingsToggleStroke")
+	if stroke and not stroke:IsA("UIStroke") then
+		stroke = nil
+	end
+	if not stroke then
+		stroke = Instance.new("UIStroke")
+		stroke.Name = "SettingsToggleStroke"
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.LineJoinMode = Enum.LineJoinMode.Round
+		stroke.Thickness = 2
+		stroke.Color = Color3.new(0, 0, 0)
+		stroke.Parent = record.Toggle
+	end
+
+	if not record.Toggle:FindFirstChildWhichIsA("UICorner") then
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0.2, 0)
+		corner.Parent = record.Toggle
+	end
 end
 
 local function get_track_metrics(record)
@@ -385,24 +420,25 @@ local function set_slider_fill(record, centerX, animated)
 	end)
 end
 
-local function set_fill_color(record, isOn, animated)
-	if not record.Fill or record.Descriptor.Kind ~= "Toggle" then
+local function set_toggle_color(record, isOn, animated)
+	if record.Descriptor.Kind ~= "Toggle" then
 		return
 	end
 
 	local targetColor = if isOn then TOGGLE_ON_FILL_COLOR else TOGGLE_OFF_FILL_COLOR
-
 	if record.FillColorTween then
 		record.FillColorTween:Cancel()
 		record.FillColorTween = nil
 	end
 
 	if not animated then
-		record.Fill.BackgroundColor3 = targetColor
+		record.Toggle.BackgroundColor3 = targetColor
 		return
 	end
 
-	record.FillColorTween = TweenService:Create(record.Fill, FILL_TWEEN_INFO, { BackgroundColor3 = targetColor })
+	record.FillColorTween = TweenService:Create(record.Toggle, FILL_TWEEN_INFO, {
+		BackgroundColor3 = targetColor,
+	})
 	record.FillColorTween:Play()
 end
 
@@ -452,8 +488,11 @@ local function set_control_alpha(record, alpha, animated)
 		record.Toggle.Position = targetPosition
 	end
 
-	set_slider_fill(record, centerX, animated)
-	set_fill_color(record, alpha >= 0.5, animated)
+	if record.Descriptor.Kind == "Toggle" then
+		set_toggle_color(record, alpha >= 0.5, animated)
+	else
+		set_slider_fill(record, centerX, animated)
+	end
 end
 
 local function refresh_control(record, animated)
@@ -702,6 +741,7 @@ local function bind_ui(ui)
 
 		local record = build_control_record(control, descriptor)
 		if record then
+			ensure_toggle_visual(record)
 			record.Fill = ensure_slider_fill(record)
 			ui.Controls[#ui.Controls + 1] = record
 
@@ -722,6 +762,14 @@ local function bind_ui(ui)
 
 			if descriptor.Kind == "Toggle" then
 				local lastToggleInput = nil
+				uiTrove:Connect(record.Toggle.MouseEnter, function()
+					set_thumb_scale(record, 1.06)
+				end)
+				uiTrove:Connect(record.Toggle.MouseLeave, function()
+					if not activeSliderDrag or activeSliderDrag.Record ~= record then
+						set_thumb_scale(record, 1)
+					end
+				end)
 
 				local function handle_toggle(input)
 					if input and lastToggleInput == input then

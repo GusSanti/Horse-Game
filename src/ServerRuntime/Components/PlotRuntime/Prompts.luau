@@ -24,6 +24,7 @@ local STABLE_SLOT_NAME_ATTRIBUTE: string = "StableSlotName"
 local STABLE_HORSE_ID_ATTRIBUTE: string = "StableHorseId"
 local STABLE_HORSE_FREE_ATTRIBUTE: string = "StableHorseFree"
 local STABLE_CAN_BUY_ATTRIBUTE: string = "StableCanBuy"
+local STABLE_PROMPT_AVAILABLE_ATTRIBUTE: string = "StablePromptAvailable"
 local ACTION_COOLDOWN_SECONDS: number = 0.35
 local DISTANCE_TOLERANCE: number = 4
 
@@ -81,6 +82,7 @@ function Prompts:Disable(Plot: Instance): ()
 		local SlotPrompt: ProximityPrompt? = GetSlotPrompt(Plot, SlotName)
 		if SlotPrompt then
 			SlotPrompt.Enabled = false
+			SlotPrompt:SetAttribute(STABLE_PROMPT_AVAILABLE_ATTRIBUTE, false)
 		end
 	end
 end
@@ -113,6 +115,7 @@ function Prompts:RefreshSlots(Player: Player): ()
 				and HorseId ~= ""
 			local IsFree: boolean = HasAssignedHorse and HorseRoamingService.IsHorseFree(Player, HorseId)
 			Prompt.Enabled = IsPurchasable or HasAssignedHorse
+			Prompt:SetAttribute(STABLE_PROMPT_AVAILABLE_ATTRIBUTE, Prompt.Enabled)
 			Prompt.HoldDuration = SLOT_PROMPT_HOLD_DURATION
 			Prompt.ActionText = "Interact"
 			Prompt.ObjectText = if HasAssignedHorse then "Your Horse" else `Stable Slot {SlotIndex}`

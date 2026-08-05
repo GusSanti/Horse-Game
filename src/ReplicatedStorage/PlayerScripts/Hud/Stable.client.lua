@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local Modules = ReplicatedStorage:WaitForChild("Modules")
 local Dictionary = Modules:WaitForChild("Dictionary")
@@ -9,6 +10,9 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local Trove = require(Libraries:WaitForChild("Trove"))
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
+local TweenUtils = require(Libraries:WaitForChild("HudAnim"):WaitForChild("Utils"))
+local HorseViewportRenderer = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("HorseViewportRenderer"))
 local StableDictionary = require(Dictionary:WaitForChild("StableDictionary"))
 local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
 local NatureCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("NatureCatalog"))
@@ -27,6 +31,14 @@ local cardTrove = Trove.new()
 
 local REFRESH_INTERVAL: number = HorseStatusBillboardConfig.RefreshInterval or 0.25
 local RENDER_BATCH_SIZE = 1
+local CAROUSEL_CENTER_SIZE = UDim2.fromScale(0.56, 0.94)
+local CAROUSEL_SIDE_SIZE = UDim2.fromScale(0.34, 0.62)
+local CAROUSEL_SIDE_OFFSET = 0.37
+local CAROUSEL_CENTER_TRANSPARENCY = 0
+local CAROUSEL_SIDE_TRANSPARENCY = 0.54
+local CAROUSEL_TWEEN_DURATION = 0.28
+local CAROUSEL_ARROW_SIZE = UDim2.fromScale(0.075, 0.14)
+local CAROUSEL_ARROW_OFFSET = 0.045
 
 local MAIN_UI_NAME = "MainUI"
 local MAINFRAME_NAME = "MainframeFR"
@@ -88,12 +100,23 @@ type HorseCard = {
 	SlotName: string,
 	HorseId: string,
 	Card: GuiObject,
+	Shell: CanvasGroup?,
 	NameLabel: TextLabel?,
 	DetailsLabel: TextLabel?,
 	SelectedFrame: GuiObject?,
 	SelectedLabel: TextLabel?,
 	ImageObject: GuiObject?,
 	StatRows: {[string]: CardStatRow},
+}
+
+type CarouselState = {
+	Index: number,
+	List: GuiObject,
+	Previous: TextButton,
+	Next: TextButton,
+	PointerOver: boolean,
+	Trove: any,
+	TweenTrove: any,
 }
 
 local currentUi: StableUi? = nil
@@ -105,6 +128,8 @@ local stableRenderDirty = false
 local mountRequestInFlight = false
 local teleportToStableRequestInFlight = false
 local boundGoStableButtons: {[Instance]: boolean} = {}
+local carouselState: CarouselState? = nil
+local refreshCarouselLayout: ((boolean) -> ())? = nil
 
 local function normalize_key(value: string?): string?
 	if type(value) ~= "string" then
@@ -215,7 +240,7 @@ local function clear_viewport_descendants(root: Instance?): ()
 
 	for _, descendant: Instance in ipairs(root:GetDescendants()) do
 		if descendant:IsA("ViewportFrame") then
-			descendant:Destroy()
+			HorseViewportRenderer.Clear(descendant)
 		end
 	end
 end
@@ -225,9 +250,20 @@ local function set_horse_image(imageObject: GuiObject?, horse): ()
 		return
 	end
 
-	clear_viewport_descendants(imageObject)
-
 	local definition = type(horse) == "table" and HorseCatalog.GetDefinition(horse.CatalogId) or nil
+	local viewport = imageObject:FindFirstChildWhichIsA("ViewportFrame", true)
+	if viewport and definition and type(definition.CatalogId) == "string" then
+		viewport.Visible = true
+		HorseViewportRenderer.QueueCatalog(viewport, definition.CatalogId, HorseViewportRenderer.Presets.Stable, {
+			Priority = 1,
+		})
+		if imageObject:IsA("ImageLabel") or imageObject:IsA("ImageButton") then
+			imageObject.ImageTransparency = 1
+		end
+		return
+	end
+
+	clear_viewport_descendants(imageObject)
 	local imageId = definition and definition.Image or ""
 
 	if imageObject:IsA("ImageLabel") or imageObject:IsA("ImageButton") then
@@ -631,6 +667,9 @@ local function update_canvas_size(): ()
 	if not ui then
 		return
 	end
+	if carouselState and carouselState.List == ui.ListContainer then
+		return
+	end
 
 	if not ui.ListContainer:IsA("ScrollingFrame") then
 		return
@@ -648,6 +687,250 @@ local function update_canvas_size(): ()
 			layout.AbsoluteContentSize.Y
 		)
 	end
+end
+
+local function set_card_depth(card: GuiObject, depth: number): ()
+	local targets = { card }
+	for _, descendant: Instance in ipairs(card:GetDescendants()) do
+		if descendant:IsA("GuiObject") then
+			targets[#targets + 1] = descendant
+		end
+	end
+
+	for _, target: GuiObject in ipairs(targets) do
+		local baseDepth = target:GetAttribute("StableCarouselDepth")
+		if type(baseDepth) ~= "number" then
+			baseDepth = target.ZIndex
+			target:SetAttribute("StableCarouselDepth", baseDepth)
+		end
+		target.ZIndex = baseDepth + depth
+	end
+end
+
+local function get_carousel_offset(index: number, selectedIndex: number, count: number): number
+	if count <= 1 then
+		return 0
+	end
+
+	local offset = index - selectedIndex
+	if offset > count * 0.5 then
+		offset -= count
+	elseif offset < -(count * 0.5) then
+		offset += count
+	end
+	return offset
+end
+
+local function tween_carousel_shell(state: CarouselState, shell: CanvasGroup, position: UDim2, size: UDim2, transparency: number, animate: boolean): ()
+	if not animate then
+		shell.Position = position
+		shell.Size = size
+		shell.GroupTransparency = transparency
+		return
+	end
+
+	local tween = TweenUtils.tween(
+		shell,
+		{
+			Position = position,
+			Size = size,
+			GroupTransparency = transparency,
+		},
+		CAROUSEL_TWEEN_DURATION,
+		Enum.EasingStyle.Quint,
+		Enum.EasingDirection.Out
+	)
+	state.TweenTrove:Add(tween)
+	tween:Play()
+end
+
+refreshCarouselLayout = function(animate: boolean): ()
+	local state = carouselState
+	if not state then
+		return
+	end
+
+	local count = #activeCards
+	if count == 0 then
+		state.Previous.Visible = false
+		state.Next.Visible = false
+		return
+	end
+
+	state.Index = math.clamp(state.Index, 1, count)
+	state.TweenTrove:Clean()
+	state.Previous.Visible = count > 1
+	state.Next.Visible = count > 1
+
+	for index, entry: HorseCard in ipairs(activeCards) do
+		local shell = entry.Shell
+		if not shell then
+			continue
+		end
+
+		local offset = get_carousel_offset(index, state.Index, count)
+		local isCenter = offset == 0
+		local position = UDim2.fromScale(0.5 + (offset * CAROUSEL_SIDE_OFFSET), 0.5)
+		local size = if isCenter then CAROUSEL_CENTER_SIZE else CAROUSEL_SIDE_SIZE
+		local transparency = if isCenter then CAROUSEL_CENTER_TRANSPARENCY else CAROUSEL_SIDE_TRANSPARENCY
+		shell.Visible = math.abs(offset) <= 1
+		set_card_depth(entry.Card, if isCenter then 40 else 10)
+		tween_carousel_shell(state, shell, position, size, transparency, animate)
+
+		if entry.SelectedFrame then
+			entry.SelectedFrame.Visible = isCenter and is_horse_equipped(entry.HorseId)
+		end
+	end
+end
+
+local function select_carousel_horse(horseId: string, animate: boolean): boolean
+	local state = carouselState
+	if not state then
+		return false
+	end
+
+	for index, entry: HorseCard in ipairs(activeCards) do
+		if entry.HorseId == horseId then
+			if state.Index == index then
+				return true
+			end
+			state.Index = index
+			if refreshCarouselLayout then
+				refreshCarouselLayout(animate)
+			end
+			return true
+		end
+	end
+
+	return false
+end
+
+local function move_carousel(direction: number): ()
+	local state = carouselState
+	local count = #activeCards
+	if not state or count <= 1 then
+		return
+	end
+
+	state.Index = ((state.Index - 1 + direction) % count) + 1
+	if refreshCarouselLayout then
+		refreshCarouselLayout(true)
+	end
+end
+
+local function create_carousel_arrow(parent: Instance, text: string, position: UDim2): TextButton
+	local button = Instance.new("TextButton")
+	button.AutoButtonColor = false
+	button.AnchorPoint = Vector2.new(0.5, 0.5)
+	button.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+	button.BackgroundTransparency = 0.08
+	button.BorderSizePixel = 0
+	button.Font = Enum.Font.GothamBlack
+	button.Position = position
+	button.Size = CAROUSEL_ARROW_SIZE
+	button.Text = text
+	button.TextColor3 = Color3.new(1, 1, 1)
+	button.TextScaled = true
+	button.ZIndex = 200
+	button:SetAttribute("UIAnim", true)
+	button:SetAttribute("hover_scale", 0.08)
+	button:SetAttribute("click_scale", 0.1)
+	button.Parent = parent
+
+	local stroke = Instance.new("UIStroke")
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Color = Color3.new(0, 0, 0)
+	stroke.Thickness = 2
+	stroke.Parent = button
+
+	HudAnim.bind(button)
+	return button
+end
+
+local function destroy_carousel(): ()
+	local state = carouselState
+	carouselState = nil
+	if state then
+		state.Trove:Destroy()
+	end
+end
+
+local function ensure_carousel(ui: StableUi): CarouselState
+	local currentState = carouselState
+	if currentState and currentState.List == ui.ListContainer then
+		return currentState
+	end
+
+	destroy_carousel()
+	local list = ui.ListContainer
+	local state = {
+		Index = 1,
+		List = list,
+		PointerOver = false,
+		Trove = Trove.new(),
+		TweenTrove = Trove.new(),
+	}
+	carouselState = state
+	state.Trove:Add(state.TweenTrove)
+
+	if list:IsA("ScrollingFrame") then
+		local scrollingFrame = list :: ScrollingFrame
+		local originalScrollingEnabled = scrollingFrame.ScrollingEnabled
+		local originalClipsDescendants = scrollingFrame.ClipsDescendants
+		local originalScrollbarTransparency = scrollingFrame.ScrollBarImageTransparency
+		state.Trove:Add(function()
+			scrollingFrame.ScrollingEnabled = originalScrollingEnabled
+			scrollingFrame.ClipsDescendants = originalClipsDescendants
+			scrollingFrame.ScrollBarImageTransparency = originalScrollbarTransparency
+		end)
+		scrollingFrame.ScrollingEnabled = false
+		scrollingFrame.ClipsDescendants = false
+		scrollingFrame.ScrollBarImageTransparency = 1
+	end
+
+	for _, child: Instance in ipairs(list:GetChildren()) do
+		if child:IsA("UIListLayout") or child:IsA("UIGridLayout") then
+			local layout = child
+			local layoutParent = layout.Parent
+			state.Trove:Add(function()
+				if layout.Parent == nil then
+					layout.Parent = layoutParent
+				end
+			end)
+			layout.Parent = nil
+		end
+	end
+
+	local previous = create_carousel_arrow(list, "<", UDim2.fromScale(CAROUSEL_ARROW_OFFSET, 0.5))
+	local next = create_carousel_arrow(list, ">", UDim2.fromScale(1 - CAROUSEL_ARROW_OFFSET, 0.5))
+	state.Previous = previous
+	state.Next = next
+	state.Trove:Add(previous)
+	state.Trove:Add(next)
+	state.Trove:Add(function()
+		HudAnim.unbind(previous)
+		HudAnim.unbind(next)
+	end)
+	state.Trove:Connect(previous.Activated, function()
+		move_carousel(-1)
+	end)
+	state.Trove:Connect(next.Activated, function()
+		move_carousel(1)
+	end)
+	state.Trove:Connect(list.MouseEnter, function()
+		state.PointerOver = true
+	end)
+	state.Trove:Connect(list.MouseLeave, function()
+		state.PointerOver = false
+	end)
+	state.Trove:Connect(UserInputService.InputChanged, function(input: InputObject)
+		if not state.PointerOver or input.UserInputType ~= Enum.UserInputType.MouseWheel then
+			return
+		end
+		move_carousel(if input.Position.Z > 0 then -1 else 1)
+	end)
+
+	return state
 end
 
 local function format_percent(alpha: number): string
@@ -825,6 +1108,7 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 	card.Name = stableHorseEntry.HorseId
 	card.Visible = true
 	card.LayoutOrder = stableHorseEntry.SlotIndex
+	card:SetAttribute("IgnoreHudAnim", true)
 	restore_original_gui_metrics(templateSource, card, BAR_FILL_SIZE_NAMES)
 
 	if nameLabel then
@@ -846,7 +1130,15 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 	set_horse_image(horseImage, horse)
 
 	if mountButton then
+		cardTrove:Connect(mountButton.MouseEnter, function()
+			select_carousel_horse(stableHorseEntry.HorseId, true)
+		end)
 		cardTrove:Connect(mountButton.Activated, function()
+			local state = carouselState
+			if state and activeCards[state.Index] and activeCards[state.Index].HorseId ~= stableHorseEntry.HorseId then
+				select_carousel_horse(stableHorseEntry.HorseId, true)
+				return
+			end
 			mount_horse_from_stable(stableHorseEntry.HorseId)
 		end)
 	end
@@ -881,6 +1173,7 @@ local function configure_card(card: GuiObject, templateSource: GuiObject, stable
 		SelectedFrame = selectedFrame,
 		SelectedLabel = selectedLabel,
 		ImageObject = horseImage,
+		Shell = nil,
 		StatRows = statRows,
 	}
 end
@@ -909,6 +1202,7 @@ local function render_stable(): ()
 	local stableHorseEntries = get_stable_horses()
 
 	local templateSource = ui.TemplateSource
+	local state = ensure_carousel(ui)
 
 	cardTrove:Clean()
 	table.clear(activeCards)
@@ -937,11 +1231,25 @@ local function render_stable(): ()
 		local batchEnd = math.min(#stableHorseEntries, nextEntryIndex + RENDER_BATCH_SIZE - 1)
 		for entryIndex = nextEntryIndex, batchEnd do
 			local stableHorseEntry = stableHorseEntries[entryIndex]
+			local shell = Instance.new("CanvasGroup")
+			shell.Name = "HorseCarouselCard"
+			shell.AnchorPoint = Vector2.new(0.5, 0.5)
+			shell.BackgroundTransparency = 1
+			shell.GroupTransparency = 1
+			shell.Position = UDim2.fromScale(0.5, 0.5)
+			shell.Size = CAROUSEL_SIDE_SIZE
+			shell.ZIndex = 20
+			shell.Parent = ui.ListContainer
+			cardTrove:Add(shell)
+
 			local card = templateSource:Clone()
-			card.Parent = ui.ListContainer
-			cardTrove:Add(card)
+			card.Parent = shell
 
 			local cardEntry = configure_card(card, templateSource, stableHorseEntry)
+			card.AnchorPoint = Vector2.new(0.5, 0.5)
+			card.Position = UDim2.fromScale(0.5, 0.5)
+			card.Size = UDim2.fromScale(1, 1)
+			cardEntry.Shell = shell
 			activeCards[#activeCards + 1] = cardEntry
 		end
 
@@ -962,7 +1270,9 @@ local function render_stable(): ()
 				return
 			end
 
-			update_canvas_size()
+			if carouselState == state and refreshCarouselLayout then
+				refreshCarouselLayout(true)
+			end
 		end)
 	end
 
@@ -1052,6 +1362,7 @@ local function destroy_ui_binding(): ()
 	renderGeneration += 1
 	renderQueued = false
 	stableRenderDirty = false
+	destroy_carousel()
 	cardTrove:Clean()
 	uiTrove:Destroy()
 	uiTrove = Trove.new()

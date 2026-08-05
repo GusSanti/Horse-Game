@@ -17,6 +17,10 @@ type TextState = {
 	OriginalFontFace: Font,
 	OriginalStrokeColor: Color3,
 	OriginalStrokeTransparency: number,
+	OriginalOutlineColor: Color3,
+	OriginalOutlineThickness: number,
+	OriginalOutlineTransparency: number,
+	OriginalOutlineEnabled: boolean,
 	Outline: UIStroke,
 	Trove: any,
 }
@@ -103,6 +107,10 @@ local function Restore(TextObject: StyledText, State: TextState): ()
 		TextObject.FontFace = State.OriginalFontFace
 		TextObject.TextStrokeColor3 = State.OriginalStrokeColor
 		TextObject.TextStrokeTransparency = State.OriginalStrokeTransparency
+		State.Outline.Color = State.OriginalOutlineColor
+		State.Outline.Thickness = State.OriginalOutlineThickness
+		State.Outline.Transparency = State.OriginalOutlineTransparency
+		State.Outline.Enabled = State.OriginalOutlineEnabled
 	end)
 end
 
@@ -123,17 +131,30 @@ function OutlinedText.bind(InstanceValue: Instance): ()
 	end
 
 	local TextTrove: any = Trove.new()
-	local Outline: UIStroke = Instance.new("UIStroke")
-	Outline.Name = OUTLINE_NAME
+	local Outline: UIStroke? = TextObject:FindFirstChild(OUTLINE_NAME) :: UIStroke?
+	if not Outline or not Outline:IsA("UIStroke") then
+		Outline = TextObject:FindFirstChildWhichIsA("UIStroke")
+	end
+	if not Outline then
+		Outline = Instance.new("UIStroke")
+		Outline.Name = OUTLINE_NAME
+		Outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+		Outline.LineJoinMode = Enum.LineJoinMode.Round
+		Outline.Parent = TextObject
+		TextTrove:Add(Outline)
+	end
+	Outline = Outline :: UIStroke
 	Outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 	Outline.LineJoinMode = Enum.LineJoinMode.Round
-	Outline.Parent = TextObject
-	TextTrove:Add(Outline)
 
 	local State: TextState = {
 		OriginalFontFace = TextObject.FontFace,
 		OriginalStrokeColor = TextObject.TextStrokeColor3,
 		OriginalStrokeTransparency = TextObject.TextStrokeTransparency,
+		OriginalOutlineColor = Outline.Color,
+		OriginalOutlineThickness = Outline.Thickness,
+		OriginalOutlineTransparency = Outline.Transparency,
+		OriginalOutlineEnabled = Outline.Enabled,
 		Outline = Outline,
 		Trove = TextTrove,
 	}

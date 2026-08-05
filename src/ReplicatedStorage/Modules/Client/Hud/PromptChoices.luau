@@ -33,6 +33,7 @@ local CORNER_RADIUS: number = 7
 local PANEL_COLOR: Color3 = Color3.fromRGB(24, 24, 24)
 local BUTTON_COLOR: Color3 = Color3.fromRGB(38, 38, 38)
 local STROKE_COLOR: Color3 = Color3.fromRGB(0, 0, 0)
+local PROMPT_OPEN_ATTRIBUTE: string = "PromptChoicesOpen"
 
 local PromptChoices = {}
 PromptChoices.__index = PromptChoices
@@ -152,6 +153,7 @@ function PromptChoices:Open(Prompt: ProximityPrompt, Choices: { Choice }): ()
 	end
 
 	local Scope: any = Trove.new()
+	local PromptWasEnabled: boolean = Prompt.Enabled
 	local Height: number = (PANEL_PADDING * 2) + (#Choices * CHOICE_HEIGHT) + (math.max(#Choices - 1, 0) * CHOICE_GAP)
 	local Billboard: BillboardGui = Instance.new("BillboardGui")
 	Billboard.Name = "PromptChoices"
@@ -164,6 +166,12 @@ function PromptChoices:Open(Prompt: ProximityPrompt, Choices: { Choice }): ()
 	Billboard.ResetOnSpawn = false
 	Billboard.Parent = self._PlayerGui
 	Scope:Add(Billboard)
+	Scope:Add(function(): ()
+		if Prompt.Parent then
+			Prompt:SetAttribute(PROMPT_OPEN_ATTRIBUTE, nil)
+			Prompt.Enabled = PromptWasEnabled
+		end
+	end)
 
 	local Group: CanvasGroup = Instance.new("CanvasGroup")
 	Group.Name = "Choices"
@@ -214,13 +222,15 @@ function PromptChoices:Open(Prompt: ProximityPrompt, Choices: { Choice }): ()
 		HudAnim.unbind_all(Billboard)
 	end)
 	Scope:Connect(Prompt.PromptHidden, function(): ()
-		self:Close(false)
+		if Prompt.Enabled then
+			self:Close(false)
+		end
 	end)
 	Scope:Connect(Prompt.Destroying, function(): ()
 		self:Close(true)
 	end)
 	Scope:Connect(Prompt:GetPropertyChangedSignal("Enabled"), function(): ()
-		if not Prompt.Enabled then
+		if not Prompt.Enabled and Prompt:GetAttribute(PROMPT_OPEN_ATTRIBUTE) ~= true then
 			self:Close(false)
 		end
 	end)
@@ -232,6 +242,8 @@ function PromptChoices:Open(Prompt: ProximityPrompt, Choices: { Choice }): ()
 		Group = Group,
 		Scale = Scale,
 	}
+	Prompt:SetAttribute(PROMPT_OPEN_ATTRIBUTE, true)
+	Prompt.Enabled = false
 
 	local FadeTween: Tween = TweenUtils.tween(
 		Group,

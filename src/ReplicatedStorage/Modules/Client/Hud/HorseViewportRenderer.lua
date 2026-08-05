@@ -10,10 +10,12 @@ local GameData = Modules:WaitForChild("GameData")
 local Utility = Modules:WaitForChild("Utility")
 
 local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
+local HorseMountConfig = require(GameData:WaitForChild("Horse"):WaitForChild("HorseMountConfig"))
 local RaceVisualFactory = require(Utility:WaitForChild("RaceVisualFactory"))
 
 local DYNAMIC_ATTRIBUTE = "HorseViewportDynamic"
 local CONTENT_KEY_ATTRIBUTE = "HorseViewportContentKey"
+local IDLE_STARTED_ATTRIBUTE = "HorseViewportIdleStarted"
 local WORLD_MODEL_NAME = "HorseViewportWorldModel"
 local CAMERA_NAME = "HorseViewportCamera"
 
@@ -458,6 +460,57 @@ local function apply_snapshot(viewport, snapshot, contentKey)
 	}
 end
 
+local function get_animator(model)
+	local animator = model:FindFirstChildWhichIsA("Animator", true)
+	if animator then
+		return animator
+	end
+
+	local controller = model:FindFirstChildWhichIsA("AnimationController", true)
+	if not controller then
+		controller = Instance.new("AnimationController")
+		controller.Name = "ViewportAnimation"
+		controller.Parent = model
+	end
+
+	return Instance.new("Animator", controller)
+end
+
+local function play_idle(scene, options)
+	if not scene or not scene.Model or options and options.PlayIdle == false then
+		return
+	end
+
+	local model = scene.Model
+	if model:GetAttribute(IDLE_STARTED_ATTRIBUTE) == true then
+		return
+	end
+
+	local animationId = HorseMountConfig.HorseIdleAnimationId
+	if type(animationId) ~= "string" or animationId == "" then
+		return
+	end
+
+	local animator = get_animator(model)
+	local animation = Instance.new("Animation")
+	animation.Name = "ViewportIdle"
+	animation.AnimationId = animationId
+	animation.Parent = model
+
+	local success, track = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+	if not success or not track then
+		animation:Destroy()
+		return
+	end
+
+	track.Looped = true
+	track.Priority = Enum.AnimationPriority.Idle
+	track:Play(HorseMountConfig.AnimationFadeTime or 0.12, 1, 1)
+	model:SetAttribute(IDLE_STARTED_ATTRIBUTE, true)
+end
+
 function HorseViewportRenderer.GetCatalogSnapshot(catalogId, config, options)
 	config = config or HorseViewportRenderer.Presets.Stable
 	options = options or {}
@@ -479,7 +532,11 @@ function HorseViewportRenderer.ApplyCatalog(viewport, catalogId, config, options
 		HorseViewportRenderer.Clear(viewport)
 		return false
 	end
-	return apply_snapshot(viewport, snapshot, snapshotKey)
+	local success, scene = apply_snapshot(viewport, snapshot, snapshotKey)
+	if success then
+		play_idle(scene, options)
+	end
+	return success, scene
 end
 
 function HorseViewportRenderer.Cancel(viewport)

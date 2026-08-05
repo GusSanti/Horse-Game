@@ -10,6 +10,7 @@ local Libraries = Modules:WaitForChild("Libraries")
 local Utility = Modules:WaitForChild("Utility")
 
 local HorseCatalog = require(GameData:WaitForChild("Horse"):WaitForChild("HorseCatalog"))
+local HorseViewportRenderer = require(Modules:WaitForChild("Client"):WaitForChild("Hud"):WaitForChild("HorseViewportRenderer"))
 local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
@@ -207,13 +208,26 @@ local function clear_viewport_descendants(root)
 	if not root then return end
 	for _, descendant in ipairs(root:GetDescendants()) do
 		if descendant:IsA("ViewportFrame") then
-			descendant:Destroy()
+			HorseViewportRenderer.Clear(descendant)
 		end
 	end
 end
 
 local function set_horse_image(imageObject, definition, isUnlocked)
 	if not imageObject then return end
+
+	local viewport = imageObject:FindFirstChildWhichIsA("ViewportFrame", true)
+	if viewport and definition and type(definition.CatalogId) == "string" then
+		viewport.Visible = true
+		HorseViewportRenderer.QueueCatalog(viewport, definition.CatalogId, HorseViewportRenderer.Presets.IndexGrid, {
+			Priority = 2,
+			Silhouette = not isUnlocked,
+		})
+		if imageObject:IsA("ImageLabel") or imageObject:IsA("ImageButton") then
+			imageObject.ImageTransparency = 1
+		end
+		return
+	end
 
 	clear_viewport_descendants(imageObject)
 
@@ -436,6 +450,10 @@ local function create_click_target(card)
 	button.Size = UDim2.fromScale(1, 1)
 	button.Position = UDim2.fromScale(0, 0)
 	button.ZIndex = card.ZIndex + 20
+	button:SetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE, false)
+	button:SetAttribute("UIAnim", true)
+	button:SetAttribute("hover_scale", 0.035)
+	button:SetAttribute("click_scale", 0.045)
 	button.Parent = card
 
 	return button
@@ -443,17 +461,22 @@ end
 
 local function set_selected_visual(card, isSelected)
 	if not card then return end
-	local stroke = card:FindFirstChildWhichIsA("UIStroke", true)
+	local stroke = card:FindFirstChild("IndexBorderStroke")
+	if stroke and not stroke:IsA("UIStroke") then
+		stroke = nil
+	end
 	if not stroke and card:IsA("GuiObject") then
 		stroke = Instance.new("UIStroke")
+		stroke.Name = "IndexBorderStroke"
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.LineJoinMode = Enum.LineJoinMode.Round
 		stroke.Parent = card
 	end
 
 	if stroke then
 		stroke.Thickness = isSelected and 2.5 or 1
 		stroke.Transparency = isSelected and 0 or 0.18
-		stroke.Color = isSelected and Color3.fromRGB(255, 214, 132) or Color3.fromRGB(255, 255, 255)
+		stroke.Color = Color3.fromRGB(255, 255, 255)
 	end
 end
 
@@ -511,6 +534,14 @@ local function create_card_entry(ui, entry, entryIndex)
 	local nameLabel = resolve_child_by_path(card, ui.TemplateMap.NameLabelPath, "TextLabel") or find_text_label(card, ITEM_NAME_NAMES, true)
 	local imageObject = resolve_child_by_path(card, ui.TemplateMap.ImagePath, "GuiObject") or find_gui_object(card, HORSE_IMAGE_NAMES, true)
 	local clickTarget = create_click_target(card)
+	if clickTarget then
+		clickTarget:SetAttribute(IGNORE_HUD_ANIM_ATTRIBUTE, false)
+		clickTarget:SetAttribute("UIAnim", true)
+		HudAnim.bind(clickTarget)
+		cardTrove:Add(function()
+			HudAnim.unbind(clickTarget)
+		end)
+	end
 
 	if nameLabel then
 		nameLabel.Text = entry.Definition.DisplayName or entry.CatalogId
@@ -604,6 +635,11 @@ local function render_index()
 			end
 			apply_selection()
 			update_canvas_size()
+			HudAnim.stagger_children(ui.GridContainer, {
+				Delay = 0.025,
+				Duration = 0.24,
+				StartScale = 0.92,
+			})
 			return
 		end
 

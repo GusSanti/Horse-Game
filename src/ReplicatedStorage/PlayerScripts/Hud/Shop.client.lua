@@ -8,6 +8,7 @@ local Libraries = Modules:WaitForChild("Libraries")
 
 local Net = require(Libraries:WaitForChild("Net"))
 local Trove = require(Libraries:WaitForChild("Trove"))
+local HudAnim = require(Libraries:WaitForChild("HudAnim"))
 local RobuxShopCatalog = require(GameData:WaitForChild("RobuxShopCatalog"))
 
 local localPlayer = Players.LocalPlayer
@@ -19,6 +20,7 @@ local FRAMES_CONTAINER_NAMES = { "Frames" }
 local SHOP_ROOT_NAMES = { "Shop" }
 local SCROLLING_FRAME_NAMES = { "ListScrollingFrame", "ScrollingFrame", "ScrollFrame", "Scroll" }
 local HORSE_FRAME_NAMES = { "HorseFR" }
+local CATEGORY_CONTAINER_NAMES = { "CategoriesFR", "Categories", "CategoryFR" }
 local STANDARD_CARD_NAMES = { "HorseBT" }
 local FEATURED_CARD_NAMES = { "HorseBigBT" }
 local PURCHASE_ROOT_NAMES = { "PurchaseFR" }
@@ -586,6 +588,13 @@ local function apply_product_to_card(card: GuiObject, product)
 	set_button_enabled(giftButton, canGiftPurchase)
 
 	if purchaseButton then
+		purchaseButton:SetAttribute("UIAnim", true)
+		purchaseButton:SetAttribute("hover_scale", 0.035)
+		purchaseButton:SetAttribute("click_scale", 0.045)
+		HudAnim.bind(purchaseButton)
+		renderTrove:Add(function()
+			HudAnim.unbind(purchaseButton)
+		end)
 		renderTrove:Add(purchaseButton.Activated:Connect(function()
 			if canPromptPurchase then
 				prompt_purchase(product)
@@ -594,6 +603,13 @@ local function apply_product_to_card(card: GuiObject, product)
 	end
 
 	if giftButton then
+		giftButton:SetAttribute("UIAnim", true)
+		giftButton:SetAttribute("hover_scale", 0.035)
+		giftButton:SetAttribute("click_scale", 0.045)
+		HudAnim.bind(giftButton)
+		renderTrove:Add(function()
+			HudAnim.unbind(giftButton)
+		end)
 		renderTrove:Add(giftButton.Activated:Connect(function()
 			if canGiftPurchase then
 				open_gift_picker(product)
@@ -620,6 +636,12 @@ local function render_shop()
 		local product = productKey and developerProducts[productKey] or nil
 		apply_product_to_card(card, product)
 	end
+
+	HudAnim.stagger_children(currentUi.HorseFrame, {
+		Delay = 0.04,
+		Duration = 0.3,
+		StartScale = 0.94,
+	})
 
 	if currentUi.FeaturedCard then
 		local featuredKey = featuredKeys[1]
@@ -676,6 +698,10 @@ local function get_shop_ui(shopRoot: GuiObject)
 	end
 
 	local featuredCard = find_gui_object(scrollingFrame, FEATURED_CARD_NAMES, true)
+	local categoryContainer = find_gui_object(shopRoot, CATEGORY_CONTAINER_NAMES, true)
+	local categoryButtons = if categoryContainer
+		then collect_named_children(categoryContainer, { "CategoryBT", "CategoryButton" }, "GuiButton")
+		else {}
 
 	if #standardCards < 1 and not featuredCard then
 		return nil
@@ -687,7 +713,35 @@ local function get_shop_ui(shopRoot: GuiObject)
 		HorseFrame = horseFrame,
 		StandardCards = standardCards,
 		FeaturedCard = featuredCard,
+		CategoryButtons = categoryButtons,
 	}
+end
+
+local function configure_categories()
+	if not currentUi or not currentUi.CategoryButtons then
+		return
+	end
+
+	-- This shop currently exposes one catalog. Keep the authored category strip
+	-- compact and deterministic until another catalog is added server-side.
+	for index, button in ipairs(currentUi.CategoryButtons) do
+		button.Visible = index == 1
+		button.Active = index == 1
+		button.Selectable = index == 1
+		if index == 1 then
+			local label = find_text_label(button, { "CategoryNameTX", "CategoryName", "NameTX" }, true)
+			if label then
+				label.Text = "SHOP"
+			end
+			button:SetAttribute("UIAnim", true)
+			button:SetAttribute("hover_scale", 0.035)
+			button:SetAttribute("click_scale", 0.045)
+			HudAnim.bind(button)
+			uiTrove:Add(function()
+				HudAnim.unbind(button)
+			end)
+		end
+	end
 end
 
 local function find_shop_ui()
@@ -729,6 +783,7 @@ local function bind_ui(ui)
 
 	destroy_ui_binding()
 	currentUi = ui
+	configure_categories()
 
 	uiTrove:Add(ui.Root:GetPropertyChangedSignal("Visible"):Connect(function()
 		if ui.Root.Visible then

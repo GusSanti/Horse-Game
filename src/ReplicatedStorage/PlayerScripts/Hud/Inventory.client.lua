@@ -481,10 +481,15 @@ end
 local function set_selected_visual(card, isSelected)
 	local wasSelected = card:GetAttribute("InventorySelected") == true
 	card:SetAttribute("InventorySelected", isSelected)
-    local stroke = card:FindFirstChildWhichIsA("UIStroke", true)
+    local stroke = card:FindFirstChild("InventoryBorderStroke")
+    if stroke and not stroke:IsA("UIStroke") then
+        stroke = nil
+    end
     if not stroke and card:IsA("GuiObject") then
         stroke = Instance.new("UIStroke")
+        stroke.Name = "InventoryBorderStroke"
         stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.LineJoinMode = Enum.LineJoinMode.Round
         stroke.Parent = card
     end
     if stroke then
