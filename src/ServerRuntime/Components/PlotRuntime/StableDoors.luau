@@ -1,6 +1,10 @@
 --!strict
 
+local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService: TweenService = game:GetService("TweenService")
+
+local Modules: Folder = ReplicatedStorage:WaitForChild("Modules") :: Folder
+local SoundUtility: any = require(Modules:WaitForChild("Utility"):WaitForChild("SoundUtility"))
 
 local HORSE_FOLDER_NAME: string = "HorseFolder"
 local MAIN_DOOR_NAME: string = "MainDoor"
@@ -11,6 +15,9 @@ local OPEN_POSITION_ATTRIBUTE: string = "OpenPosition"
 local OPEN_ATTRIBUTE: string = "StableDoorOpen"
 local CLOSED_POSITION_ATTRIBUTE: string = "StableDoorClosedPosition"
 local ANIMATION_DURATION: number = 0.7
+local DOOR_OPEN_SOUND_ID: string = "rbxassetid://139403450098352"
+local DOOR_CLOSE_SOUND_ID: string = "rbxassetid://122398964277913"
+local DOOR_SOUND_VOLUME: number = 0.75
 
 -- Negative Y rotation is clockwise when the hinge is viewed from above.
 local LEVEL_CONFIGS: {[number]: any} = {
@@ -109,6 +116,23 @@ local function get_base_parts(instance: Instance): {BasePart}
 		end
 	end
 	return parts
+end
+
+local function get_door_sound_parent(state: DoorState): Instance
+	for _index: number, partState: DoorPartState in state.PartStates do
+		if partState.Part.Parent then
+			return partState.Part
+		end
+	end
+	if state.Instance:IsA("BasePart") then
+		return state.Instance
+	end
+	return state.Instance
+end
+
+local function play_door_sound(state: DoorState, isOpen: boolean): ()
+	local soundId: string = if isOpen then DOOR_OPEN_SOUND_ID else DOOR_CLOSE_SOUND_ID
+	SoundUtility.PlaySFX(soundId, get_door_sound_parent(state), DOOR_SOUND_VOLUME)
 end
 
 local function create_part_states(door: Instance, closedCFrame: CFrame, openCFrame: CFrame): {DoorPartState}
@@ -292,6 +316,9 @@ local function set_door_open(state: DoorState, isOpen: boolean, animate: boolean
 	stop_animation(state)
 	state.IsOpen = isOpen
 	door:SetAttribute(OPEN_ATTRIBUTE, isOpen)
+	if animate then
+		play_door_sound(state, isOpen)
+	end
 
 	if not animate then
 		if state.Mode ~= "Slide" or not set_part_state_cframes(state, isOpen) then

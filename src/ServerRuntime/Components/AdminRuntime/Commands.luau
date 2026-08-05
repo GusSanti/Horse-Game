@@ -14,11 +14,15 @@ local AdminAccessService: any = require(
 local InventoryService: any = require(
 	ServerStorage:WaitForChild("Modules"):WaitForChild("Inventory"):WaitForChild("InventoryServer")
 )
+local HorseAutoCareService: any = require(
+	ServerStorage:WaitForChild("Modules"):WaitForChild("Horse"):WaitForChild("HorseAutoCareService")
+)
 
 local Commands = {}
 
 local COMMAND_NAME = "!setcoins"
 local EAT_COMMAND_NAME = "!eat"
+local EVENT_EAT_COMMAND_NAME = "!eventeat"
 local MAX_HORSESHOES = 1000000000
 local randomGenerator = Random.new()
 
@@ -82,22 +86,43 @@ end
 local function handle_chat_command(requestingPlayer: Player, message: string): ()
 	local normalizedMessage = normalize(message)
 	local isEatCommand = normalizedMessage == EAT_COMMAND_NAME
+	local isEventEatCommand = normalizedMessage == EVENT_EAT_COMMAND_NAME
 	local isSetCoinsCommand = string.match(normalizedMessage, "^!setcoins") ~= nil
-	if not isEatCommand and not isSetCoinsCommand then
+	if not isEatCommand and not isEventEatCommand and not isSetCoinsCommand then
 		return
 	end
 
 	local hasAccess = AdminAccessService.HasAccess(requestingPlayer)
 	if not hasAccess then
+		local commandName = if isEatCommand
+			then EAT_COMMAND_NAME
+			elseif isEventEatCommand
+				then EVENT_EAT_COMMAND_NAME
+				else COMMAND_NAME
 		warn(("[AdminCommands] %s tried to use %s without elevated permission"):format(
 			requestingPlayer.Name,
-			COMMAND_NAME
+			commandName
 		))
 		return
 	end
 
 	if isEatCommand then
 		grant_random_food(requestingPlayer)
+		return
+	end
+
+	if isEventEatCommand then
+		local started, code = HorseAutoCareService.ForceEatAndDrink(requestingPlayer)
+		if not started then
+			warn(("[AdminCommands] %s could not start %s: %s"):format(
+				requestingPlayer.Name,
+				EVENT_EAT_COMMAND_NAME,
+				tostring(code)
+			))
+			return
+		end
+
+		print(("[AdminCommands] %s started %s"):format(requestingPlayer.Name, EVENT_EAT_COMMAND_NAME))
 		return
 	end
 

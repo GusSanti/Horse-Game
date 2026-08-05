@@ -561,26 +561,44 @@ end
 local function perform_repeated_behavior(state, behavior: string, options): boolean
 	local repeatCount = math.max(1, math.floor(tonumber(options.RepeatCount) or 1))
 	local repeatDuration = tonumber(options.RepeatDuration)
+	local function start_behavior(): ()
+		set_behavior(state, behavior)
+		if behavior == "Eating" then
+			HorseService.PlayFeedAnimation(state.Player, state.HorseId)
+		end
+	end
+	local function stop_behavior(): ()
+		if behavior == "Eating" then
+			set_behavior(state, "Idle")
+			HorseService.StopFeedAnimation(state.Player, state.HorseId)
+		end
+	end
+
 	if repeatDuration and repeatDuration > 0 then
 		for repeatIndex = 1, repeatCount do
 			if repeatIndex > 1 then
 				set_behavior(state, "Idle")
 				if not wait_while_active(state, 0.05) then
+					stop_behavior()
 					return false
 				end
 			end
 
-			set_behavior(state, behavior)
+			start_behavior()
 			if not wait_while_active(state, repeatDuration) then
+				stop_behavior()
 				return false
 			end
+			stop_behavior()
 		end
 
 		return is_active(state)
 	end
 
-	set_behavior(state, behavior)
-	return wait_while_active(state, math.max(tonumber(options.Duration) or 0, 0))
+	start_behavior()
+	local completed = wait_while_active(state, math.max(tonumber(options.Duration) or 0, 0))
+	stop_behavior()
+	return completed
 end
 
 local function choose_wander_target(state): Vector3
@@ -1167,6 +1185,10 @@ function HorseRoamingService.PerformStableAction(
 	local reason = "TargetUnreachable"
 	local groundedTarget = resolve_ground_position(state, clamp_to_roaming_range(state, targetPosition))
 	if walk_to_position(state, groundedTarget) then
+		if actionOptions.SnapToTarget == true and is_active(state) then
+			pivot_visual(state, groundedTarget, get_yaw(state.Visual:GetPivot()))
+		end
+
 		local faceTarget = actionOptions.FacePosition
 		if typeof(faceTarget) == "Vector3" then
 			face_position(state, faceTarget)

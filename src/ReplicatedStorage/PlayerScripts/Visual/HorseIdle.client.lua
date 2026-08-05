@@ -31,7 +31,7 @@ local activeAnimations: {[Instance]: any} = {}
 local elapsedSinceRefresh = 0
 local refreshQueued = false
 local ACTION_BEHAVIOR_TO_MODE = {
-	Eating = "EatDrink",
+	Eating = "Feed",
 	Drinking = "EatDrink",
 }
 
@@ -198,6 +198,8 @@ local function ensure_animation_track(entry, mode: string): AnimationTrack?
 		then HorseMountConfig.HorseWalkAnimationId
 		elseif mode == "EatDrink"
 			then HorseMountConfig.HorseEatDrinkAnimationId
+		elseif mode == "Feed"
+			then HorseMountConfig.HorseFeedAnimationId
 		else HorseMountConfig.HorseIdleAnimationId
 	if not animator or type(animationId) ~= "string" or animationId == "" then
 		return nil
@@ -221,7 +223,7 @@ local function ensure_animation_track(entry, mode: string): AnimationTrack?
 	end
 
 	pcall(function()
-		track.Priority = if mode == "EatDrink" then Enum.AnimationPriority.Action else Enum.AnimationPriority.Idle
+		track.Priority = if mode == "EatDrink" or mode == "Feed" then Enum.AnimationPriority.Action else Enum.AnimationPriority.Idle
 	end)
 
 	pcall(function()

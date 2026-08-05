@@ -24,6 +24,7 @@ local MOUNTED_USER_ID_ATTRIBUTE = ToolDictionary.MountedUserIdAttribute
 local HAY_BALE_FOLDER_NAME = "HayBaleFolder"
 local HAY_BALE_BUNDLE_NAME = "HaybaleBundle"
 local HAY_BALE_MODEL_PREFIX = "Haybale"
+local HAY_HORSE_POINT_NAME = "HorsePoint"
 local HAY_BALES_PLACED_FIELD = "HayBalesPlaced"
 local MAX_HAY_BALES = 3
 
@@ -34,7 +35,7 @@ local WATER_TANK_FILLED_FIELD = "WaterTankFilled"
 
 local NEED_TRIGGER_RATIO = 0.9
 local SCAN_INTERVAL_SECONDS = 8
-local ACTION_REPEAT_COUNT = 3
+local ACTION_REPEAT_COUNT = 1
 local ACTION_SECONDS_PER_REPEAT = 1.55
 local ACTION_MOVE_TIMEOUT_SECONDS = 26
 local HAY_APPROACH_DISTANCE = 5
@@ -65,6 +66,16 @@ local function find_hay_bale_model(plot: Instance?, slotIndex: number): Instance
 
 	local modelName = ("%s%d"):format(HAY_BALE_MODEL_PREFIX, slotIndex)
 	return bundle:FindFirstChild(modelName) or bundle:FindFirstChild(modelName, true)
+end
+
+local function find_hay_horse_point(plot: Instance?): Instance?
+	local bundle = get_hay_bale_bundle(plot)
+	if not bundle then
+		return nil
+	end
+
+	return bundle:FindFirstChild(HAY_HORSE_POINT_NAME)
+		or bundle:FindFirstChild(HAY_HORSE_POINT_NAME, true)
 end
 
 local function find_water_tank_model(plot: Instance?): Instance?
@@ -145,6 +156,19 @@ local function get_action_positions(visual: Instance, target: Instance, approach
 	return Vector3.new(standPosition.X, targetPosition.Y, standPosition.Z), targetPosition
 end
 
+local function get_action_target_positions(visual: Instance, action): (Vector3?, Vector3?)
+	local standTarget = action.StandTarget
+	if standTarget then
+		local standCFrame = get_instance_cframe(standTarget)
+		local faceCFrame = get_instance_cframe(action.FaceTarget or action.Target)
+		if standCFrame and faceCFrame then
+			return standCFrame.Position, faceCFrame.Position
+		end
+	end
+
+	return get_action_positions(visual, action.Target, action.ApproachDistance)
+end
+
 local function is_visual_mounted(visual: Instance?): boolean
 	if not visual then
 		return false
@@ -190,6 +214,34 @@ local function get_assigned_horse_ids(stable, horses): {string}
 	return ids
 end
 
+local function get_available_horse(player: Player, stable, horses, owned)
+	local orderedIds = {}
+	local addedIds = {}
+	local equippedHorseId = type(horses) == "table" and horses.EquippedHorseId or nil
+	if type(equippedHorseId) == "string" and equippedHorseId ~= "" then
+		orderedIds[#orderedIds + 1] = equippedHorseId
+		addedIds[equippedHorseId] = true
+	end
+
+	for _, horseId in get_assigned_horse_ids(stable, horses) do
+		if not addedIds[horseId] then
+			orderedIds[#orderedIds + 1] = horseId
+			addedIds[horseId] = true
+		end
+	end
+
+	for _, horseId in orderedIds do
+		local horse = owned[horseId]
+		local isFree = horse and HorseRoamingService.IsHorseFree(player, horseId) == true
+		local visual = horse and HorseRoamingService.GetLiveVisual(player, horseId) or nil
+		if isFree and visual and visual.Parent and not is_visual_mounted(visual) then
+			return horseId, horse, visual
+		end
+	end
+
+	return nil, nil, nil
+end
+
 local function build_action_candidate(player: Player)
 	local plot = get_player_plot(player)
 	local stable = DataUtility.server.get(player, "Stable")
@@ -222,27 +274,22 @@ local function build_action_candidate(player: Player)
 				if hungerRatio and hungerRatio <= NEED_TRIGGER_RATIO then
 					local hayTarget = find_hay_bale_model(plot, hayCount)
 					if hayTarget then
-						bestCandidate = bestCandidate or {
+						local hayStandTarget = find_hay_horse_point(plot)
+						local candidate = {
 							HorseId = horseId,
 							Visual = visual,
 							Target = hayTarget,
+							StandTarget = hayStandTarget,
+							FaceTarget = hayTarget,
 							Resource = "Hay",
 							NeedKey = "Hunger",
 							Behavior = "Eating",
 							ApproachDistance = HAY_APPROACH_DISTANCE,
+							SnapToTarget = hayStandTarget ~= nil,
 							Score = hungerRatio,
 						}
-						if hungerRatio < bestCandidate.Score then
-							bestCandidate = {
-								HorseId = horseId,
-								Visual = visual,
-								Target = hayTarget,
-								Resource = "Hay",
-								NeedKey = "Hunger",
-								Behavior = "Eating",
-								ApproachDistance = HAY_APPROACH_DISTANCE,
-								Score = hungerRatio,
-							}
+						if not bestCandidate or candidate.Score < bestCandidate.Score then
+							bestCandidate = candidate
 						end
 					end
 				end
@@ -322,7 +369,7 @@ local function consume_resource_and_restore(player: Player, action): boolean
 
 	local now = os.time()
 	HorseCareService.RefreshHorse(horse, now)
-	if is_need_full(horse, action.NeedKey) then
+	if action.ForceRestore ~= true and is_need_full(horse, action.NeedKey) then
 		return false
 	end
 
@@ -357,28 +404,91 @@ local function consume_resource_and_restore(player: Player, action): boolean
 	return true
 end
 
-local function perform_action(player: Player, action)
+local function build_event_eat_actions(player: Player)
+	local plot = get_player_plot(player)
+	local stable = DataUtility.server.get(player, "Stable")
+	local horses = DataUtility.server.get(player, "Horses")
+	local owned = type(horses) == "table" and horses.Owned or nil
+	if not plot or type(stable) ~= "table" or type(owned) ~= "table" then
+		return nil, "StableDataMissing"
+	end
+
+	local horseId, _horse, visual = get_available_horse(player, stable, horses, owned)
+	if not horseId or not visual then
+		return nil, "FreeHorseMissing"
+	end
+
+	local hayCount = get_normalized_hay_count(stable)
+	if hayCount <= 0 then
+		return nil, "HayMissing"
+	end
+
+	local hayTarget = find_hay_bale_model(plot, hayCount)
+	if not hayTarget then
+		return nil, "HayTargetMissing"
+	end
+
+	if not is_water_tank_filled(stable) then
+		return nil, "WaterMissing"
+	end
+
+	local waterTarget = find_water_target(find_water_tank_model(plot))
+	if not waterTarget then
+		return nil, "WaterTargetMissing"
+	end
+
+	local hayStandTarget = find_hay_horse_point(plot)
+	return {
+		{
+			HorseId = horseId,
+			Visual = visual,
+			Target = hayTarget,
+			StandTarget = hayStandTarget,
+			FaceTarget = hayTarget,
+			Resource = "Hay",
+			NeedKey = "Hunger",
+			Behavior = "Eating",
+			ApproachDistance = HAY_APPROACH_DISTANCE,
+			SnapToTarget = hayStandTarget ~= nil,
+			ForceRestore = true,
+		},
+		{
+			HorseId = horseId,
+			Visual = visual,
+			Target = waterTarget,
+			Resource = "Water",
+			NeedKey = "Thirst",
+			Behavior = "Drinking",
+			ApproachDistance = WATER_APPROACH_DISTANCE,
+			ForceRestore = true,
+		},
+	}, "Ready"
+end
+
+local function perform_action(player: Player, action): (boolean, string)
 	local visual = action.Visual
 	if not visual or not visual.Parent or is_visual_mounted(visual) then
-		return
+		return false, "HorseUnavailable"
 	end
 
-	local targetPosition, facePosition = get_action_positions(visual, action.Target, action.ApproachDistance)
+	local targetPosition, facePosition = get_action_target_positions(visual, action)
 	if not targetPosition or not facePosition then
-		return
+		return false, "TargetMissing"
 	end
 
-	local completed = HorseRoamingService.PerformStableAction(player, action.HorseId, visual, {
+	local completed, reason = HorseRoamingService.PerformStableAction(player, action.HorseId, visual, {
 		TargetPosition = targetPosition,
 		FacePosition = facePosition,
 		Behavior = action.Behavior,
 		RepeatCount = ACTION_REPEAT_COUNT,
 		RepeatDuration = ACTION_SECONDS_PER_REPEAT,
 		MoveTimeout = ACTION_MOVE_TIMEOUT_SECONDS,
+		SnapToTarget = action.SnapToTarget,
 	})
 	if completed then
 		consume_resource_and_restore(player, action)
 	end
+	return completed, reason
 end
 
 local function try_start_player_action(player: Player)
@@ -405,6 +515,39 @@ local function try_start_player_action(player: Player)
 
 		activeActionByPlayer[player] = nil
 	end)
+end
+
+function HorseAutoCareService.ForceEatAndDrink(player: Player): (boolean, string)
+	if activeActionByPlayer[player] then
+		return false, "ActionBusy"
+	end
+
+	local actions, code = build_event_eat_actions(player)
+	if not actions then
+		return false, code
+	end
+
+	activeActionByPlayer[player] = true
+	task.spawn(function()
+		local success, err = pcall(function()
+			for _, action in actions do
+				local completed, reason = perform_action(player, action)
+				if not completed then
+					error(reason)
+				end
+			end
+		end)
+		if not success then
+			warn(("[HorseAutoCareService] failed to perform !eventeat for %s: %s"):format(
+				player.Name,
+				tostring(err)
+			))
+		end
+
+		activeActionByPlayer[player] = nil
+	end)
+
+	return true, "Started"
 end
 
 function HorseAutoCareService.Init()
