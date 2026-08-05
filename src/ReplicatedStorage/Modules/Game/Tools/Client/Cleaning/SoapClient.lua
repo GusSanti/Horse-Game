@@ -5,6 +5,7 @@ local ReplicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage"
 local RunService: RunService = game:GetService("RunService")
 local TweenService: TweenService = game:GetService("TweenService")
 local UserInputService: UserInputService = game:GetService("UserInputService")
+local Workspace: Workspace = game:GetService("Workspace")
 
 ------------------//CONSTANTS
 local localPlayer: Player = Players.LocalPlayer
@@ -65,8 +66,12 @@ local RINSE_BUBBLE_CLEAR_WIDTH_RATIO: number = soapCleaningDictionary.RinseBubbl
 local RINSE_BUBBLE_MINIMUM_CLEAR_WIDTH: number = soapCleaningDictionary.RinseBubbleMinimumClearWidth
 local RINSE_BUBBLE_FADE_TIME: number = soapCleaningDictionary.RinseBubbleFadeTime
 local SHOWER_HEIGHT_OFFSET: number = soapCleaningDictionary.ShowerHeightOffset
+local SHOWER_PITCH_DEGREES: number = soapCleaningDictionary.ShowerPitchDegrees
 local SHOWER_FOLLOW_LERP_SPEED: number = soapCleaningDictionary.ShowerFollowLerpSpeed
+local STABLE_BACKGROUND_VISIBILITY: number = soapCleaningDictionary.StableBackgroundVisibility
 local CANCEL_KEYS = soapCleaningDictionary.CancelKeys
+local STABLES_FOLDER_NAME = "Stables"
+local OWNER_USER_ID_ATTRIBUTE = "OwnerUserId"
 
 ------------------//VARIABLES
 local SoapClient = {}
@@ -193,6 +198,72 @@ local function get_base_parts(instance: Instance): {BasePart}
 	end
 
 	return baseParts
+end
+
+local function get_current_player_plot(horseVisual: Instance): Instance?
+
+	local stablesFolder = Workspace:FindFirstChild(STABLES_FOLDER_NAME)
+	if stablesFolder then
+		for _, candidate: Instance in stablesFolder:GetDescendants() do
+			if candidate:GetAttribute(OWNER_USER_ID_ATTRIBUTE) == localPlayer.UserId then
+				return candidate
+			end
+		end
+	end
+
+	local candidate = horseVisual.Parent
+	while candidate do
+		if candidate:GetAttribute(OWNER_USER_ID_ATTRIBUTE) == localPlayer.UserId then
+			return candidate
+		end
+
+		candidate = candidate.Parent
+	end
+
+	return nil
+end
+
+local function dim_stable_part(session, instance: Instance): ()
+	if not instance:IsA("BasePart") or is_descendant_of(instance, session.horseVisual) then
+		return
+	end
+
+	if session.dimmedStableParts[instance] == nil then
+		session.dimmedStableParts[instance] = instance.LocalTransparencyModifier
+	end
+
+	instance.LocalTransparencyModifier = 1 - STABLE_BACKGROUND_VISIBILITY
+end
+
+local function dim_current_player_stable(session): ()
+	local plot = get_current_player_plot(session.horseVisual)
+	if not plot then
+		return
+	end
+
+	session.dimmedStableParts = {}
+
+	for _, descendant: Instance in plot:GetDescendants() do
+		dim_stable_part(session, descendant)
+	end
+
+	session.connections[#session.connections + 1] = plot.DescendantAdded:Connect(function(descendant: Instance)
+		dim_stable_part(session, descendant)
+	end)
+end
+
+local function restore_stable_visibility(session): ()
+	if not session.dimmedStableParts then
+		return
+	end
+
+	for basePart: BasePart, localTransparencyModifier: number in session.dimmedStableParts do
+		if basePart.Parent then
+			basePart.LocalTransparencyModifier = localTransparencyModifier
+		end
+	end
+
+	table.clear(session.dimmedStableParts)
 end
 
 local function is_cancel_key(keyCode: Enum.KeyCode): boolean
@@ -380,25 +451,25 @@ local function get_shower_template(): Instance?
 
 		local showerHandle = Instance.new("Part")
 		showerHandle.Name = "Handle"
-		showerHandle.Size = Vector3.new(0.22, 0.22, 1.05)
+		showerHandle.Size = Vector3.new(0.22, 1.05, 0.22)
 		showerHandle.Material = Enum.Material.Metal
 		showerHandle.Color = Color3.fromRGB(150, 160, 173)
 		showerHandle.TopSurface = Enum.SurfaceType.Smooth
 		showerHandle.BottomSurface = Enum.SurfaceType.Smooth
 		showerHandle.CanCollide = false
-		showerHandle.CFrame = CFrame.new(0, 0, 0.88)
+		showerHandle.CFrame = CFrame.new(0, -0.88, 0)
 		showerHandle.Parent = showerModel
 
 		local waterStream = Instance.new("Part")
 		waterStream.Name = "Water"
-		waterStream.Size = Vector3.new(0.2, 0.2, 2.7)
+		waterStream.Size = Vector3.new(0.2, 2.7, 0.2)
 		waterStream.Material = Enum.Material.Neon
 		waterStream.Color = Color3.fromRGB(132, 214, 255)
 		waterStream.Transparency = 0.18
 		waterStream.TopSurface = Enum.SurfaceType.Smooth
 		waterStream.BottomSurface = Enum.SurfaceType.Smooth
 		waterStream.CanCollide = false
-		waterStream.CFrame = CFrame.new(0, 0, -1.55)
+		waterStream.CFrame = CFrame.new(0, 1.55, 0)
 		waterStream.Parent = showerModel
 
 		showerModel.PrimaryPart = showerHead
@@ -437,25 +508,25 @@ local function get_shower_template(): Instance?
 
 	local showerHandle = Instance.new("Part")
 	showerHandle.Name = "Handle"
-	showerHandle.Size = Vector3.new(0.22, 0.22, 1.05)
+	showerHandle.Size = Vector3.new(0.22, 1.05, 0.22)
 	showerHandle.Material = Enum.Material.Metal
 	showerHandle.Color = Color3.fromRGB(150, 160, 173)
 	showerHandle.TopSurface = Enum.SurfaceType.Smooth
 	showerHandle.BottomSurface = Enum.SurfaceType.Smooth
 	showerHandle.CanCollide = false
-	showerHandle.CFrame = CFrame.new(0, 0, 0.88)
+	showerHandle.CFrame = CFrame.new(0, -0.88, 0)
 	showerHandle.Parent = showerModel
 
 	local waterStream = Instance.new("Part")
 	waterStream.Name = "Water"
-	waterStream.Size = Vector3.new(0.2, 0.2, 2.7)
+	waterStream.Size = Vector3.new(0.2, 2.7, 0.2)
 	waterStream.Material = Enum.Material.Neon
 	waterStream.Color = Color3.fromRGB(132, 214, 255)
 	waterStream.Transparency = 0.18
 	waterStream.TopSurface = Enum.SurfaceType.Smooth
 	waterStream.BottomSurface = Enum.SurfaceType.Smooth
 	waterStream.CanCollide = false
-	waterStream.CFrame = CFrame.new(0, 0, -1.55)
+	waterStream.CFrame = CFrame.new(0, 1.55, 0)
 	waterStream.Parent = showerModel
 
 	showerModel.PrimaryPart = showerHead
@@ -747,6 +818,7 @@ local function get_shower_cframe(session, localZ: number): CFrame
 	local worldPosition = pivot:PointToWorldSpace(localPosition)
 
 	return CFrame.lookAt(worldPosition, worldPosition - pivot.UpVector, pivot.LookVector)
+		* CFrame.Angles(math.rad(SHOWER_PITCH_DEGREES), 0, 0)
 end
 
 local function update_shower(session, deltaTime: number): number
@@ -894,6 +966,7 @@ local function finish_session(session, shouldRefreshPrompts: boolean): ()
 	destroy_all(session.instances)
 	restore_humanoid(session)
 	restore_character_visibility(session)
+	restore_stable_visibility(session)
 	restore_camera(session)
 
 	hide_progress_ui(session)
@@ -1158,6 +1231,7 @@ function SoapClient.start(context): boolean
 		instances = {},
 		connections = {},
 		bubbleClones = {},
+		dimmedStableParts = {},
 		savedCameraType = camera.CameraType,
 		savedCameraSubject = camera.CameraSubject,
 		savedCameraCFrame = camera.CFrame,
@@ -1168,6 +1242,7 @@ function SoapClient.start(context): boolean
 
 	lock_humanoid(session)
 	hide_character(session)
+	dim_current_player_stable(session)
 	create_effects_folder(session)
 	create_mouse_hitbox(session)
 	if not show_progress_ui(session) then

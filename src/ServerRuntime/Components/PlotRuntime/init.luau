@@ -205,6 +205,9 @@ local function sync_plot_horses(player: Player): ()
 	end
 
 	HorseService.SyncPlotHorses(player, plotData.instance)
+	if promptRuntime then
+		promptRuntime:RefreshHorseInteractions(player)
+	end
 end
 
 promptRuntime = Prompts.new(assignedPlotByPlayer, sync_plot_horses)
@@ -213,6 +216,7 @@ disable_plot_slot_prompts = function(plot: Instance): ()
 end
 local function refresh_plot_slot_prompts(player: Player): ()
 	promptRuntime:RefreshSlots(player)
+	promptRuntime:RefreshHorseInteractions(player)
 end
 local function rebind_plot_slot_prompts(player: Player, plot: Instance): ()
 	promptRuntime:Rebind(player, plot)
@@ -503,9 +507,6 @@ function PlotRuntime:Init(): ()
 
 	self.Trove = Trove.new()
 	publish_stable_previews()
-	Network.Functions.StableSlotAction:Respond(function(Player: Player, Payload: any): any
-		return promptRuntime:Execute(Player, Payload)
-	end, self.Trove)
 	Network.Events.TeleportToStable:Connect(teleport_player_to_plot, self.Trove)
 	Network.Functions.UpgradeStable:Respond(purchase_stable_upgrade, self.Trove)
 	self.Trove:Connect(Framework.RuntimeEvents.PlayerAdded, on_player_added)
